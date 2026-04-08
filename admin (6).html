@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>輸入状況 管理ダッシュボード</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<style>
+* { box-sizing:border-box; margin:0; padding:0; }
+body { background:#f0f4f9; font-family:'Hiragino Sans','Noto Sans JP','Yu Gothic',sans-serif; }
+@keyframes shake{0%,100%{transform:translateX(0)}20%{transform:translateX(-8px)}40%{transform:translateX(8px)}60%{transform:translateX(-5px)}80%{transform:translateX(5px)}}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect } = React;
+
+const ADMIN_PASSWORD = "vands2026";
+const STORAGE_KEY = "order_tracker_orders_v2";
+
+const STATUS_STAGES = [
+  { id:0, label:"注文受付済み",        icon:"📋", color:"#8a9ab5", short:"受付済" },
+  { id:1, label:"海外発送準備中",       icon:"📦", color:"#6b8cba", short:"準備中" },
+  { id:2, label:"輸出国空港到着",       icon:"✈️", color:"#4a7cc7", short:"空港到着" },
+  { id:3, label:"日本へ航空輸送中",     icon:"🌏", color:"#d4a843", short:"輸送中" },
+  { id:4, label:"日本空港・通関待ち",   icon:"🛂", color:"#e07d20", short:"通関待ち" },
+  { id:5, label:"通関完了・国内配送中", icon:"🚚", color:"#3aa876", short:"配送中" },
+  { id:6, label:"お届け完了",           icon:"✅", color:"#0f2744", short:"完了" },
+];
+
+const SAMPLE_ORDERS = [
+  { id:"17751937539", date:"2026年04月03日", clinic:"lala clinic", updatedAt:"2026/04/04 11:00",
+    products:[
+      { name:"Fiora PDOスレッド Arrow cog W-type 19G", qty:"1箱（10本入り）", status:4, eta:"約5〜7日", note:"通関手続き中です" },
+      { name:"カニューレ 100mm", qty:"10本", status:3, eta:"約10〜14日", note:"" },
+      { name:"スレッド 155mm USP1", qty:"20本", status:1, eta:"約25日", note:"韓国工場より発送準備中" },
+      { name:"PDOリフトニードル 21G", qty:"5本", status:0, eta:"約30日", note:"" },
+    ]},
+  { id:"17751880750", date:"2026年04月03日", clinic:"lala clinic", updatedAt:"2026/04/04 09:30",
+    products:[
+      { name:"Ulthera ウルセラ カートリッジ (4-4.5mm)", qty:"2個", status:5, eta:"約2〜3日", note:"国内配送中" },
+      { name:"Ulthera ウルセラ カートリッジ (3-4.5mm)", qty:"1個", status:5, eta:"約2〜3日", note:"" },
+      { name:"Ulthera ウルセラ ハンドピース", qty:"1式", status:4, eta:"約5日", note:"通関手続き中" },
+    ]},
+  { id:"17749526823", date:"2026年03月31日", clinic:"lala clinic", updatedAt:"2026/04/04 08:15",
+    products:[
+      { name:"ナボタ 100単位", qty:"10セット", status:6, eta:"—", note:"" },
+      { name:"ナボタ 50単位", qty:"5セット", status:6, eta:"—", note:"" },
+      { name:"注射針 30G", qty:"100本", status:5, eta:"約2日", note:"" },
+      { name:"注射器 1ml", qty:"50本", status:5, eta:"約2日", note:"" },
+      { name:"希釈用生食", qty:"20本", status:3, eta:"約12日", note:"別便で発送" },
+    ]},
+  { id:"17749428435", date:"2026年03月31日", clinic:"lala clinic", updatedAt:"2026/04/03 16:40",
+    products:[
+      { name:"ProFHILO H+L（プロファイロ）2ml", qty:"1本（箱入り）", status:6, eta:"—", note:"" },
+    ]},
+  { id:"17745112233", date:"2026年03月15日", clinic:"Beauty Skin Clinic", updatedAt:"2026/03/28 10:00",
+    products:[
+      { name:"リデンシル 5ml", qty:"10本", status:6, eta:"—", note:"" },
+    ]},
+];
+
+function loadOrders(){ try{ const d=localStorage.getItem(STORAGE_KEY); if(d) return JSON.parse(d); }catch{} return SAMPLE_ORDERS; }
+function saveOrders(o){ try{ localStorage.setItem(STORAGE_KEY,JSON.stringify(o)); return true; }catch{ return false; } }
+function nowStr(){ return new Date().toLocaleString("ja-JP",{year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"}); }
+function toMonthKey(d){ const m=d.match(/(\d{4}年\d{2}月)/); return m?m[1]:"不明"; }
+function groupBy(arr,fn){ return arr.reduce((a,o)=>{ const k=fn(o); if(!a[k])a[k]=[]; a[k].push(o); return a; },{}); }
+
+// ── Login ──────────────────────────────────────────────────────────────────
+function LoginScreen({ onLogin }) {
+  const [pw,setPw]=useState(""); const [err,setErr]=useState(false); const [shake,setShake]=useState(false);
+  const go=()=>{ if(pw===ADMIN_PASSWORD){onLogin();}else{setErr(true);setShake(true);setTimeout(()=>setShake(false),500);} };
+  return (
+    <div style={{ minHeight:"100vh",background:"linear-gradient(160deg,#0a1e35,#0f2744,#1a3d6e)",display:"flex",alignItems:"center",justifyContent:"center",padding:24 }}>
+      <div style={{ background:"#fff",borderRadius:20,padding:"40px 32px",width:"100%",maxWidth:360,boxShadow:"0 24px 60px rgba(0,0,0,0.3)",animation:shake?"shake 0.4s ease":"none" }}>
+        <div style={{ textAlign:"center",marginBottom:28 }}>
+          <div style={{ width:56,height:56,borderRadius:16,background:"linear-gradient(135deg,#0f2744,#1a3d6e)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:26,margin:"0 auto 14px" }}>🔐</div>
+          <div style={{ fontSize:20,fontWeight:900,color:"#0f2744",marginBottom:4 }}>管理者ログイン</div>
+          <div style={{ fontSize:12.5,color:"#8a95a5" }}>輸入状況管理ダッシュボード</div>
+        </div>
+        <input type="password" value={pw} onChange={e=>{setPw(e.target.value);setErr(false);}} onKeyDown={e=>e.key==="Enter"&&go()} placeholder="パスワードを入力"
+          style={{ width:"100%",padding:"13px 14px",borderRadius:10,border:`1.5px solid ${err?"#e05050":"#dde4ef"}`,fontSize:16,outline:"none",color:"#0f2744",marginBottom:err?6:14 }} />
+        {err && <div style={{ color:"#e05050",fontSize:12,marginBottom:10 }}>パスワードが正しくありません</div>}
+        <button onClick={go} style={{ width:"100%",padding:14,borderRadius:10,border:"none",background:"linear-gradient(135deg,#0f2744,#1a3d6e)",color:"#fff",fontWeight:800,fontSize:15,cursor:"pointer" }}>ログイン</button>
+      </div>
+    </div>
+  );
+}
+
+// ── Product Editor ─────────────────────────────────────────────────────────
+function ProductEditor({ product, index, onChange, onDelete }) {
+  const [open,setOpen]=useState(false);
+  const s=STATUS_STAGES[product.status];
+  return (
+    <div style={{ borderBottom:"1px solid #f0f4f9" }}>
+      <div onClick={()=>setOpen(o=>!o)} style={{ display:"flex",alignItems:"center",padding:"11px 14px",cursor:"pointer",gap:10,background:open?"#f4f7fc":"#fff" }}>
+        <div style={{ width:22,height:22,borderRadius:6,background:"#f0f4ff",color:"#4a7cc7",fontSize:10,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0 }}>{index+1}</div>
+        <div style={{ flex:1,minWidth:0 }}>
+          <div style={{ fontSize:13,fontWeight:600,color:"#1a2a3a",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{product.name||"（未入力）"}</div>
+          <div style={{ display:"flex",gap:6,alignItems:"center",marginTop:2 }}>
+            <span style={{ fontSize:11,color:"#8a95a5" }}>{product.qty}</span>
+            <span style={{ width:3,height:3,borderRadius:"50%",background:"#d0d8e4" }} />
+            <span style={{ fontSize:11,fontWeight:700,color:s.color }}>{s.icon} {s.short}</span>
+            {product.eta&&product.status<6&&<><span style={{ width:3,height:3,borderRadius:"50%",background:"#d0d8e4" }} /><span style={{ fontSize:11,color:"#8a95a5" }}>{product.eta}</span></>}
+          </div>
+        </div>
+        <div style={{ fontSize:14,color:"#c0c8d4",transform:open?"rotate(180deg)":"none",transition:"transform 0.2s" }}>⌄</div>
+      </div>
+      {open && (
+        <div style={{ padding:"12px 14px 14px",background:"#f4f7fc",borderTop:"1px solid #edf0f6" }}>
+          <div style={{ display:"grid",gridTemplateColumns:"1fr auto",gap:8,marginBottom:10 }}>
+            <div>
+              <div style={{ fontSize:11,color:"#8a95a5",marginBottom:3 }}>商品名</div>
+              <input value={product.name} onChange={e=>onChange("name",e.target.value)} style={{ width:"100%",padding:"8px 10px",borderRadius:8,border:"1.5px solid #dde4ef",fontSize:13,outline:"none" }} />
+            </div>
+            <div style={{ width:90 }}>
+              <div style={{ fontSize:11,color:"#8a95a5",marginBottom:3 }}>数量</div>
+              <input value={product.qty} onChange={e=>onChange("qty",e.target.value)} style={{ width:"100%",padding:"8px 10px",borderRadius:8,border:"1.5px solid #dde4ef",fontSize:13,outline:"none" }} />
+            </div>
+          </div>
+          <div style={{ marginBottom:10 }}>
+            <div style={{ fontSize:11,color:"#8a95a5",marginBottom:6 }}>ステータス</div>
+            <div style={{ display:"flex",flexWrap:"wrap",gap:5 }}>
+              {STATUS_STAGES.map(st=>(
+                <button key={st.id} onClick={()=>onChange("status",st.id)} style={{ padding:"5px 9px",borderRadius:8,border:"1.5px solid",borderColor:product.status===st.id?st.color:"#dde4ef",background:product.status===st.id?st.color:"#fff",color:product.status===st.id?"#fff":"#4a5568",fontSize:11,fontWeight:product.status===st.id?700:400,cursor:"pointer",whiteSpace:"nowrap" }}>
+                  {st.icon} {st.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10 }}>
+            <div>
+              <div style={{ fontSize:11,color:"#8a95a5",marginBottom:3 }}>お届け目安</div>
+              <input value={product.eta} onChange={e=>onChange("eta",e.target.value)} placeholder="例：約10日" style={{ width:"100%",padding:"8px 10px",borderRadius:8,border:"1.5px solid #dde4ef",fontSize:13,outline:"none" }} />
+            </div>
+            <div>
+              <div style={{ fontSize:11,color:"#8a95a5",marginBottom:3 }}>備考（お客様に表示）</div>
+              <input value={product.note} onChange={e=>onChange("note",e.target.value)} placeholder="例：通関待ちです" style={{ width:"100%",padding:"8px 10px",borderRadius:8,border:"1.5px solid #dde4ef",fontSize:13,outline:"none" }} />
+            </div>
+          </div>
+          <div style={{ display:"flex",justifyContent:"flex-end" }}>
+            <button onClick={onDelete} style={{ padding:"6px 12px",borderRadius:8,border:"1.5px solid #e0c0c0",background:"#fff8f8",color:"#c05050",fontSize:12,cursor:"pointer",fontWeight:600 }}>この商品を削除</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Order Card ─────────────────────────────────────────────────────────────
+function OrderCard({ order, onUpdate, onDelete }) {
+  const [open,setOpen]=useState(false);
+  const active=order.products.filter(p=>p.status<6).length;
+  const updateProduct=(pi,field,value)=>onUpdate(order.id,"products",order.products.map((p,i)=>i===pi?{...p,[field]:value}:p));
+  const deleteProduct=(pi)=>{ if(!confirm("この商品を削除しますか？"))return; onUpdate(order.id,"products",order.products.filter((_,i)=>i!==pi)); };
+  const addProduct=()=>{ onUpdate(order.id,"products",[...order.products,{name:"",qty:"",status:0,eta:"約30日",note:""}]); setOpen(true); };
+  return (
+    <div style={{ background:"#fff",borderRadius:14,border:"1.5px solid #e4eaf3",marginBottom:10,overflow:"hidden",boxShadow:"0 1px 8px rgba(10,30,53,0.05)",borderLeft:`4px solid ${active>0?"#d4a843":"#0f2744"}` }}>
+      <div onClick={()=>setOpen(o=>!o)} style={{ padding:"13px 16px",cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"flex-start" }}>
+        <div style={{ flex:1,minWidth:0,paddingRight:8 }}>
+          <div style={{ display:"flex",alignItems:"center",gap:8,marginBottom:4,flexWrap:"wrap" }}>
+            <span style={{ fontSize:15,fontWeight:900,color:"#0f2744",letterSpacing:"0.04em" }}>{order.id}</span>
+            {active>0
+              ? <span style={{ padding:"3px 9px",borderRadius:20,fontSize:11,fontWeight:700,background:"#fff8e8",color:"#b87f0a",border:"1px solid #e8c95a" }}>対応中 {active}件</span>
+              : <span style={{ padding:"3px 9px",borderRadius:20,fontSize:11,fontWeight:700,background:"#e8f0fa",color:"#0f2744",border:"1px solid #c0d0e8" }}>✅ 全件完了</span>
+            }
+          </div>
+          <div style={{ fontSize:11.5,color:"#8a95a5" }}>{order.date}　{order.clinic}　全{order.products.length}種類</div>
+        </div>
+        <div style={{ fontSize:16,color:"#aab",transform:open?"rotate(180deg)":"none",transition:"transform 0.2s",marginTop:2 }}>⌄</div>
+      </div>
+      {open && (
+        <div style={{ borderTop:"1.5px solid #f0f4f9" }}>
+          {order.products.map((p,i)=>(
+            <ProductEditor key={i} product={p} index={i} onChange={(f,v)=>updateProduct(i,f,v)} onDelete={()=>deleteProduct(i)} />
+          ))}
+          <div style={{ padding:"10px 14px",background:"#f8fafd",borderTop:"1px solid #edf0f6",display:"flex",justifyContent:"space-between",alignItems:"center" }}>
+            <button onClick={addProduct} style={{ padding:"7px 14px",borderRadius:8,border:"1.5px solid #4a7cc7",background:"#f0f6ff",color:"#2a5090",fontSize:12.5,cursor:"pointer",fontWeight:700 }}>＋ 商品を追加</button>
+            <div style={{ display:"flex",gap:8,alignItems:"center" }}>
+              <span style={{ fontSize:10.5,color:"#c0c8d4" }}>更新：{order.updatedAt}</span>
+              <button onClick={()=>{ if(confirm("この注文を削除しますか？"))onDelete(order.id); }} style={{ padding:"6px 12px",borderRadius:8,border:"1.5px solid #e0c0c0",background:"#fff8f8",color:"#c05050",fontSize:12,cursor:"pointer",fontWeight:600 }}>注文削除</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── New Order Modal ────────────────────────────────────────────────────────
+function NewOrderModal({ onAdd, onClose }) {
+  const [id,setId]=useState(""); const [clinic,setClinic]=useState(""); const [date,setDate]=useState(""); const [err,setErr]=useState("");
+  const submit=()=>{ if(!id.trim())return setErr("注文番号は必須です"); if(!clinic.trim())return setErr("クリニック名は必須です"); onAdd({id:id.trim(),date:date.trim(),clinic:clinic.trim(),updatedAt:nowStr(),products:[{name:"",qty:"",status:0,eta:"約30日",note:""}]}); };
+  const inp={width:"100%",padding:"10px 12px",borderRadius:9,border:"1.5px solid #dde4ef",fontSize:14,outline:"none",color:"#1a2a3a"};
+  return (
+    <div style={{ position:"fixed",inset:0,background:"rgba(10,20,40,0.55)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:100,padding:16 }}>
+      <div style={{ background:"#fff",borderRadius:18,padding:"24px 22px",width:"100%",maxWidth:380,boxShadow:"0 20px 60px rgba(0,0,0,0.25)" }}>
+        <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18 }}>
+          <div style={{ fontSize:16,fontWeight:800,color:"#0f2744" }}>新規注文を追加</div>
+          <button onClick={onClose} style={{ background:"none",border:"none",fontSize:20,cursor:"pointer",color:"#8a95a5" }}>✕</button>
+        </div>
+        <div style={{ marginBottom:11 }}>
+          <div style={{ fontSize:11.5,color:"#8a95a5",marginBottom:4 }}>注文番号 <span style={{ color:"#e05050" }}>*</span></div>
+          <input value={id} onChange={e=>setId(e.target.value)} placeholder="17751937539" style={inp} />
+        </div>
+        <div style={{ marginBottom:11 }}>
+          <div style={{ fontSize:11.5,color:"#8a95a5",marginBottom:4 }}>クリニック名 <span style={{ color:"#e05050" }}>*</span></div>
+          <input value={clinic} onChange={e=>setClinic(e.target.value)} placeholder="lala clinic" style={inp} />
+        </div>
+        <div style={{ marginBottom:16 }}>
+          <div style={{ fontSize:11.5,color:"#8a95a5",marginBottom:4 }}>注文日</div>
+          <input value={date} onChange={e=>setDate(e.target.value)} placeholder="2026年04月05日" style={inp} />
+        </div>
+        <div style={{ background:"#f8fafd",borderRadius:10,padding:"10px 12px",fontSize:12,color:"#6a7a8a",marginBottom:14,border:"1px solid #edf0f6" }}>💡 追加後、商品ごとにステータスを設定できます</div>
+        {err && <div style={{ color:"#e05050",fontSize:12.5,marginBottom:10 }}>⚠ {err}</div>}
+        <div style={{ display:"flex",gap:8 }}>
+          <button onClick={onClose} style={{ flex:1,padding:12,borderRadius:10,border:"1.5px solid #dde4ef",background:"#fff",fontSize:14,cursor:"pointer",color:"#666" }}>キャンセル</button>
+          <button onClick={submit} style={{ flex:2,padding:12,borderRadius:10,border:"none",background:"linear-gradient(135deg,#0f2744,#1a3d6e)",color:"#fff",fontWeight:800,fontSize:14,cursor:"pointer" }}>追加する</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Group Section ──────────────────────────────────────────────────────────
+function GroupSection({ title, orders, onUpdate, onDelete, defaultOpen }) {
+  const [open,setOpen]=useState(defaultOpen??true);
+  const activeCount=orders.filter(o=>o.products.some(p=>p.status<6)).length;
+  return (
+    <div style={{ marginBottom:14 }}>
+      <div onClick={()=>setOpen(o=>!o)} style={{ display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 14px",borderRadius:10,background:open?"#0f2744":"#fff",border:open?"none":"1.5px solid #e4eaf3",cursor:"pointer",marginBottom:open?8:0 }}>
+        <div style={{ display:"flex",alignItems:"center",gap:8 }}>
+          <div style={{ fontSize:14,fontWeight:800,color:open?"#fff":"#0f2744" }}>{title}</div>
+          <span style={{ padding:"2px 9px",borderRadius:20,fontSize:11.5,fontWeight:700,background:open?"rgba(255,255,255,0.15)":"#f0f4f9",color:open?"#fff":"#6a7a8a" }}>{orders.length}件</span>
+          {activeCount>0&&<span style={{ padding:"2px 9px",borderRadius:20,fontSize:11.5,fontWeight:700,background:open?"rgba(212,168,67,0.3)":"#fff8e8",color:open?"#ffd878":"#b87f0a",border:open?"1px solid rgba(212,168,67,0.4)":"1px solid #e8c95a" }}>対応中 {activeCount}</span>}
+        </div>
+        <div style={{ fontSize:16,color:open?"rgba(255,255,255,0.6)":"#aab",transform:open?"rotate(180deg)":"none",transition:"transform 0.2s" }}>⌄</div>
+      </div>
+      {open&&orders.map(o=><OrderCard key={o.id} order={o} onUpdate={onUpdate} onDelete={onDelete} />)}
+    </div>
+  );
+}
+
+// ── Main ───────────────────────────────────────────────────────────────────
+function App() {
+  const [authed,setAuthed]=useState(false);
+  const [orders,setOrders]=useState(loadOrders);
+  const [showNew,setShowNew]=useState(false);
+  const [saveStatus,setSaveStatus]=useState("");
+  const [groupMode,setGroupMode]=useState("month");
+  const [search,setSearch]=useState("");
+
+  const updateOrder=(id,field,value)=>setOrders(prev=>prev.map(o=>o.id===id?{...o,[field]:value,updatedAt:nowStr()}:o));
+  const deleteOrder=(id)=>setOrders(prev=>prev.filter(o=>o.id!==id));
+  const addOrder=(order)=>{ setOrders(prev=>[...prev,order]); setShowNew(false); };
+  const handleSave=()=>{ setSaveStatus("saving"); setSaveStatus(saveOrders(orders)?"saved":"error"); setTimeout(()=>setSaveStatus(""),2500); };
+
+  const filtered=orders.filter(o=>!search||o.id.includes(search)||o.clinic.includes(search)||o.products.some(p=>p.name.includes(search)));
+  const grouped=groupMode==="month"?groupBy(filtered,o=>toMonthKey(o.date)):groupBy(filtered,o=>o.clinic||"不明");
+  const keys=Object.keys(grouped).sort((a,b)=>groupMode==="month"?b.localeCompare(a):a.localeCompare(b));
+
+  const allP=orders.flatMap(o=>o.products);
+  const activeP=allP.filter(p=>p.status<6).length;
+  const cnt=STATUS_STAGES.reduce((a,s)=>{a[s.id]=allP.filter(p=>p.status===s.id).length;return a;},{});
+
+  if(!authed) return <LoginScreen onLogin={()=>setAuthed(true)} />;
+
+  return (
+    <div style={{ minHeight:"100vh",background:"#f0f4f9" }}>
+      {showNew&&<NewOrderModal onAdd={addOrder} onClose={()=>setShowNew(false)} />}
+      <div style={{ background:"linear-gradient(135deg,#0a1e35,#0f2744)",padding:"18px 18px 20px",position:"sticky",top:0,zIndex:50 }}>
+        <div style={{ maxWidth:680,margin:"0 auto" }}>
+          <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14 }}>
+            <div>
+              <div style={{ fontSize:11,letterSpacing:"0.18em",color:"#d4a843",fontWeight:700,marginBottom:3 }}>ADMIN</div>
+              <div style={{ fontSize:17,fontWeight:900,color:"#fff" }}>輸入状況 管理ダッシュボード</div>
+            </div>
+            <div style={{ display:"flex",gap:8 }}>
+              <button onClick={()=>setShowNew(true)} style={{ padding:"9px 14px",borderRadius:9,border:"1.5px solid rgba(212,168,67,0.5)",background:"transparent",color:"#d4a843",fontWeight:700,fontSize:13,cursor:"pointer" }}>＋ 追加</button>
+              <button onClick={handleSave} style={{ padding:"9px 16px",borderRadius:9,border:"none",background:saveStatus==="saved"?"#3aa876":saveStatus==="error"?"#e05050":"#d4a843",color:"#0a1e35",fontWeight:800,fontSize:13,cursor:"pointer" }}>
+                {saveStatus==="saving"?"保存中...":saveStatus==="saved"?"✓ 保存済み":saveStatus==="error"?"エラー":"全件保存"}
+              </button>
+            </div>
+          </div>
+          <div style={{ display:"flex",gap:7,overflowX:"auto",paddingBottom:2 }}>
+            {[{l:"対応中商品",v:activeP,c:"#d4a843"},{l:"通関待ち",v:cnt[4]||0,c:"#e07d20"},{l:"配送中",v:cnt[5]||0,c:"#3aa876"},{l:"完了商品",v:cnt[6]||0,c:"#6b8cba"},{l:"全注文",v:orders.length,c:"#8a9ab5"}].map(s=>(
+              <div key={s.l} style={{ background:"rgba(255,255,255,0.09)",borderRadius:10,padding:"7px 13px",flexShrink:0,border:`1px solid ${s.c}30` }}>
+                <div style={{ fontSize:18,fontWeight:900,color:s.c }}>{s.v}</div>
+                <div style={{ fontSize:10,color:"rgba(255,255,255,0.5)",marginTop:1 }}>{s.l}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+      <div style={{ maxWidth:680,margin:"0 auto",padding:"18px 14px 48px" }}>
+        <div style={{ display:"flex",gap:8,marginBottom:16,flexWrap:"wrap",alignItems:"center" }}>
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="注文番号・クリニック・商品名で検索"
+            style={{ flex:1,minWidth:160,padding:"10px 14px",borderRadius:10,border:"1.5px solid #dde4ef",fontSize:13,outline:"none",background:"#fff",color:"#0f2744" }} />
+          <div style={{ display:"flex",background:"#fff",borderRadius:10,border:"1.5px solid #dde4ef",overflow:"hidden" }}>
+            {[["month","📅 月別"],["clinic","🏥 クリニック別"]].map(([k,l])=>(
+              <button key={k} onClick={()=>setGroupMode(k)} style={{ padding:"9px 13px",border:"none",background:groupMode===k?"#0f2744":"transparent",color:groupMode===k?"#fff":"#6a7a8a",fontWeight:groupMode===k?700:500,fontSize:12.5,cursor:"pointer",whiteSpace:"nowrap" }}>{l}</button>
+            ))}
+          </div>
+        </div>
+        {keys.length===0&&<div style={{ textAlign:"center",color:"#aaa",padding:"40px 0",fontSize:14 }}>該当する注文が見つかりません</div>}
+        {keys.map((k,i)=><GroupSection key={k} title={k} orders={grouped[k]} onUpdate={updateOrder} onDelete={deleteOrder} defaultOpen={i===0} />)}
+        <div style={{ textAlign:"center",fontSize:12,color:"#c0c8d4",marginTop:8 }}>{filtered.length}件表示（全{orders.length}件）</div>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
