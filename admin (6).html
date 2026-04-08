@@ -11,12 +11,14 @@
 * { box-sizing:border-box; margin:0; padding:0; }
 body { background:#f0f4f9; font-family:'Hiragino Sans','Noto Sans JP','Yu Gothic',sans-serif; }
 @keyframes shake{0%,100%{transform:translateX(0)}20%{transform:translateX(-8px)}40%{transform:translateX(8px)}60%{transform:translateX(-5px)}80%{transform:translateX(5px)}}
+.drop-zone { border:2.5px dashed #b0c4de; border-radius:14px; padding:32px 20px; text-align:center; cursor:pointer; transition:all 0.2s; background:#f8fafd; }
+.drop-zone:hover,.drop-zone.drag-over { border-color:#d4a843; background:#fffbef; }
 </style>
 </head>
 <body>
 <div id="root"></div>
 <script type="text/babel">
-const { useState, useEffect } = React;
+const { useState, useEffect, useRef } = React;
 
 const ADMIN_PASSWORD = "vands2026";
 const STORAGE_KEY = "order_tracker_orders_v2";
@@ -37,39 +39,233 @@ const SAMPLE_ORDERS = [
       { name:"Fiora PDOスレッド Arrow cog W-type 19G", qty:"1箱（10本入り）", status:4, eta:"約5〜7日", note:"通関手続き中です" },
       { name:"カニューレ 100mm", qty:"10本", status:3, eta:"約10〜14日", note:"" },
       { name:"スレッド 155mm USP1", qty:"20本", status:1, eta:"約25日", note:"韓国工場より発送準備中" },
-      { name:"PDOリフトニードル 21G", qty:"5本", status:0, eta:"約30日", note:"" },
-    ]},
-  { id:"17751880750", date:"2026年04月03日", clinic:"lala clinic", updatedAt:"2026/04/04 09:30",
-    products:[
-      { name:"Ulthera ウルセラ カートリッジ (4-4.5mm)", qty:"2個", status:5, eta:"約2〜3日", note:"国内配送中" },
-      { name:"Ulthera ウルセラ カートリッジ (3-4.5mm)", qty:"1個", status:5, eta:"約2〜3日", note:"" },
-      { name:"Ulthera ウルセラ ハンドピース", qty:"1式", status:4, eta:"約5日", note:"通関手続き中" },
     ]},
   { id:"17749526823", date:"2026年03月31日", clinic:"lala clinic", updatedAt:"2026/04/04 08:15",
     products:[
       { name:"ナボタ 100単位", qty:"10セット", status:6, eta:"—", note:"" },
-      { name:"ナボタ 50単位", qty:"5セット", status:6, eta:"—", note:"" },
       { name:"注射針 30G", qty:"100本", status:5, eta:"約2日", note:"" },
-      { name:"注射器 1ml", qty:"50本", status:5, eta:"約2日", note:"" },
       { name:"希釈用生食", qty:"20本", status:3, eta:"約12日", note:"別便で発送" },
-    ]},
-  { id:"17749428435", date:"2026年03月31日", clinic:"lala clinic", updatedAt:"2026/04/03 16:40",
-    products:[
-      { name:"ProFHILO H+L（プロファイロ）2ml", qty:"1本（箱入り）", status:6, eta:"—", note:"" },
-    ]},
-  { id:"17745112233", date:"2026年03月15日", clinic:"Beauty Skin Clinic", updatedAt:"2026/03/28 10:00",
-    products:[
-      { name:"リデンシル 5ml", qty:"10本", status:6, eta:"—", note:"" },
     ]},
 ];
 
 function loadOrders(){ try{ const d=localStorage.getItem(STORAGE_KEY); if(d) return JSON.parse(d); }catch{} return SAMPLE_ORDERS; }
 function saveOrders(o){ try{ localStorage.setItem(STORAGE_KEY,JSON.stringify(o)); return true; }catch{ return false; } }
 function nowStr(){ return new Date().toLocaleString("ja-JP",{year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"}); }
-function toMonthKey(d){ const m=d.match(/(\d{4}年\d{2}月)/); return m?m[1]:"不明"; }
+function toMonthKey(d){ const m=(d||"").match(/(\d{4}年\d{2}月)/); return m?m[1]:"不明"; }
 function groupBy(arr,fn){ return arr.reduce((a,o)=>{ const k=fn(o); if(!a[k])a[k]=[]; a[k].push(o); return a; },{}); }
 
-// ── Login ──────────────────────────────────────────────────────────────────
+// ── bcart CSV パーサー ─────────────────────────────────────────────────────
+function parseBcartCSV(text) {
+  // CSV行パース（クォート対応）
+  function parseRow(line) {
+    const result = [];
+    let cur = "", inQ = false;
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (c === '"') { inQ = !inQ; }
+      else if (c === ',' && !inQ) { result.push(cur.trim()); cur = ""; }
+      else { cur += c; }
+    }
+    result.push(cur.trim());
+    return result;
+  }
+
+  const lines = text.split(/\r?\n/).filter(l => l.trim());
+  if (lines.length < 2) return [];
+
+  const headers = parseRow(lines[0]);
+  const idx = {
+    orderNo:  headers.indexOf("受注番号"),
+    company:  headers.indexOf("会社名"),
+    dateTime: headers.indexOf("受注日時"),
+    itemName: headers.indexOf("商品名"),
+    spec:     headers.indexOf("製品規格"),
+    qty:      headers.indexOf("受注数"),
+    unit:     headers.indexOf("単位"),
+    category: headers.indexOf("明細区分"),
+  };
+
+  const orderMap = {};
+
+  for (let i = 1; i < lines.length; i++) {
+    const row = parseRow(lines[i]);
+    const orderNo = row[idx.orderNo];
+    if (!orderNo) continue;
+
+    // 送料・手数料など商品以外の行は除外
+    const category = row[idx.category] || "";
+    if (category && category !== "商品") continue;
+
+    const itemName = (row[idx.itemName] || "").replace(/\n/g, " ").trim();
+    if (!itemName || itemName === "送料" || itemName === "決済手数料") continue;
+
+    // 注文グループ作成
+    if (!orderMap[orderNo]) {
+      const rawDate = row[idx.dateTime] || "";
+      const d = rawDate ? new Date(rawDate) : null;
+      const dateStr = d ? `${d.getFullYear()}年${String(d.getMonth()+1).padStart(2,"0")}月${String(d.getDate()).padStart(2,"0")}日` : "";
+      orderMap[orderNo] = {
+        id: orderNo,
+        date: dateStr,
+        clinic: (row[idx.company] || "").trim(),
+        updatedAt: nowStr(),
+        products: [],
+      };
+    }
+
+    // 数量文字列を組み立て
+    const qty = row[idx.qty] || "";
+    const unit = row[idx.unit] || "";
+    const spec = (row[idx.spec] || "").replace(/\n/g, " ").trim();
+    const qtyStr = qty && unit ? `${qty}${unit}` : qty || unit || "—";
+    const displayName = spec ? `${itemName}（${spec}）` : itemName;
+
+    orderMap[orderNo].products.push({
+      name: displayName,
+      qty: qtyStr,
+      status: 0,
+      eta: "約30日",
+      note: "",
+    });
+  }
+
+  return Object.values(orderMap);
+}
+
+// ── CSVインポートモーダル ──────────────────────────────────────────────────
+function CsvImportModal({ onImport, onClose }) {
+  const [drag, setDrag] = useState(false);
+  const [preview, setPreview] = useState(null);
+  const [error, setError] = useState("");
+  const [encoding, setEncoding] = useState("shift_jis");
+  const fileRef = useRef();
+
+  const readFile = (file) => {
+    setError("");
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        // Shift-JIS デコード
+        const bytes = new Uint8Array(e.target.result);
+        let text;
+        try {
+          const decoder = new TextDecoder(encoding);
+          text = decoder.decode(bytes);
+        } catch {
+          text = new TextDecoder("utf-8").decode(bytes);
+        }
+        const orders = parseBcartCSV(text);
+        if (orders.length === 0) { setError("注文データが見つかりませんでした。ファイルを確認してください。"); return; }
+        setPreview(orders);
+      } catch(err) {
+        setError("ファイルの読み込みに失敗しました: " + err.message);
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault(); setDrag(false);
+    const file = e.dataTransfer.files[0];
+    if (file) readFile(file);
+  };
+
+  const handleFile = (e) => {
+    const file = e.target.files[0];
+    if (file) readFile(file);
+  };
+
+  const handleImport = () => {
+    if (preview) { onImport(preview); onClose(); }
+  };
+
+  return (
+    <div style={{ position:"fixed",inset:0,background:"rgba(10,20,40,0.6)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:200,padding:16 }}>
+      <div style={{ background:"#fff",borderRadius:18,padding:"24px 22px",width:"100%",maxWidth:480,maxHeight:"85vh",overflowY:"auto",boxShadow:"0 20px 60px rgba(0,0,0,0.3)" }}>
+        <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20 }}>
+          <div>
+            <div style={{ fontSize:16,fontWeight:800,color:"#0f2744" }}>bcart CSVインポート</div>
+            <div style={{ fontSize:12,color:"#8a95a5",marginTop:2 }}>bcartから書き出したCSVをアップロードしてください</div>
+          </div>
+          <button onClick={onClose} style={{ background:"none",border:"none",fontSize:22,cursor:"pointer",color:"#8a95a5" }}>✕</button>
+        </div>
+
+        {/* エンコーディング選択 */}
+        <div style={{ marginBottom:14 }}>
+          <div style={{ fontSize:11.5,color:"#8a95a5",marginBottom:6 }}>文字コード</div>
+          <div style={{ display:"flex",gap:8 }}>
+            {[["shift_jis","Shift-JIS（標準）"],["utf-8","UTF-8"]].map(([v,l])=>(
+              <button key={v} onClick={()=>setEncoding(v)} style={{ padding:"7px 14px",borderRadius:8,border:"1.5px solid",borderColor:encoding===v?"#0f2744":"#dde4ef",background:encoding===v?"#0f2744":"#fff",color:encoding===v?"#fff":"#555",fontSize:12.5,cursor:"pointer",fontWeight:encoding===v?700:400 }}>{l}</button>
+            ))}
+          </div>
+        </div>
+
+        {/* ドロップゾーン */}
+        {!preview && (
+          <div
+            className={`drop-zone${drag?" drag-over":""}`}
+            onDragOver={e=>{e.preventDefault();setDrag(true);}}
+            onDragLeave={()=>setDrag(false)}
+            onDrop={handleDrop}
+            onClick={()=>fileRef.current.click()}
+          >
+            <div style={{ fontSize:36,marginBottom:10 }}>📂</div>
+            <div style={{ fontSize:14,fontWeight:700,color:"#0f2744",marginBottom:4 }}>CSVファイルをドラッグ＆ドロップ</div>
+            <div style={{ fontSize:12.5,color:"#8a95a5",marginBottom:12 }}>または</div>
+            <div style={{ display:"inline-block",padding:"9px 20px",borderRadius:9,background:"#0f2744",color:"#fff",fontSize:13,fontWeight:700,cursor:"pointer" }}>ファイルを選択</div>
+            <input ref={fileRef} type="file" accept=".csv" onChange={handleFile} style={{ display:"none" }} />
+            <div style={{ fontSize:11,color:"#a0aab8",marginTop:12 }}>bcart管理画面 → 受注管理 → CSV書き出し</div>
+          </div>
+        )}
+
+        {error && (
+          <div style={{ padding:"10px 14px",background:"#fff0f0",border:"1px solid #e0c0c0",borderRadius:10,color:"#c05050",fontSize:13,marginTop:12 }}>
+            ⚠ {error}
+          </div>
+        )}
+
+        {/* プレビュー */}
+        {preview && (
+          <div>
+            <div style={{ padding:"10px 14px",background:"#f0fdf6",border:"1px solid #a0d8b8",borderRadius:10,marginBottom:14,fontSize:13,color:"#1a7a50",fontWeight:600 }}>
+              ✅ {preview.length}件の注文、合計{preview.reduce((s,o)=>s+o.products.length,0)}商品を読み込みました
+            </div>
+            <div style={{ maxHeight:260,overflowY:"auto",border:"1.5px solid #e4eaf3",borderRadius:12,marginBottom:16 }}>
+              {preview.map((o,i)=>(
+                <div key={i} style={{ padding:"11px 14px",borderBottom:"1px solid #f0f4f9" }}>
+                  <div style={{ display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4 }}>
+                    <span style={{ fontSize:13.5,fontWeight:800,color:"#0f2744" }}>{o.id}</span>
+                    <span style={{ fontSize:11,color:"#8a95a5" }}>{o.date}</span>
+                  </div>
+                  <div style={{ fontSize:12,color:"#6a7a8a",marginBottom:4 }}>{o.clinic}</div>
+                  <div style={{ display:"flex",flexWrap:"wrap",gap:5 }}>
+                    {o.products.map((p,j)=>(
+                      <span key={j} style={{ padding:"3px 8px",borderRadius:6,background:"#f0f4ff",color:"#2a5090",fontSize:11,border:"1px solid #d0ddf0" }}>
+                        {p.name.length>20?p.name.slice(0,20)+"…":p.name}　{p.qty}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div style={{ background:"#fffbef",border:"1px solid #e8c95a",borderRadius:10,padding:"10px 14px",fontSize:12.5,color:"#7a6020",marginBottom:16 }}>
+              💡 ステータスは全商品「注文受付済み」で取り込まれます。取り込み後に各商品のステータスを更新してください。<br/>
+              既存の同じ注文番号がある場合は上書きされます。
+            </div>
+            <div style={{ display:"flex",gap:8 }}>
+              <button onClick={()=>setPreview(null)} style={{ flex:1,padding:12,borderRadius:10,border:"1.5px solid #dde4ef",background:"#fff",fontSize:14,cursor:"pointer",color:"#666" }}>やり直す</button>
+              <button onClick={handleImport} style={{ flex:2,padding:12,borderRadius:10,border:"none",background:"linear-gradient(135deg,#0f2744,#1a3d6e)",color:"#fff",fontWeight:800,fontSize:14,cursor:"pointer" }}>
+                {preview.length}件をインポートする
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Login ─────────────────────────────────────────────────────────────────
 function LoginScreen({ onLogin }) {
   const [pw,setPw]=useState(""); const [err,setErr]=useState(false); const [shake,setShake]=useState(false);
   const go=()=>{ if(pw===ADMIN_PASSWORD){onLogin();}else{setErr(true);setShake(true);setTimeout(()=>setShake(false),500);} };
@@ -90,7 +286,7 @@ function LoginScreen({ onLogin }) {
   );
 }
 
-// ── Product Editor ─────────────────────────────────────────────────────────
+// ── Product Editor ────────────────────────────────────────────────────────
 function ProductEditor({ product, index, onChange, onDelete }) {
   const [open,setOpen]=useState(false);
   const s=STATUS_STAGES[product.status];
@@ -150,7 +346,7 @@ function ProductEditor({ product, index, onChange, onDelete }) {
   );
 }
 
-// ── Order Card ─────────────────────────────────────────────────────────────
+// ── Order Card ────────────────────────────────────────────────────────────
 function OrderCard({ order, onUpdate, onDelete }) {
   const [open,setOpen]=useState(false);
   const active=order.products.filter(p=>p.status<6).length;
@@ -190,42 +386,7 @@ function OrderCard({ order, onUpdate, onDelete }) {
   );
 }
 
-// ── New Order Modal ────────────────────────────────────────────────────────
-function NewOrderModal({ onAdd, onClose }) {
-  const [id,setId]=useState(""); const [clinic,setClinic]=useState(""); const [date,setDate]=useState(""); const [err,setErr]=useState("");
-  const submit=()=>{ if(!id.trim())return setErr("注文番号は必須です"); if(!clinic.trim())return setErr("クリニック名は必須です"); onAdd({id:id.trim(),date:date.trim(),clinic:clinic.trim(),updatedAt:nowStr(),products:[{name:"",qty:"",status:0,eta:"約30日",note:""}]}); };
-  const inp={width:"100%",padding:"10px 12px",borderRadius:9,border:"1.5px solid #dde4ef",fontSize:14,outline:"none",color:"#1a2a3a"};
-  return (
-    <div style={{ position:"fixed",inset:0,background:"rgba(10,20,40,0.55)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:100,padding:16 }}>
-      <div style={{ background:"#fff",borderRadius:18,padding:"24px 22px",width:"100%",maxWidth:380,boxShadow:"0 20px 60px rgba(0,0,0,0.25)" }}>
-        <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18 }}>
-          <div style={{ fontSize:16,fontWeight:800,color:"#0f2744" }}>新規注文を追加</div>
-          <button onClick={onClose} style={{ background:"none",border:"none",fontSize:20,cursor:"pointer",color:"#8a95a5" }}>✕</button>
-        </div>
-        <div style={{ marginBottom:11 }}>
-          <div style={{ fontSize:11.5,color:"#8a95a5",marginBottom:4 }}>注文番号 <span style={{ color:"#e05050" }}>*</span></div>
-          <input value={id} onChange={e=>setId(e.target.value)} placeholder="17751937539" style={inp} />
-        </div>
-        <div style={{ marginBottom:11 }}>
-          <div style={{ fontSize:11.5,color:"#8a95a5",marginBottom:4 }}>クリニック名 <span style={{ color:"#e05050" }}>*</span></div>
-          <input value={clinic} onChange={e=>setClinic(e.target.value)} placeholder="lala clinic" style={inp} />
-        </div>
-        <div style={{ marginBottom:16 }}>
-          <div style={{ fontSize:11.5,color:"#8a95a5",marginBottom:4 }}>注文日</div>
-          <input value={date} onChange={e=>setDate(e.target.value)} placeholder="2026年04月05日" style={inp} />
-        </div>
-        <div style={{ background:"#f8fafd",borderRadius:10,padding:"10px 12px",fontSize:12,color:"#6a7a8a",marginBottom:14,border:"1px solid #edf0f6" }}>💡 追加後、商品ごとにステータスを設定できます</div>
-        {err && <div style={{ color:"#e05050",fontSize:12.5,marginBottom:10 }}>⚠ {err}</div>}
-        <div style={{ display:"flex",gap:8 }}>
-          <button onClick={onClose} style={{ flex:1,padding:12,borderRadius:10,border:"1.5px solid #dde4ef",background:"#fff",fontSize:14,cursor:"pointer",color:"#666" }}>キャンセル</button>
-          <button onClick={submit} style={{ flex:2,padding:12,borderRadius:10,border:"none",background:"linear-gradient(135deg,#0f2744,#1a3d6e)",color:"#fff",fontWeight:800,fontSize:14,cursor:"pointer" }}>追加する</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ── Group Section ──────────────────────────────────────────────────────────
+// ── Group Section ─────────────────────────────────────────────────────────
 function GroupSection({ title, orders, onUpdate, onDelete, defaultOpen }) {
   const [open,setOpen]=useState(defaultOpen??true);
   const activeCount=orders.filter(o=>o.products.some(p=>p.status<6)).length;
@@ -244,18 +405,30 @@ function GroupSection({ title, orders, onUpdate, onDelete, defaultOpen }) {
   );
 }
 
-// ── Main ───────────────────────────────────────────────────────────────────
+// ── Main ──────────────────────────────────────────────────────────────────
 function App() {
   const [authed,setAuthed]=useState(false);
   const [orders,setOrders]=useState(loadOrders);
-  const [showNew,setShowNew]=useState(false);
+  const [showCsv,setShowCsv]=useState(false);
   const [saveStatus,setSaveStatus]=useState("");
   const [groupMode,setGroupMode]=useState("month");
   const [search,setSearch]=useState("");
+  const [importMsg,setImportMsg]=useState("");
 
   const updateOrder=(id,field,value)=>setOrders(prev=>prev.map(o=>o.id===id?{...o,[field]:value,updatedAt:nowStr()}:o));
   const deleteOrder=(id)=>setOrders(prev=>prev.filter(o=>o.id!==id));
-  const addOrder=(order)=>{ setOrders(prev=>[...prev,order]); setShowNew(false); };
+
+  const handleImport=(newOrders)=>{
+    setOrders(prev=>{
+      const map={};
+      prev.forEach(o=>map[o.id]=o);
+      newOrders.forEach(o=>map[o.id]=o); // 上書き
+      return Object.values(map).sort((a,b)=>b.id.localeCompare(a.id));
+    });
+    setImportMsg(`✅ ${newOrders.length}件をインポートしました`);
+    setTimeout(()=>setImportMsg(""),4000);
+  };
+
   const handleSave=()=>{ setSaveStatus("saving"); setSaveStatus(saveOrders(orders)?"saved":"error"); setTimeout(()=>setSaveStatus(""),2500); };
 
   const filtered=orders.filter(o=>!search||o.id.includes(search)||o.clinic.includes(search)||o.products.some(p=>p.name.includes(search)));
@@ -270,16 +443,18 @@ function App() {
 
   return (
     <div style={{ minHeight:"100vh",background:"#f0f4f9" }}>
-      {showNew&&<NewOrderModal onAdd={addOrder} onClose={()=>setShowNew(false)} />}
+      {showCsv&&<CsvImportModal onImport={handleImport} onClose={()=>setShowCsv(false)} />}
+
+      {/* Top bar */}
       <div style={{ background:"linear-gradient(135deg,#0a1e35,#0f2744)",padding:"18px 18px 20px",position:"sticky",top:0,zIndex:50 }}>
-        <div style={{ maxWidth:680,margin:"0 auto" }}>
+        <div style={{ maxWidth:700,margin:"0 auto" }}>
           <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14 }}>
             <div>
               <div style={{ fontSize:11,letterSpacing:"0.18em",color:"#d4a843",fontWeight:700,marginBottom:3 }}>ADMIN</div>
               <div style={{ fontSize:17,fontWeight:900,color:"#fff" }}>輸入状況 管理ダッシュボード</div>
             </div>
             <div style={{ display:"flex",gap:8 }}>
-              <button onClick={()=>setShowNew(true)} style={{ padding:"9px 14px",borderRadius:9,border:"1.5px solid rgba(212,168,67,0.5)",background:"transparent",color:"#d4a843",fontWeight:700,fontSize:13,cursor:"pointer" }}>＋ 追加</button>
+              <button onClick={()=>setShowCsv(true)} style={{ padding:"9px 14px",borderRadius:9,border:"1.5px solid rgba(100,200,150,0.6)",background:"transparent",color:"#7df0b0",fontWeight:700,fontSize:13,cursor:"pointer" }}>📂 CSV取込</button>
               <button onClick={handleSave} style={{ padding:"9px 16px",borderRadius:9,border:"none",background:saveStatus==="saved"?"#3aa876":saveStatus==="error"?"#e05050":"#d4a843",color:"#0a1e35",fontWeight:800,fontSize:13,cursor:"pointer" }}>
                 {saveStatus==="saving"?"保存中...":saveStatus==="saved"?"✓ 保存済み":saveStatus==="error"?"エラー":"全件保存"}
               </button>
@@ -295,7 +470,15 @@ function App() {
           </div>
         </div>
       </div>
-      <div style={{ maxWidth:680,margin:"0 auto",padding:"18px 14px 48px" }}>
+
+      <div style={{ maxWidth:700,margin:"0 auto",padding:"18px 14px 48px" }}>
+
+        {importMsg && (
+          <div style={{ padding:"11px 16px",background:"#f0fdf6",border:"1.5px solid #3aa876",borderRadius:10,fontSize:13.5,fontWeight:700,color:"#1a7a50",marginBottom:14 }}>
+            {importMsg}　<span style={{ fontWeight:400,fontSize:12 }}>「全件保存」を押して保存してください</span>
+          </div>
+        )}
+
         <div style={{ display:"flex",gap:8,marginBottom:16,flexWrap:"wrap",alignItems:"center" }}>
           <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="注文番号・クリニック・商品名で検索"
             style={{ flex:1,minWidth:160,padding:"10px 14px",borderRadius:10,border:"1.5px solid #dde4ef",fontSize:13,outline:"none",background:"#fff",color:"#0f2744" }} />
@@ -305,6 +488,7 @@ function App() {
             ))}
           </div>
         </div>
+
         {keys.length===0&&<div style={{ textAlign:"center",color:"#aaa",padding:"40px 0",fontSize:14 }}>該当する注文が見つかりません</div>}
         {keys.map((k,i)=><GroupSection key={k} title={k} orders={grouped[k]} onUpdate={updateOrder} onDelete={deleteOrder} defaultOpen={i===0} />)}
         <div style={{ textAlign:"center",fontSize:12,color:"#c0c8d4",marginTop:8 }}>{filtered.length}件表示（全{orders.length}件）</div>
