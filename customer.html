@@ -7,18 +7,43 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+  import { getFirestore, collection, getDocs } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyDNg5KsLABnwJbN5EpvWjpLnkstFzXA1HE",
+    authDomain: "order-tracking-92681.firebaseapp.com",
+    projectId: "order-tracking-92681",
+    storageBucket: "order-tracking-92681.firebasestorage.app",
+    messagingSenderId: "988787355455",
+    appId: "1:988787355455:web:c7ce248d9fe2178636ed8a"
+  };
+  const app = initializeApp(firebaseConfig);
+  const db = getFirestore(app);
+
+  window._loadOrdersFromFirebase = async function() {
+    try {
+      const snap = await getDocs(collection(db, "orders"));
+      const orders = [];
+      snap.forEach(doc => orders.push(doc.data()));
+      return orders;
+    } catch(e) {
+      console.error("Firebase読み込みエラー:", e);
+      return null;
+    }
+  };
+</script>
 <style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: #f0f4f9; font-family: 'Hiragino Sans', 'Noto Sans JP', 'Yu Gothic', sans-serif; }
-  input::placeholder { color: rgba(255,255,255,0.4); }
+* { box-sizing:border-box; margin:0; padding:0; }
+body { background:#f0f4f9; font-family:'Hiragino Sans','Noto Sans JP','Yu Gothic',sans-serif; }
+input::placeholder { color:rgba(255,255,255,0.4); }
 </style>
 </head>
 <body>
 <div id="root"></div>
 <script type="text/babel">
 const { useState, useEffect } = React;
-
-const STORAGE_KEY = "order_tracker_orders_v2";
 
 const STATUS_STAGES = [
   { id:0, label:"注文受付済み",        icon:"📋", color:"#8a9ab5", short:"受付済" },
@@ -37,58 +62,31 @@ const GROUP_DEFS = [
   { label:"✅ お届け済み",   ids:[6],   bg:"#f4f7fa", border:"#c0cdd8", text:"#607080" },
 ];
 
-const SAMPLE_ORDERS = [
+const FALLBACK_ORDERS = [
   { id:"17751937539", date:"2026年04月03日", clinic:"lala clinic", updatedAt:"2026/04/04 11:00",
     products:[
       { name:"Fiora PDOスレッド Arrow cog W-type 19G", qty:"1箱（10本入り）", status:4, eta:"約5〜7日", note:"通関手続き中です" },
       { name:"カニューレ 100mm", qty:"10本", status:3, eta:"約10〜14日", note:"" },
       { name:"スレッド 155mm USP1", qty:"20本", status:1, eta:"約25日", note:"韓国工場より発送準備中" },
-      { name:"PDOリフトニードル 21G", qty:"5本", status:0, eta:"約30日", note:"" },
-    ]},
-  { id:"17751880750", date:"2026年04月03日", clinic:"lala clinic", updatedAt:"2026/04/04 09:30",
-    products:[
-      { name:"Ulthera ウルセラ カートリッジ (4-4.5mm)", qty:"2個", status:5, eta:"約2〜3日", note:"国内配送中" },
-      { name:"Ulthera ウルセラ カートリッジ (3-4.5mm)", qty:"1個", status:5, eta:"約2〜3日", note:"" },
-      { name:"Ulthera ウルセラ ハンドピース", qty:"1式", status:4, eta:"約5日", note:"通関手続き中" },
-    ]},
-  { id:"17749526823", date:"2026年03月31日", clinic:"lala clinic", updatedAt:"2026/04/04 08:15",
-    products:[
-      { name:"ナボタ 100単位", qty:"10セット", status:6, eta:"—", note:"" },
-      { name:"ナボタ 50単位", qty:"5セット", status:6, eta:"—", note:"" },
-      { name:"注射針 30G", qty:"100本", status:5, eta:"約2日", note:"" },
-      { name:"注射器 1ml", qty:"50本", status:5, eta:"約2日", note:"" },
-      { name:"希釈用生食", qty:"20本", status:3, eta:"約12日", note:"別便で発送" },
-    ]},
-  { id:"17749428435", date:"2026年03月31日", clinic:"lala clinic", updatedAt:"2026/04/03 16:40",
-    products:[
-      { name:"ProFHILO H+L（プロファイロ）2ml", qty:"1本（箱入り）", status:6, eta:"—", note:"" },
     ]},
 ];
-
-function loadOrders() {
-  try {
-    const d = localStorage.getItem(STORAGE_KEY);
-    if (d) return JSON.parse(d);
-  } catch {}
-  return SAMPLE_ORDERS;
-}
 
 function ProductRow({ product, index }) {
   const [open, setOpen] = useState(false);
   const s = STATUS_STAGES[product.status];
   return (
     <div style={{ borderBottom:"1px solid #f0f4f9" }}>
-      <div onClick={() => setOpen(o=>!o)} style={{ display:"flex",alignItems:"center",padding:"11px 14px",cursor:"pointer",gap:10,background:open?"#f8fafd":"#fff" }}>
+      <div onClick={()=>setOpen(o=>!o)} style={{ display:"flex",alignItems:"center",padding:"11px 14px",cursor:"pointer",gap:10,background:open?"#f8fafd":"#fff" }}>
         <div style={{ width:22,height:22,borderRadius:6,background:"#f0f4ff",color:"#4a7cc7",fontSize:10,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0 }}>{index+1}</div>
         <div style={{ flex:1,minWidth:0 }}>
           <div style={{ fontSize:13,fontWeight:600,color:"#1a2a3a",lineHeight:1.4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:open?"normal":"nowrap" }}>{product.name}</div>
           {!open && (
             <div style={{ display:"flex",alignItems:"center",gap:6,marginTop:3 }}>
               <span style={{ fontSize:11,color:"#8a95a5" }}>{product.qty}</span>
-              <span style={{ width:3,height:3,borderRadius:"50%",background:"#d0d8e4" }} />
+              <span style={{ width:3,height:3,borderRadius:"50%",background:"#d0d8e4" }}/>
               <span style={{ fontSize:11,fontWeight:700,color:s.color }}>{s.icon} {s.short}</span>
-              {product.eta && product.eta!=="—" && product.status<6 && <>
-                <span style={{ width:3,height:3,borderRadius:"50%",background:"#d0d8e4" }} />
+              {product.eta&&product.eta!=="—"&&product.status<6&&<>
+                <span style={{ width:3,height:3,borderRadius:"50%",background:"#d0d8e4" }}/>
                 <span style={{ fontSize:11,color:"#8a95a5" }}>{product.eta}</span>
               </>}
             </div>
@@ -102,10 +100,10 @@ function ProductRow({ product, index }) {
           <div style={{ display:"grid",gridTemplateColumns:"auto 1fr",gap:"6px 14px",fontSize:12.5 }}>
             <span style={{ color:"#8a95a5" }}>数量</span><span style={{ color:"#1a2a3a",fontWeight:600 }}>{product.qty}</span>
             <span style={{ color:"#8a95a5" }}>ステータス</span><span style={{ color:s.color,fontWeight:700 }}>{s.icon} {s.label}</span>
-            {product.eta && product.eta!=="—" && product.status<6 && <>
+            {product.eta&&product.eta!=="—"&&product.status<6&&<>
               <span style={{ color:"#8a95a5" }}>お届け目安</span><span style={{ color:"#1a2a3a",fontWeight:700 }}>{product.eta}</span>
             </>}
-            {product.note && <>
+            {product.note&&<>
               <span style={{ color:"#8a95a5" }}>備考</span><span style={{ color:"#5a6a7a",lineHeight:1.5 }}>{product.note}</span>
             </>}
           </div>
@@ -116,18 +114,17 @@ function ProductRow({ product, index }) {
 }
 
 function GroupedProductList({ products }) {
-  const [openGroups, setOpenGroups] = useState({ 0:true,1:true,2:true,3:false });
-  const done  = products.filter(p=>p.status===6).length;
-  const soon  = products.filter(p=>p.status>=4&&p.status<6).length;
-  const trans = products.filter(p=>p.status>=2&&p.status<4).length;
-  const prep  = products.filter(p=>p.status<2).length;
-  const chips = [
+  const [openGroups, setOpenGroups] = useState({0:true,1:true,2:true,3:false});
+  const done=products.filter(p=>p.status===6).length;
+  const soon=products.filter(p=>p.status>=4&&p.status<6).length;
+  const trans=products.filter(p=>p.status>=2&&p.status<4).length;
+  const prep=products.filter(p=>p.status<2).length;
+  const chips=[
     done  && { label:`✅ 完了 ${done}件`,         bg:"#e8f4ee",color:"#1a7a50" },
     soon  && { label:`🚚 到着まもなく ${soon}件`,  bg:"#fff8e8",color:"#8a6010" },
     trans && { label:`🌏 輸送中 ${trans}件`,        bg:"#f0f6ff",color:"#2a5090" },
     prep  && { label:`📦 準備中 ${prep}件`,         bg:"#f4f6fb",color:"#4a6080" },
   ].filter(Boolean);
-
   return (
     <div style={{ background:"#fff",borderRadius:14,border:"1.5px solid #e4eaf3",overflow:"hidden",boxShadow:"0 2px 10px rgba(10,30,53,0.05)" }}>
       <div style={{ display:"flex",gap:6,flexWrap:"wrap",padding:"13px 14px",borderBottom:"1px solid #edf0f6" }}>
@@ -135,9 +132,9 @@ function GroupedProductList({ products }) {
         {chips.map((c,i)=><span key={i} style={{ padding:"4px 10px",borderRadius:20,fontSize:12,fontWeight:700,background:c.bg,color:c.color }}>{c.label}</span>)}
       </div>
       {GROUP_DEFS.map((g,gi)=>{
-        const items = products.filter(p=>g.ids.includes(p.status));
+        const items=products.filter(p=>g.ids.includes(p.status));
         if(!items.length) return null;
-        const isOpen = openGroups[gi];
+        const isOpen=openGroups[gi];
         return (
           <div key={gi}>
             <div onClick={()=>setOpenGroups(s=>({...s,[gi]:!s[gi]}))} style={{ display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 14px",cursor:"pointer",background:g.bg,borderTop:"1.5px solid #edf0f6" }}>
@@ -147,7 +144,7 @@ function GroupedProductList({ products }) {
               </div>
               <div style={{ fontSize:14,color:g.text,opacity:0.6,transform:isOpen?"rotate(180deg)":"none",transition:"transform 0.2s" }}>⌄</div>
             </div>
-            {isOpen && items.map((p,i)=><ProductRow key={i} product={p} index={products.indexOf(p)} />)}
+            {isOpen&&items.map((p,i)=><ProductRow key={i} product={p} index={products.indexOf(p)} />)}
           </div>
         );
       })}
@@ -156,10 +153,34 @@ function GroupedProductList({ products }) {
 }
 
 function App() {
-  const [orders] = useState(loadOrders);
+  const [orders, setOrders] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
   const [found, setFound] = useState(null);
   const [searched, setSearched] = useState(false);
+
+  useEffect(()=>{
+    const load = async () => {
+      // Firebaseが読み込まれるまで少し待つ
+      let tries = 0;
+      while (!window._loadOrdersFromFirebase && tries < 20) {
+        await new Promise(r=>setTimeout(r,200));
+        tries++;
+      }
+      if (window._loadOrdersFromFirebase) {
+        const data = await window._loadOrdersFromFirebase();
+        if (data && data.length > 0) {
+          setOrders(data);
+        } else {
+          setOrders(FALLBACK_ORDERS);
+        }
+      } else {
+        setOrders(FALLBACK_ORDERS);
+      }
+      setLoading(false);
+    };
+    load();
+  },[]);
 
   const handleSearch = () => {
     const q = query.trim();
@@ -171,7 +192,7 @@ function App() {
   return (
     <div style={{ minHeight:"100vh",background:"#f0f4f9" }}>
       <div style={{ background:"linear-gradient(160deg,#0a1e35 0%,#0f2744 55%,#1a3d6e 100%)",padding:"36px 20px 40px",position:"relative",overflow:"hidden" }}>
-        <div style={{ position:"absolute",top:-50,right:-50,width:200,height:200,borderRadius:"50%",background:"rgba(212,168,67,0.06)",pointerEvents:"none" }} />
+        <div style={{ position:"absolute",top:-50,right:-50,width:200,height:200,borderRadius:"50%",background:"rgba(212,168,67,0.06)",pointerEvents:"none" }}/>
         <div style={{ maxWidth:520,margin:"0 auto",position:"relative" }}>
           <div style={{ fontSize:10.5,letterSpacing:"0.2em",color:"#d4a843",fontWeight:700,marginBottom:6,textTransform:"uppercase" }}>Import Status Tracking</div>
           <div style={{ fontSize:22,fontWeight:900,color:"#fff",marginBottom:4,lineHeight:1.3 }}>輸入状況<br/>確認システム</div>
@@ -180,22 +201,25 @@ function App() {
             <div style={{ fontSize:11,color:"rgba(255,255,255,0.45)",marginBottom:7 }}>注文番号（例：17751937539）</div>
             <div style={{ display:"flex",gap:8 }}>
               <input value={query} onChange={e=>setQuery(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleSearch()} placeholder="注文番号を入力"
-                style={{ flex:1,padding:"12px 14px",borderRadius:10,border:"1.5px solid rgba(255,255,255,0.12)",background:"rgba(255,255,255,0.1)",color:"#fff",fontSize:15,outline:"none" }} />
-              <button onClick={handleSearch} style={{ padding:"12px 20px",borderRadius:10,border:"none",background:"#d4a843",color:"#0a1e35",fontWeight:900,fontSize:14,cursor:"pointer" }}>確認する</button>
+                style={{ flex:1,padding:"12px 14px",borderRadius:10,border:"1.5px solid rgba(255,255,255,0.12)",background:"rgba(255,255,255,0.1)",color:"#fff",fontSize:15,outline:"none" }}/>
+              <button onClick={handleSearch} disabled={loading}
+                style={{ padding:"12px 20px",borderRadius:10,border:"none",background:"#d4a843",color:"#0a1e35",fontWeight:900,fontSize:14,cursor:"pointer",opacity:loading?0.6:1 }}>
+                {loading?"読込中":"確認する"}
+              </button>
             </div>
           </div>
         </div>
       </div>
 
       <div style={{ maxWidth:520,margin:"0 auto",padding:"20px 14px 48px" }}>
-        {searched && !found && (
+        {searched&&!found&&(
           <div style={{ background:"#fff",borderRadius:16,padding:"36px 24px",textAlign:"center",border:"1.5px solid #e4eaf3" }}>
             <div style={{ fontSize:36,marginBottom:10 }}>🔍</div>
             <div style={{ fontSize:15,fontWeight:700,color:"#333",marginBottom:6 }}>注文が見つかりませんでした</div>
             <div style={{ fontSize:13,color:"#888",lineHeight:1.7 }}>注文番号をご確認の上、再度お試しください。<br/>ご不明な点はお電話にてお問い合わせください。</div>
           </div>
         )}
-        {found && (
+        {found&&(
           <div style={{ display:"flex",flexDirection:"column",gap:12 }}>
             <div style={{ background:"#fff",borderRadius:14,border:"1.5px solid #e4eaf3",padding:"16px 18px",boxShadow:"0 2px 10px rgba(10,30,53,0.05)" }}>
               <div style={{ display:"flex",justifyContent:"space-between",alignItems:"flex-start" }}>
@@ -213,7 +237,7 @@ function App() {
                 <span style={{ fontSize:11,color:"#a0aab8" }}>最終更新：{found.updatedAt}</span>
               </div>
             </div>
-            <GroupedProductList products={found.products} />
+            <GroupedProductList products={found.products}/>
             <div style={{ fontSize:12,color:"#a0aab8",textAlign:"center",lineHeight:1.7,padding:"4px 0 8px" }}>
               ステータスは随時更新されます。<br/>ご不明な点はお電話にてお問い合わせください。
             </div>
@@ -224,7 +248,7 @@ function App() {
   );
 }
 
-ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
 </script>
 </body>
 </html>
