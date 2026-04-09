@@ -9,7 +9,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-  import { getFirestore, collection, getDocs, doc, setDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+  import { getFirestore, collection, getDocs, doc, setDoc, deleteDoc, updateDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
   import { getAuth, sendPasswordResetEmail } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
   const firebaseConfig = {
@@ -54,6 +54,20 @@
       return true;
     },
     sendPasswordReset: (email) => sendPasswordResetEmail(auth, email),
+    loadRequests: async () => {
+      const snap = await getDocs(collection(db, "requests"));
+      const list = [];
+      snap.forEach(d => list.push(d.data()));
+      return list.sort((a,b) => b.createdAt.localeCompare(a.createdAt));
+    },
+    replyRequest: async (id, reply) => {
+      const now = new Date().toLocaleString("ja-JP", {year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"});
+      await updateDoc(doc(db, "requests", id), { reply, status: "replied", repliedAt: now });
+      return true;
+    },
+    markRequestRead: async (id) => {
+      await updateDoc(doc(db, "requests", id), { status: "read" });
+    }
   };
 </script>
 <style>
@@ -439,6 +453,130 @@ function GroupSection({ title, orders, onUpdate, onDelete, defaultOpen }) {
   );
 }
 
+
+// ── リクエスト管理 ────────────────────────────────────────────────────────
+function RequestManager(props) {
+  const [requests, setRequests] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [replyText, setReplyText] = useState({});
+  const [replying, setReplying] = useState({});
+  const [replyDone, setReplyDone] = useState({});
+
+  const waitFB = async () => { let t=0; while(!window._firebase&&t<30){await new Promise(r=>setTimeout(r,200));t++;} };
+
+  useEffect(() => {
+    const load = async () => {
+      await waitFB();
+      const data = await window._firebase.loadRequests();
+      setRequests(data);
+      setLoading(false);
+      if (props.onUnreadCount) props.onUnreadCount(data.filter(r => r.status !== "replied").length);
+      data.filter(r => r.status === "unread").forEach(r => window._firebase.markRequestRead(r.id));
+    };
+    load();
+  }, []);
+
+  const handleReply = async (id) => {
+    const text = replyText[id];
+    if (!text || !text.trim()) return;
+    setReplying(p => ({...p, [id]: true}));
+    try {
+      await window._firebase.replyRequest(id, text.trim());
+      setRequests(prev => prev.map(r => r.id === id ? {...r, reply: text.trim(), status: "replied"} : r));
+      setReplyDone(p => ({...p, [id]: true}));
+    } catch(e) { alert("送信に失敗しました"); }
+    setReplying(p => ({...p, [id]: false}));
+  };
+
+  const unread = requests.filter(r => r.status === "unread" || r.status === "read").length;
+  const unreplied = requests.filter(r => r.status !== "replied").length;
+
+  if (loading) return <div style={{ textAlign:"center",padding:"40px 0",color:"#8a95a5" }}>読み込み中...</div>;
+
+  return (
+    <div>
+      {/* サマリー */}
+      <div style={{ display:"flex",gap:10,marginBottom:16,flexWrap:"wrap" }}>
+        <div style={{ background:"#fff",borderRadius:12,border:"1.5px solid #e4eaf3",padding:"12px 18px",flex:1,minWidth:120 }}>
+          <div style={{ fontSize:22,fontWeight:900,color:"#e07d20" }}>{unreplied}</div>
+          <div style={{ fontSize:11,color:"#8a95a5",marginTop:2 }}>未返信</div>
+        </div>
+        <div style={{ background:"#fff",borderRadius:12,border:"1.5px solid #e4eaf3",padding:"12px 18px",flex:1,minWidth:120 }}>
+          <div style={{ fontSize:22,fontWeight:900,color:"#3aa876" }}>{requests.filter(r=>r.status==="replied").length}</div>
+          <div style={{ fontSize:11,color:"#8a95a5",marginTop:2 }}>返信済み</div>
+        </div>
+        <div style={{ background:"#fff",borderRadius:12,border:"1.5px solid #e4eaf3",padding:"12px 18px",flex:1,minWidth:120 }}>
+          <div style={{ fontSize:22,fontWeight:900,color:"#6b8cba" }}>{requests.length}</div>
+          <div style={{ fontSize:11,color:"#8a95a5",marginTop:2 }}>合計</div>
+        </div>
+      </div>
+
+      {requests.length === 0 && (
+        <div style={{ textAlign:"center",padding:"48px 0",color:"#8a95a5" }}>
+          <div style={{ fontSize:32,marginBottom:12 }}>📭</div>
+          <div style={{ fontSize:14 }}>リクエストはまだありません</div>
+        </div>
+      )}
+
+      {requests.map(r => (
+        <div key={r.id} style={{ background:"#fff",borderRadius:14,border:`1.5px solid ${r.status==="replied"?"#c0d0e8":"#f0c090"}`,marginBottom:12,overflow:"hidden",boxShadow:"0 1px 8px rgba(10,30,53,0.05)",borderLeft:`4px solid ${r.status==="replied"?"#3aa876":"#e07d20"}` }}>
+          <div style={{ padding:"14px 16px" }}>
+            {/* ヘッダー */}
+            <div style={{ display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10 }}>
+              <div>
+                <div style={{ display:"flex",alignItems:"center",gap:8,marginBottom:4,flexWrap:"wrap" }}>
+                  <span style={{ fontSize:15,fontWeight:900,color:"#0f2744" }}>{r.orderId}</span>
+                  <span style={{ padding:"3px 9px",borderRadius:20,fontSize:11,fontWeight:700,
+                    background:r.status==="replied"?"#e8f0fa":"#fff8e8",
+                    color:r.status==="replied"?"#0f2744":"#b87f0a",
+                    border:r.status==="replied"?"1px solid #c0d0e8":"1px solid #e8c95a" }}>
+                    {r.status==="replied"?"✅ 返信済み":"🚨 未返信"}
+                  </span>
+                </div>
+                <div style={{ fontSize:11.5,color:"#8a95a5" }}>{r.clinic}　{r.email}</div>
+              </div>
+              <div style={{ fontSize:11,color:"#a0aab8",textAlign:"right" }}>{r.createdAt}</div>
+            </div>
+            {/* リクエスト内容 */}
+            <div style={{ padding:"10px 14px",background:"#fff8f0",borderRadius:9,border:"1px solid #f0c090",fontSize:13,color:"#5a3010",marginBottom:10 }}>
+              📬 {r.message}
+            </div>
+            {/* 返信済みの場合 */}
+            {r.reply && (
+              <div style={{ padding:"10px 14px",background:"#f0f6ff",borderRadius:9,border:"1px solid #d0e0f4",fontSize:13,color:"#1a3a5c",marginBottom:4 }}>
+                💬 {r.reply}
+              </div>
+            )}
+            {r.repliedAt && <div style={{ fontSize:11,color:"#a0aab8",marginBottom:8,textAlign:"right" }}>返信日時：{r.repliedAt}</div>}
+            {/* 返信フォーム */}
+            {r.status !== "replied" && !replyDone[r.id] && (
+              <div style={{ marginTop:8 }}>
+                <div style={{ fontSize:11.5,color:"#8a95a5",marginBottom:6 }}>返信メッセージを入力</div>
+                <textarea
+                  value={replyText[r.id]||""}
+                  onChange={e=>setReplyText(p=>({...p,[r.id]:e.target.value}))}
+                  placeholder="例：〇〇の商品は現在通関中で、約3〜5日でお届け予定です。"
+                  rows={3}
+                  style={{ width:"100%",padding:"10px 12px",borderRadius:9,border:"1.5px solid #dde4ef",fontSize:13,outline:"none",resize:"vertical",boxSizing:"border-box",marginBottom:8 }}
+                />
+                <button onClick={()=>handleReply(r.id)} disabled={replying[r.id]}
+                  style={{ width:"100%",padding:"11px",borderRadius:9,border:"none",background:"#0f2744",color:"#fff",fontWeight:800,fontSize:13,cursor:"pointer",opacity:replying[r.id]?0.7:1 }}>
+                  {replying[r.id]?"送信中...":"返信を送る"}
+                </button>
+              </div>
+            )}
+            {replyDone[r.id] && (
+              <div style={{ padding:"10px",background:"#f0fdf6",borderRadius:9,border:"1px solid #a0d8b8",fontSize:13,color:"#1a7a50",fontWeight:600,textAlign:"center" }}>
+                ✅ 返信を送信しました
+              </div>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ── メインApp ─────────────────────────────────────────────────────────────
 function App() {
   const [authed,setAuthed]=useState(false);
@@ -449,7 +587,8 @@ function App() {
   const [groupMode,setGroupMode]=useState("month");
   const [search,setSearch]=useState("");
   const [importMsg,setImportMsg]=useState("");
-  const [tab,setTab]=useState("orders"); // "orders" | "accounts"
+  const [tab,setTab]=useState("orders"); // "orders" | "accounts" | "requests"
+  const [unreadCount,setUnreadCount]=useState(0);
 
   useEffect(()=>{
     if(!authed) return;
@@ -515,7 +654,7 @@ function App() {
           </div>
           {/* タブ */}
           <div style={{ display:"flex",gap:2,background:"rgba(255,255,255,0.08)",borderRadius:10,padding:3 }}>
-            {[["orders","📦 注文管理"],["accounts","👤 クリニック管理"]].map(([key,label])=>(
+            {[["orders","📦 注文管理"],["requests", unreadCount > 0 ? `📬 リクエスト ${unreadCount}件` : "📬 リクエスト"],["accounts","👤 クリニック管理"]].map(([key,label])=>(
               <button key={key} onClick={()=>setTab(key)} style={{ flex:1,padding:"8px",borderRadius:8,border:"none",background:tab===key?"#fff":"transparent",color:tab===key?"#0f2744":"rgba(255,255,255,0.6)",fontWeight:tab===key?700:500,fontSize:13,cursor:"pointer",transition:"all 0.2s" }}>{label}</button>
             ))}
           </div>
@@ -525,6 +664,7 @@ function App() {
       <div style={{ maxWidth:700,margin:"0 auto",padding:"18px 14px 48px" }}>
 
         {tab==="accounts" && <ClinicAccountManager />}
+        {tab==="requests" && <RequestManager onUnreadCount={setUnreadCount}/>}
 
         {tab==="orders" && (
           <>
