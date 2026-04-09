@@ -7,6 +7,43 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+  import { getFirestore, collection, getDocs, doc, setDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyDNg5KsLABnwJbN5EpvWjpLnkstFzXA1HE",
+    authDomain: "order-tracking-92681.firebaseapp.com",
+    projectId: "order-tracking-92681",
+    storageBucket: "order-tracking-92681.firebasestorage.app",
+    messagingSenderId: "988787355455",
+    appId: "1:988787355455:web:c7ce248d9fe2178636ed8a"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const db = getFirestore(app);
+
+  window._firebase = {
+    loadOrders: async () => {
+      const snap = await getDocs(collection(db, "orders"));
+      const orders = [];
+      snap.forEach(d => orders.push(d.data()));
+      return orders;
+    },
+    saveOrders: async (orders) => {
+      // 全件上書き保存
+      const snap = await getDocs(collection(db, "orders"));
+      // 既存を全削除
+      const deletes = [];
+      snap.forEach(d => deletes.push(deleteDoc(doc(db,"orders",d.id))));
+      await Promise.all(deletes);
+      // 新規で書き込み
+      const writes = orders.map(o => setDoc(doc(db,"orders",o.id), o));
+      await Promise.all(writes);
+      return true;
+    }
+  };
+</script>
 <style>
 * { box-sizing:border-box; margin:0; padding:0; }
 body { background:#f0f4f9; font-family:'Hiragino Sans','Noto Sans JP','Yu Gothic',sans-serif; }
@@ -21,7 +58,6 @@ body { background:#f0f4f9; font-family:'Hiragino Sans','Noto Sans JP','Yu Gothic
 const { useState, useEffect, useRef } = React;
 
 const ADMIN_PASSWORD = "vands2026";
-const STORAGE_KEY = "order_tracker_orders_v2";
 
 const STATUS_STAGES = [
   { id:0, label:"注文受付済み",        icon:"📋", color:"#8a9ab5", short:"受付済" },
@@ -33,48 +69,27 @@ const STATUS_STAGES = [
   { id:6, label:"お届け完了",           icon:"✅", color:"#0f2744", short:"完了" },
 ];
 
-const SAMPLE_ORDERS = [
-  { id:"17751937539", date:"2026年04月03日", clinic:"lala clinic", updatedAt:"2026/04/04 11:00",
-    products:[
-      { name:"Fiora PDOスレッド Arrow cog W-type 19G", qty:"1箱（10本入り）", status:4, eta:"約5〜7日", note:"通関手続き中です" },
-      { name:"カニューレ 100mm", qty:"10本", status:3, eta:"約10〜14日", note:"" },
-      { name:"スレッド 155mm USP1", qty:"20本", status:1, eta:"約25日", note:"韓国工場より発送準備中" },
-    ]},
-  { id:"17749526823", date:"2026年03月31日", clinic:"lala clinic", updatedAt:"2026/04/04 08:15",
-    products:[
-      { name:"ナボタ 100単位", qty:"10セット", status:6, eta:"—", note:"" },
-      { name:"注射針 30G", qty:"100本", status:5, eta:"約2日", note:"" },
-      { name:"希釈用生食", qty:"20本", status:3, eta:"約12日", note:"別便で発送" },
-    ]},
-];
-
-function loadOrders(){ try{ const d=localStorage.getItem(STORAGE_KEY); if(d) return JSON.parse(d); }catch{} return SAMPLE_ORDERS; }
-function saveOrders(o){ try{ localStorage.setItem(STORAGE_KEY,JSON.stringify(o)); return true; }catch{ return false; } }
 function nowStr(){ return new Date().toLocaleString("ja-JP",{year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"}); }
 function toMonthKey(d){ const m=(d||"").match(/(\d{4}年\d{2}月)/); return m?m[1]:"不明"; }
 function groupBy(arr,fn){ return arr.reduce((a,o)=>{ const k=fn(o); if(!a[k])a[k]=[]; a[k].push(o); return a; },{}); }
 
-// ── bcart CSV パーサー ─────────────────────────────────────────────────────
+// ── bcart CSV パーサー ────────────────────────────────────────────────────
 function parseBcartCSV(text) {
-  // CSV行パース（クォート対応）
   function parseRow(line) {
-    const result = [];
-    let cur = "", inQ = false;
-    for (let i = 0; i < line.length; i++) {
-      const c = line[i];
-      if (c === '"') { inQ = !inQ; }
-      else if (c === ',' && !inQ) { result.push(cur.trim()); cur = ""; }
-      else { cur += c; }
+    const result=[]; let cur="",inQ=false;
+    for(let i=0;i<line.length;i++){
+      const c=line[i];
+      if(c==='"'){inQ=!inQ;}
+      else if(c===','&&!inQ){result.push(cur.trim());cur="";}
+      else{cur+=c;}
     }
     result.push(cur.trim());
     return result;
   }
-
-  const lines = text.split(/\r?\n/).filter(l => l.trim());
-  if (lines.length < 2) return [];
-
-  const headers = parseRow(lines[0]);
-  const idx = {
+  const lines=text.split(/\r?\n/).filter(l=>l.trim());
+  if(lines.length<2) return [];
+  const headers=parseRow(lines[0]);
+  const idx={
     orderNo:  headers.indexOf("受注番号"),
     company:  headers.indexOf("会社名"),
     dateTime: headers.indexOf("受注日時"),
@@ -84,99 +99,53 @@ function parseBcartCSV(text) {
     unit:     headers.indexOf("単位"),
     category: headers.indexOf("明細区分"),
   };
-
-  const orderMap = {};
-
-  for (let i = 1; i < lines.length; i++) {
-    const row = parseRow(lines[i]);
-    const orderNo = row[idx.orderNo];
-    if (!orderNo) continue;
-
-    // 送料・手数料など商品以外の行は除外
-    const category = row[idx.category] || "";
-    if (category && category !== "商品") continue;
-
-    const itemName = (row[idx.itemName] || "").replace(/\n/g, " ").trim();
-    if (!itemName || itemName === "送料" || itemName === "決済手数料") continue;
-
-    // 注文グループ作成
-    if (!orderMap[orderNo]) {
-      const rawDate = row[idx.dateTime] || "";
-      const d = rawDate ? new Date(rawDate) : null;
-      const dateStr = d ? `${d.getFullYear()}年${String(d.getMonth()+1).padStart(2,"0")}月${String(d.getDate()).padStart(2,"0")}日` : "";
-      orderMap[orderNo] = {
-        id: orderNo,
-        date: dateStr,
-        clinic: (row[idx.company] || "").trim(),
-        updatedAt: nowStr(),
-        products: [],
-      };
+  const orderMap={};
+  for(let i=1;i<lines.length;i++){
+    const row=parseRow(lines[i]);
+    const orderNo=row[idx.orderNo];
+    if(!orderNo) continue;
+    const category=row[idx.category]||"";
+    if(category&&category!=="商品") continue;
+    const itemName=(row[idx.itemName]||"").replace(/\n/g," ").trim();
+    if(!itemName||itemName==="送料"||itemName==="決済手数料") continue;
+    if(!orderMap[orderNo]){
+      const rawDate=row[idx.dateTime]||"";
+      const d=rawDate?new Date(rawDate):null;
+      const dateStr=d?`${d.getFullYear()}年${String(d.getMonth()+1).padStart(2,"0")}月${String(d.getDate()).padStart(2,"0")}日`:"";
+      orderMap[orderNo]={ id:orderNo, date:dateStr, clinic:(row[idx.company]||"").trim(), updatedAt:nowStr(), products:[] };
     }
-
-    // 数量文字列を組み立て
-    const qty = row[idx.qty] || "";
-    const unit = row[idx.unit] || "";
-    const spec = (row[idx.spec] || "").replace(/\n/g, " ").trim();
-    const qtyStr = qty && unit ? `${qty}${unit}` : qty || unit || "—";
-    const displayName = spec ? `${itemName}（${spec}）` : itemName;
-
-    orderMap[orderNo].products.push({
-      name: displayName,
-      qty: qtyStr,
-      status: 0,
-      eta: "約30日",
-      note: "",
-    });
+    const qty=row[idx.qty]||""; const unit=row[idx.unit]||"";
+    const spec=(row[idx.spec]||"").replace(/\n/g," ").trim();
+    const qtyStr=qty&&unit?`${qty}${unit}`:qty||unit||"—";
+    const displayName=spec?`${itemName}（${spec}）`:itemName;
+    orderMap[orderNo].products.push({ name:displayName, qty:qtyStr, status:0, eta:"約30日", note:"" });
   }
-
   return Object.values(orderMap);
 }
 
-// ── CSVインポートモーダル ──────────────────────────────────────────────────
+// ── CSV インポートモーダル ────────────────────────────────────────────────
 function CsvImportModal({ onImport, onClose }) {
-  const [drag, setDrag] = useState(false);
-  const [preview, setPreview] = useState(null);
-  const [error, setError] = useState("");
-  const [encoding, setEncoding] = useState("shift_jis");
-  const fileRef = useRef();
+  const [drag,setDrag]=useState(false);
+  const [preview,setPreview]=useState(null);
+  const [error,setError]=useState("");
+  const [encoding,setEncoding]=useState("shift_jis");
+  const fileRef=useRef();
 
-  const readFile = (file) => {
+  const readFile=(file)=>{
     setError("");
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        // Shift-JIS デコード
-        const bytes = new Uint8Array(e.target.result);
+    const reader=new FileReader();
+    reader.onload=(e)=>{
+      try{
+        const bytes=new Uint8Array(e.target.result);
         let text;
-        try {
-          const decoder = new TextDecoder(encoding);
-          text = decoder.decode(bytes);
-        } catch {
-          text = new TextDecoder("utf-8").decode(bytes);
-        }
-        const orders = parseBcartCSV(text);
-        if (orders.length === 0) { setError("注文データが見つかりませんでした。ファイルを確認してください。"); return; }
+        try{ text=new TextDecoder(encoding).decode(bytes); }
+        catch{ text=new TextDecoder("utf-8").decode(bytes); }
+        const orders=parseBcartCSV(text);
+        if(orders.length===0){ setError("注文データが見つかりませんでした。"); return; }
         setPreview(orders);
-      } catch(err) {
-        setError("ファイルの読み込みに失敗しました: " + err.message);
-      }
+      }catch(err){ setError("ファイルの読み込みに失敗しました: "+err.message); }
     };
     reader.readAsArrayBuffer(file);
-  };
-
-  const handleDrop = (e) => {
-    e.preventDefault(); setDrag(false);
-    const file = e.dataTransfer.files[0];
-    if (file) readFile(file);
-  };
-
-  const handleFile = (e) => {
-    const file = e.target.files[0];
-    if (file) readFile(file);
-  };
-
-  const handleImport = () => {
-    if (preview) { onImport(preview); onClose(); }
   };
 
   return (
@@ -189,8 +158,6 @@ function CsvImportModal({ onImport, onClose }) {
           </div>
           <button onClick={onClose} style={{ background:"none",border:"none",fontSize:22,cursor:"pointer",color:"#8a95a5" }}>✕</button>
         </div>
-
-        {/* エンコーディング選択 */}
         <div style={{ marginBottom:14 }}>
           <div style={{ fontSize:11.5,color:"#8a95a5",marginBottom:6 }}>文字コード</div>
           <div style={{ display:"flex",gap:8 }}>
@@ -199,62 +166,49 @@ function CsvImportModal({ onImport, onClose }) {
             ))}
           </div>
         </div>
-
-        {/* ドロップゾーン */}
-        {!preview && (
-          <div
-            className={`drop-zone${drag?" drag-over":""}`}
-            onDragOver={e=>{e.preventDefault();setDrag(true);}}
-            onDragLeave={()=>setDrag(false)}
-            onDrop={handleDrop}
-            onClick={()=>fileRef.current.click()}
-          >
+        {!preview&&(
+          <div className={`drop-zone${drag?" drag-over":""}`}
+            onDragOver={e=>{e.preventDefault();setDrag(true);}} onDragLeave={()=>setDrag(false)}
+            onDrop={e=>{e.preventDefault();setDrag(false);const f=e.dataTransfer.files[0];if(f)readFile(f);}}
+            onClick={()=>fileRef.current.click()}>
             <div style={{ fontSize:36,marginBottom:10 }}>📂</div>
             <div style={{ fontSize:14,fontWeight:700,color:"#0f2744",marginBottom:4 }}>CSVファイルをドラッグ＆ドロップ</div>
             <div style={{ fontSize:12.5,color:"#8a95a5",marginBottom:12 }}>または</div>
             <div style={{ display:"inline-block",padding:"9px 20px",borderRadius:9,background:"#0f2744",color:"#fff",fontSize:13,fontWeight:700,cursor:"pointer" }}>ファイルを選択</div>
-            <input ref={fileRef} type="file" accept=".csv" onChange={handleFile} style={{ display:"none" }} />
+            <input ref={fileRef} type="file" accept=".csv" onChange={e=>{if(e.target.files[0])readFile(e.target.files[0]);}} style={{ display:"none" }}/>
             <div style={{ fontSize:11,color:"#a0aab8",marginTop:12 }}>bcart管理画面 → 受注管理 → CSV書き出し</div>
           </div>
         )}
-
-        {error && (
-          <div style={{ padding:"10px 14px",background:"#fff0f0",border:"1px solid #e0c0c0",borderRadius:10,color:"#c05050",fontSize:13,marginTop:12 }}>
-            ⚠ {error}
-          </div>
-        )}
-
-        {/* プレビュー */}
-        {preview && (
+        {error&&<div style={{ padding:"10px 14px",background:"#fff0f0",border:"1px solid #e0c0c0",borderRadius:10,color:"#c05050",fontSize:13,marginTop:12 }}>⚠ {error}</div>}
+        {preview&&(
           <div>
             <div style={{ padding:"10px 14px",background:"#f0fdf6",border:"1px solid #a0d8b8",borderRadius:10,marginBottom:14,fontSize:13,color:"#1a7a50",fontWeight:600 }}>
               ✅ {preview.length}件の注文、合計{preview.reduce((s,o)=>s+o.products.length,0)}商品を読み込みました
             </div>
-            <div style={{ maxHeight:260,overflowY:"auto",border:"1.5px solid #e4eaf3",borderRadius:12,marginBottom:16 }}>
+            <div style={{ maxHeight:240,overflowY:"auto",border:"1.5px solid #e4eaf3",borderRadius:12,marginBottom:14 }}>
               {preview.map((o,i)=>(
-                <div key={i} style={{ padding:"11px 14px",borderBottom:"1px solid #f0f4f9" }}>
-                  <div style={{ display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4 }}>
+                <div key={i} style={{ padding:"10px 14px",borderBottom:"1px solid #f0f4f9" }}>
+                  <div style={{ display:"flex",justifyContent:"space-between",marginBottom:4 }}>
                     <span style={{ fontSize:13.5,fontWeight:800,color:"#0f2744" }}>{o.id}</span>
                     <span style={{ fontSize:11,color:"#8a95a5" }}>{o.date}</span>
                   </div>
-                  <div style={{ fontSize:12,color:"#6a7a8a",marginBottom:4 }}>{o.clinic}</div>
+                  <div style={{ fontSize:12,color:"#6a7a8a",marginBottom:6 }}>{o.clinic}</div>
                   <div style={{ display:"flex",flexWrap:"wrap",gap:5 }}>
                     {o.products.map((p,j)=>(
                       <span key={j} style={{ padding:"3px 8px",borderRadius:6,background:"#f0f4ff",color:"#2a5090",fontSize:11,border:"1px solid #d0ddf0" }}>
-                        {p.name.length>20?p.name.slice(0,20)+"…":p.name}　{p.qty}
+                        {p.name.length>22?p.name.slice(0,22)+"…":p.name}　{p.qty}
                       </span>
                     ))}
                   </div>
                 </div>
               ))}
             </div>
-            <div style={{ background:"#fffbef",border:"1px solid #e8c95a",borderRadius:10,padding:"10px 14px",fontSize:12.5,color:"#7a6020",marginBottom:16 }}>
-              💡 ステータスは全商品「注文受付済み」で取り込まれます。取り込み後に各商品のステータスを更新してください。<br/>
-              既存の同じ注文番号がある場合は上書きされます。
+            <div style={{ background:"#fffbef",border:"1px solid #e8c95a",borderRadius:10,padding:"10px 14px",fontSize:12.5,color:"#7a6020",marginBottom:14 }}>
+              💡 全商品「注文受付済み」で取り込まれます。取り込み後にステータスを更新してください。
             </div>
             <div style={{ display:"flex",gap:8 }}>
               <button onClick={()=>setPreview(null)} style={{ flex:1,padding:12,borderRadius:10,border:"1.5px solid #dde4ef",background:"#fff",fontSize:14,cursor:"pointer",color:"#666" }}>やり直す</button>
-              <button onClick={handleImport} style={{ flex:2,padding:12,borderRadius:10,border:"none",background:"linear-gradient(135deg,#0f2744,#1a3d6e)",color:"#fff",fontWeight:800,fontSize:14,cursor:"pointer" }}>
+              <button onClick={()=>{ onImport(preview); onClose(); }} style={{ flex:2,padding:12,borderRadius:10,border:"none",background:"linear-gradient(135deg,#0f2744,#1a3d6e)",color:"#fff",fontWeight:800,fontSize:14,cursor:"pointer" }}>
                 {preview.length}件をインポートする
               </button>
             </div>
@@ -278,8 +232,8 @@ function LoginScreen({ onLogin }) {
           <div style={{ fontSize:12.5,color:"#8a95a5" }}>輸入状況管理ダッシュボード</div>
         </div>
         <input type="password" value={pw} onChange={e=>{setPw(e.target.value);setErr(false);}} onKeyDown={e=>e.key==="Enter"&&go()} placeholder="パスワードを入力"
-          style={{ width:"100%",padding:"13px 14px",borderRadius:10,border:`1.5px solid ${err?"#e05050":"#dde4ef"}`,fontSize:16,outline:"none",color:"#0f2744",marginBottom:err?6:14 }} />
-        {err && <div style={{ color:"#e05050",fontSize:12,marginBottom:10 }}>パスワードが正しくありません</div>}
+          style={{ width:"100%",padding:"13px 14px",borderRadius:10,border:`1.5px solid ${err?"#e05050":"#dde4ef"}`,fontSize:16,outline:"none",color:"#0f2744",marginBottom:err?6:14 }}/>
+        {err&&<div style={{ color:"#e05050",fontSize:12,marginBottom:10 }}>パスワードが正しくありません</div>}
         <button onClick={go} style={{ width:"100%",padding:14,borderRadius:10,border:"none",background:"linear-gradient(135deg,#0f2744,#1a3d6e)",color:"#fff",fontWeight:800,fontSize:15,cursor:"pointer" }}>ログイン</button>
       </div>
     </div>
@@ -298,23 +252,23 @@ function ProductEditor({ product, index, onChange, onDelete }) {
           <div style={{ fontSize:13,fontWeight:600,color:"#1a2a3a",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{product.name||"（未入力）"}</div>
           <div style={{ display:"flex",gap:6,alignItems:"center",marginTop:2 }}>
             <span style={{ fontSize:11,color:"#8a95a5" }}>{product.qty}</span>
-            <span style={{ width:3,height:3,borderRadius:"50%",background:"#d0d8e4" }} />
+            <span style={{ width:3,height:3,borderRadius:"50%",background:"#d0d8e4" }}/>
             <span style={{ fontSize:11,fontWeight:700,color:s.color }}>{s.icon} {s.short}</span>
-            {product.eta&&product.status<6&&<><span style={{ width:3,height:3,borderRadius:"50%",background:"#d0d8e4" }} /><span style={{ fontSize:11,color:"#8a95a5" }}>{product.eta}</span></>}
+            {product.eta&&product.status<6&&<><span style={{ width:3,height:3,borderRadius:"50%",background:"#d0d8e4" }}/><span style={{ fontSize:11,color:"#8a95a5" }}>{product.eta}</span></>}
           </div>
         </div>
         <div style={{ fontSize:14,color:"#c0c8d4",transform:open?"rotate(180deg)":"none",transition:"transform 0.2s" }}>⌄</div>
       </div>
-      {open && (
+      {open&&(
         <div style={{ padding:"12px 14px 14px",background:"#f4f7fc",borderTop:"1px solid #edf0f6" }}>
           <div style={{ display:"grid",gridTemplateColumns:"1fr auto",gap:8,marginBottom:10 }}>
             <div>
               <div style={{ fontSize:11,color:"#8a95a5",marginBottom:3 }}>商品名</div>
-              <input value={product.name} onChange={e=>onChange("name",e.target.value)} style={{ width:"100%",padding:"8px 10px",borderRadius:8,border:"1.5px solid #dde4ef",fontSize:13,outline:"none" }} />
+              <input value={product.name} onChange={e=>onChange("name",e.target.value)} style={{ width:"100%",padding:"8px 10px",borderRadius:8,border:"1.5px solid #dde4ef",fontSize:13,outline:"none" }}/>
             </div>
             <div style={{ width:90 }}>
               <div style={{ fontSize:11,color:"#8a95a5",marginBottom:3 }}>数量</div>
-              <input value={product.qty} onChange={e=>onChange("qty",e.target.value)} style={{ width:"100%",padding:"8px 10px",borderRadius:8,border:"1.5px solid #dde4ef",fontSize:13,outline:"none" }} />
+              <input value={product.qty} onChange={e=>onChange("qty",e.target.value)} style={{ width:"100%",padding:"8px 10px",borderRadius:8,border:"1.5px solid #dde4ef",fontSize:13,outline:"none" }}/>
             </div>
           </div>
           <div style={{ marginBottom:10 }}>
@@ -330,11 +284,11 @@ function ProductEditor({ product, index, onChange, onDelete }) {
           <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10 }}>
             <div>
               <div style={{ fontSize:11,color:"#8a95a5",marginBottom:3 }}>お届け目安</div>
-              <input value={product.eta} onChange={e=>onChange("eta",e.target.value)} placeholder="例：約10日" style={{ width:"100%",padding:"8px 10px",borderRadius:8,border:"1.5px solid #dde4ef",fontSize:13,outline:"none" }} />
+              <input value={product.eta} onChange={e=>onChange("eta",e.target.value)} placeholder="例：約10日" style={{ width:"100%",padding:"8px 10px",borderRadius:8,border:"1.5px solid #dde4ef",fontSize:13,outline:"none" }}/>
             </div>
             <div>
               <div style={{ fontSize:11,color:"#8a95a5",marginBottom:3 }}>備考（お客様に表示）</div>
-              <input value={product.note} onChange={e=>onChange("note",e.target.value)} placeholder="例：通関待ちです" style={{ width:"100%",padding:"8px 10px",borderRadius:8,border:"1.5px solid #dde4ef",fontSize:13,outline:"none" }} />
+              <input value={product.note} onChange={e=>onChange("note",e.target.value)} placeholder="例：通関待ちです" style={{ width:"100%",padding:"8px 10px",borderRadius:8,border:"1.5px solid #dde4ef",fontSize:13,outline:"none" }}/>
             </div>
           </div>
           <div style={{ display:"flex",justifyContent:"flex-end" }}>
@@ -360,18 +314,18 @@ function OrderCard({ order, onUpdate, onDelete }) {
           <div style={{ display:"flex",alignItems:"center",gap:8,marginBottom:4,flexWrap:"wrap" }}>
             <span style={{ fontSize:15,fontWeight:900,color:"#0f2744",letterSpacing:"0.04em" }}>{order.id}</span>
             {active>0
-              ? <span style={{ padding:"3px 9px",borderRadius:20,fontSize:11,fontWeight:700,background:"#fff8e8",color:"#b87f0a",border:"1px solid #e8c95a" }}>対応中 {active}件</span>
-              : <span style={{ padding:"3px 9px",borderRadius:20,fontSize:11,fontWeight:700,background:"#e8f0fa",color:"#0f2744",border:"1px solid #c0d0e8" }}>✅ 全件完了</span>
+              ?<span style={{ padding:"3px 9px",borderRadius:20,fontSize:11,fontWeight:700,background:"#fff8e8",color:"#b87f0a",border:"1px solid #e8c95a" }}>対応中 {active}件</span>
+              :<span style={{ padding:"3px 9px",borderRadius:20,fontSize:11,fontWeight:700,background:"#e8f0fa",color:"#0f2744",border:"1px solid #c0d0e8" }}>✅ 全件完了</span>
             }
           </div>
           <div style={{ fontSize:11.5,color:"#8a95a5" }}>{order.date}　{order.clinic}　全{order.products.length}種類</div>
         </div>
         <div style={{ fontSize:16,color:"#aab",transform:open?"rotate(180deg)":"none",transition:"transform 0.2s",marginTop:2 }}>⌄</div>
       </div>
-      {open && (
+      {open&&(
         <div style={{ borderTop:"1.5px solid #f0f4f9" }}>
           {order.products.map((p,i)=>(
-            <ProductEditor key={i} product={p} index={i} onChange={(f,v)=>updateProduct(i,f,v)} onDelete={()=>deleteProduct(i)} />
+            <ProductEditor key={i} product={p} index={i} onChange={(f,v)=>updateProduct(i,f,v)} onDelete={()=>deleteProduct(i)}/>
           ))}
           <div style={{ padding:"10px 14px",background:"#f8fafd",borderTop:"1px solid #edf0f6",display:"flex",justifyContent:"space-between",alignItems:"center" }}>
             <button onClick={addProduct} style={{ padding:"7px 14px",borderRadius:8,border:"1.5px solid #4a7cc7",background:"#f0f6ff",color:"#2a5090",fontSize:12.5,cursor:"pointer",fontWeight:700 }}>＋ 商品を追加</button>
@@ -400,7 +354,7 @@ function GroupSection({ title, orders, onUpdate, onDelete, defaultOpen }) {
         </div>
         <div style={{ fontSize:16,color:open?"rgba(255,255,255,0.6)":"#aab",transform:open?"rotate(180deg)":"none",transition:"transform 0.2s" }}>⌄</div>
       </div>
-      {open&&orders.map(o=><OrderCard key={o.id} order={o} onUpdate={onUpdate} onDelete={onDelete} />)}
+      {open&&orders.map(o=><OrderCard key={o.id} order={o} onUpdate={onUpdate} onDelete={onDelete}/>)}
     </div>
   );
 }
@@ -408,12 +362,29 @@ function GroupSection({ title, orders, onUpdate, onDelete, defaultOpen }) {
 // ── Main ──────────────────────────────────────────────────────────────────
 function App() {
   const [authed,setAuthed]=useState(false);
-  const [orders,setOrders]=useState(loadOrders);
+  const [orders,setOrders]=useState([]);
+  const [loading,setLoading]=useState(true);
   const [showCsv,setShowCsv]=useState(false);
-  const [saveStatus,setSaveStatus]=useState("");
+  const [saveStatus,setSaveStatus]=useState(""); // idle / saving / saved / error
   const [groupMode,setGroupMode]=useState("month");
   const [search,setSearch]=useState("");
   const [importMsg,setImportMsg]=useState("");
+
+  useEffect(()=>{
+    if(!authed) return;
+    const load=async()=>{
+      let tries=0;
+      while(!window._firebase&&tries<20){ await new Promise(r=>setTimeout(r,200)); tries++; }
+      if(window._firebase){
+        try{
+          const data=await window._firebase.loadOrders();
+          setOrders(data||[]);
+        }catch(e){ console.error(e); }
+      }
+      setLoading(false);
+    };
+    load();
+  },[authed]);
 
   const updateOrder=(id,field,value)=>setOrders(prev=>prev.map(o=>o.id===id?{...o,[field]:value,updatedAt:nowStr()}:o));
   const deleteOrder=(id)=>setOrders(prev=>prev.filter(o=>o.id!==id));
@@ -422,28 +393,37 @@ function App() {
     setOrders(prev=>{
       const map={};
       prev.forEach(o=>map[o.id]=o);
-      newOrders.forEach(o=>map[o.id]=o); // 上書き
+      newOrders.forEach(o=>map[o.id]=o);
       return Object.values(map).sort((a,b)=>b.id.localeCompare(a.id));
     });
-    setImportMsg(`✅ ${newOrders.length}件をインポートしました`);
-    setTimeout(()=>setImportMsg(""),4000);
+    setImportMsg(`✅ ${newOrders.length}件をインポートしました。「Firebaseに保存」を押してください。`);
+    setTimeout(()=>setImportMsg(""),6000);
   };
 
-  const handleSave=()=>{ setSaveStatus("saving"); setSaveStatus(saveOrders(orders)?"saved":"error"); setTimeout(()=>setSaveStatus(""),2500); };
+  const handleSave=async()=>{
+    setSaveStatus("saving");
+    try{
+      await window._firebase.saveOrders(orders);
+      setSaveStatus("saved");
+    }catch(e){
+      console.error(e);
+      setSaveStatus("error");
+    }
+    setTimeout(()=>setSaveStatus(""),3000);
+  };
 
   const filtered=orders.filter(o=>!search||o.id.includes(search)||o.clinic.includes(search)||o.products.some(p=>p.name.includes(search)));
   const grouped=groupMode==="month"?groupBy(filtered,o=>toMonthKey(o.date)):groupBy(filtered,o=>o.clinic||"不明");
   const keys=Object.keys(grouped).sort((a,b)=>groupMode==="month"?b.localeCompare(a):a.localeCompare(b));
-
   const allP=orders.flatMap(o=>o.products);
   const activeP=allP.filter(p=>p.status<6).length;
   const cnt=STATUS_STAGES.reduce((a,s)=>{a[s.id]=allP.filter(p=>p.status===s.id).length;return a;},{});
 
-  if(!authed) return <LoginScreen onLogin={()=>setAuthed(true)} />;
+  if(!authed) return <LoginScreen onLogin={()=>setAuthed(true)}/>;
 
   return (
     <div style={{ minHeight:"100vh",background:"#f0f4f9" }}>
-      {showCsv&&<CsvImportModal onImport={handleImport} onClose={()=>setShowCsv(false)} />}
+      {showCsv&&<CsvImportModal onImport={handleImport} onClose={()=>setShowCsv(false)}/>}
 
       {/* Top bar */}
       <div style={{ background:"linear-gradient(135deg,#0a1e35,#0f2744)",padding:"18px 18px 20px",position:"sticky",top:0,zIndex:50 }}>
@@ -455,8 +435,9 @@ function App() {
             </div>
             <div style={{ display:"flex",gap:8 }}>
               <button onClick={()=>setShowCsv(true)} style={{ padding:"9px 14px",borderRadius:9,border:"1.5px solid rgba(100,200,150,0.6)",background:"transparent",color:"#7df0b0",fontWeight:700,fontSize:13,cursor:"pointer" }}>📂 CSV取込</button>
-              <button onClick={handleSave} style={{ padding:"9px 16px",borderRadius:9,border:"none",background:saveStatus==="saved"?"#3aa876":saveStatus==="error"?"#e05050":"#d4a843",color:"#0a1e35",fontWeight:800,fontSize:13,cursor:"pointer" }}>
-                {saveStatus==="saving"?"保存中...":saveStatus==="saved"?"✓ 保存済み":saveStatus==="error"?"エラー":"全件保存"}
+              <button onClick={handleSave} disabled={saveStatus==="saving"}
+                style={{ padding:"9px 16px",borderRadius:9,border:"none",background:saveStatus==="saved"?"#3aa876":saveStatus==="error"?"#e05050":"#d4a843",color:"#0a1e35",fontWeight:800,fontSize:13,cursor:"pointer",opacity:saveStatus==="saving"?0.7:1 }}>
+                {saveStatus==="saving"?"保存中...":saveStatus==="saved"?"✓ 保存済み":saveStatus==="error"?"エラー":"Firebaseに保存"}
               </button>
             </div>
           </div>
@@ -472,32 +453,47 @@ function App() {
       </div>
 
       <div style={{ maxWidth:700,margin:"0 auto",padding:"18px 14px 48px" }}>
-
-        {importMsg && (
-          <div style={{ padding:"11px 16px",background:"#f0fdf6",border:"1.5px solid #3aa876",borderRadius:10,fontSize:13.5,fontWeight:700,color:"#1a7a50",marginBottom:14 }}>
-            {importMsg}　<span style={{ fontWeight:400,fontSize:12 }}>「全件保存」を押して保存してください</span>
+        {loading&&(
+          <div style={{ textAlign:"center",padding:"60px 0",color:"#8a95a5" }}>
+            <div style={{ fontSize:32,marginBottom:12 }}>🔄</div>
+            <div style={{ fontSize:14 }}>Firebaseからデータを読み込み中...</div>
           </div>
         )}
 
-        <div style={{ display:"flex",gap:8,marginBottom:16,flexWrap:"wrap",alignItems:"center" }}>
-          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="注文番号・クリニック・商品名で検索"
-            style={{ flex:1,minWidth:160,padding:"10px 14px",borderRadius:10,border:"1.5px solid #dde4ef",fontSize:13,outline:"none",background:"#fff",color:"#0f2744" }} />
-          <div style={{ display:"flex",background:"#fff",borderRadius:10,border:"1.5px solid #dde4ef",overflow:"hidden" }}>
-            {[["month","📅 月別"],["clinic","🏥 クリニック別"]].map(([k,l])=>(
-              <button key={k} onClick={()=>setGroupMode(k)} style={{ padding:"9px 13px",border:"none",background:groupMode===k?"#0f2744":"transparent",color:groupMode===k?"#fff":"#6a7a8a",fontWeight:groupMode===k?700:500,fontSize:12.5,cursor:"pointer",whiteSpace:"nowrap" }}>{l}</button>
-            ))}
+        {!loading&&importMsg&&(
+          <div style={{ padding:"11px 16px",background:"#f0fdf6",border:"1.5px solid #3aa876",borderRadius:10,fontSize:13,fontWeight:700,color:"#1a7a50",marginBottom:14 }}>
+            {importMsg}
           </div>
-        </div>
+        )}
 
-        {keys.length===0&&<div style={{ textAlign:"center",color:"#aaa",padding:"40px 0",fontSize:14 }}>該当する注文が見つかりません</div>}
-        {keys.map((k,i)=><GroupSection key={k} title={k} orders={grouped[k]} onUpdate={updateOrder} onDelete={deleteOrder} defaultOpen={i===0} />)}
-        <div style={{ textAlign:"center",fontSize:12,color:"#c0c8d4",marginTop:8 }}>{filtered.length}件表示（全{orders.length}件）</div>
+        {!loading&&(
+          <>
+            <div style={{ display:"flex",gap:8,marginBottom:16,flexWrap:"wrap",alignItems:"center" }}>
+              <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="注文番号・クリニック・商品名で検索"
+                style={{ flex:1,minWidth:160,padding:"10px 14px",borderRadius:10,border:"1.5px solid #dde4ef",fontSize:13,outline:"none",background:"#fff",color:"#0f2744" }}/>
+              <div style={{ display:"flex",background:"#fff",borderRadius:10,border:"1.5px solid #dde4ef",overflow:"hidden" }}>
+                {[["month","📅 月別"],["clinic","🏥 クリニック別"]].map(([k,l])=>(
+                  <button key={k} onClick={()=>setGroupMode(k)} style={{ padding:"9px 13px",border:"none",background:groupMode===k?"#0f2744":"transparent",color:groupMode===k?"#fff":"#6a7a8a",fontWeight:groupMode===k?700:500,fontSize:12.5,cursor:"pointer",whiteSpace:"nowrap" }}>{l}</button>
+                ))}
+              </div>
+            </div>
+            {orders.length===0&&(
+              <div style={{ textAlign:"center",padding:"48px 0",color:"#8a95a5" }}>
+                <div style={{ fontSize:32,marginBottom:12 }}>📭</div>
+                <div style={{ fontSize:14,marginBottom:8 }}>まだ注文データがありません</div>
+                <div style={{ fontSize:12.5 }}>「📂 CSV取込」でbcartのデータを読み込んでください</div>
+              </div>
+            )}
+            {keys.map((k,i)=><GroupSection key={k} title={k} orders={grouped[k]} onUpdate={updateOrder} onDelete={deleteOrder} defaultOpen={i===0}/>)}
+            {orders.length>0&&<div style={{ textAlign:"center",fontSize:12,color:"#c0c8d4",marginTop:8 }}>{filtered.length}件表示（全{orders.length}件）</div>}
+          </>
+        )}
       </div>
     </div>
   );
 }
 
-ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
 </script>
 </body>
 </html>
