@@ -10,6 +10,7 @@
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
   import { getFirestore, collection, getDocs, doc, setDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+  import { getAuth, sendPasswordResetEmail } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
   const firebaseConfig = {
     apiKey: "AIzaSyDNg5KsLABnwJbN5EpvWjpLnkstFzXA1HE",
@@ -22,34 +23,45 @@
 
   const app = initializeApp(firebaseConfig);
   const db = getFirestore(app);
+  const auth = getAuth(app);
+  const API_KEY = "AIzaSyDNg5KsLABnwJbN5EpvWjpLnkstFzXA1HE";
 
   window._firebase = {
     loadOrders: async () => {
       const snap = await getDocs(collection(db, "orders"));
-      const orders = [];
-      snap.forEach(d => orders.push(d.data()));
-      return orders;
+      const list = [];
+      snap.forEach(d => list.push(d.data()));
+      return list;
     },
     saveOrders: async (orders) => {
-      // 全件上書き保存
       const snap = await getDocs(collection(db, "orders"));
-      // 既存を全削除
-      const deletes = [];
-      snap.forEach(d => deletes.push(deleteDoc(doc(db,"orders",d.id))));
-      await Promise.all(deletes);
-      // 新規で書き込み
-      const writes = orders.map(o => setDoc(doc(db,"orders",o.id), o));
-      await Promise.all(writes);
+      await Promise.all(snap.docs.map(d => deleteDoc(doc(db,"orders",d.id))));
+      await Promise.all(orders.map(o => setDoc(doc(db,"orders",o.id), o)));
       return true;
-    }
+    },
+    // 新規クリニックアカウント作成（REST API経由）
+    createClinicAccount: async (email) => {
+      const tempPw = "Temp" + Math.random().toString(36).slice(2,10) + "!";
+      const res = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${API_KEY}`, {
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ email, password: tempPw, returnSecureToken: false })
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error.message);
+      // パスワード設定メールを送信
+      await sendPasswordResetEmail(auth, email);
+      return true;
+    },
+    sendPasswordReset: (email) => sendPasswordResetEmail(auth, email),
   };
 </script>
 <style>
 * { box-sizing:border-box; margin:0; padding:0; }
 body { background:#f0f4f9; font-family:'Hiragino Sans','Noto Sans JP','Yu Gothic',sans-serif; }
 @keyframes shake{0%,100%{transform:translateX(0)}20%{transform:translateX(-8px)}40%{transform:translateX(8px)}60%{transform:translateX(-5px)}80%{transform:translateX(5px)}}
-.drop-zone { border:2.5px dashed #b0c4de; border-radius:14px; padding:32px 20px; text-align:center; cursor:pointer; transition:all 0.2s; background:#f8fafd; }
-.drop-zone:hover,.drop-zone.drag-over { border-color:#d4a843; background:#fffbef; }
+.drop-zone{border:2.5px dashed #b0c4de;border-radius:14px;padding:32px 20px;text-align:center;cursor:pointer;transition:all 0.2s;background:#f8fafd;}
+.drop-zone:hover,.drop-zone.drag-over{border-color:#d4a843;background:#fffbef;}
 </style>
 </head>
 <body>
@@ -73,37 +85,23 @@ function nowStr(){ return new Date().toLocaleString("ja-JP",{year:"numeric",mont
 function toMonthKey(d){ const m=(d||"").match(/(\d{4}年\d{2}月)/); return m?m[1]:"不明"; }
 function groupBy(arr,fn){ return arr.reduce((a,o)=>{ const k=fn(o); if(!a[k])a[k]=[]; a[k].push(o); return a; },{}); }
 
-// ── bcart CSV パーサー ────────────────────────────────────────────────────
 function parseBcartCSV(text) {
   function parseRow(line) {
     const result=[]; let cur="",inQ=false;
     for(let i=0;i<line.length;i++){
       const c=line[i];
-      if(c==='"'){inQ=!inQ;}
-      else if(c===','&&!inQ){result.push(cur.trim());cur="";}
-      else{cur+=c;}
+      if(c==='"'){inQ=!inQ;}else if(c===','&&!inQ){result.push(cur.trim());cur="";}else{cur+=c;}
     }
-    result.push(cur.trim());
-    return result;
+    result.push(cur.trim()); return result;
   }
   const lines=text.split(/\r?\n/).filter(l=>l.trim());
   if(lines.length<2) return [];
   const headers=parseRow(lines[0]);
-  const idx={
-    orderNo:  headers.indexOf("受注番号"),
-    company:  headers.indexOf("会社名"),
-    dateTime: headers.indexOf("受注日時"),
-    itemName: headers.indexOf("商品名"),
-    spec:     headers.indexOf("製品規格"),
-    qty:      headers.indexOf("受注数"),
-    unit:     headers.indexOf("単位"),
-    category: headers.indexOf("明細区分"),
-  };
+  const idx={ orderNo:headers.indexOf("受注番号"), company:headers.indexOf("会社名"), dateTime:headers.indexOf("受注日時"), itemName:headers.indexOf("商品名"), spec:headers.indexOf("製品規格"), qty:headers.indexOf("受注数"), unit:headers.indexOf("単位"), category:headers.indexOf("明細区分") };
   const orderMap={};
   for(let i=1;i<lines.length;i++){
     const row=parseRow(lines[i]);
-    const orderNo=row[idx.orderNo];
-    if(!orderNo) continue;
+    const orderNo=row[idx.orderNo]; if(!orderNo) continue;
     const category=row[idx.category]||"";
     if(category&&category!=="商品") continue;
     const itemName=(row[idx.itemName]||"").replace(/\n/g," ").trim();
@@ -116,110 +114,12 @@ function parseBcartCSV(text) {
     }
     const qty=row[idx.qty]||""; const unit=row[idx.unit]||"";
     const spec=(row[idx.spec]||"").replace(/\n/g," ").trim();
-    const qtyStr=qty&&unit?`${qty}${unit}`:qty||unit||"—";
-    const displayName=spec?`${itemName}（${spec}）`:itemName;
-    orderMap[orderNo].products.push({ name:displayName, qty:qtyStr, status:0, eta:"約30日", note:"" });
+    orderMap[orderNo].products.push({ name:spec?`${itemName}（${spec}）`:itemName, qty:qty&&unit?`${qty}${unit}`:qty||unit||"—", status:0, eta:"約30日", note:"" });
   }
   return Object.values(orderMap);
 }
 
-// ── CSV インポートモーダル ────────────────────────────────────────────────
-function CsvImportModal({ onImport, onClose }) {
-  const [drag,setDrag]=useState(false);
-  const [preview,setPreview]=useState(null);
-  const [error,setError]=useState("");
-  const [encoding,setEncoding]=useState("shift_jis");
-  const fileRef=useRef();
-
-  const readFile=(file)=>{
-    setError("");
-    const reader=new FileReader();
-    reader.onload=(e)=>{
-      try{
-        const bytes=new Uint8Array(e.target.result);
-        let text;
-        try{ text=new TextDecoder(encoding).decode(bytes); }
-        catch{ text=new TextDecoder("utf-8").decode(bytes); }
-        const orders=parseBcartCSV(text);
-        if(orders.length===0){ setError("注文データが見つかりませんでした。"); return; }
-        setPreview(orders);
-      }catch(err){ setError("ファイルの読み込みに失敗しました: "+err.message); }
-    };
-    reader.readAsArrayBuffer(file);
-  };
-
-  return (
-    <div style={{ position:"fixed",inset:0,background:"rgba(10,20,40,0.6)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:200,padding:16 }}>
-      <div style={{ background:"#fff",borderRadius:18,padding:"24px 22px",width:"100%",maxWidth:480,maxHeight:"85vh",overflowY:"auto",boxShadow:"0 20px 60px rgba(0,0,0,0.3)" }}>
-        <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20 }}>
-          <div>
-            <div style={{ fontSize:16,fontWeight:800,color:"#0f2744" }}>bcart CSVインポート</div>
-            <div style={{ fontSize:12,color:"#8a95a5",marginTop:2 }}>bcartから書き出したCSVをアップロードしてください</div>
-          </div>
-          <button onClick={onClose} style={{ background:"none",border:"none",fontSize:22,cursor:"pointer",color:"#8a95a5" }}>✕</button>
-        </div>
-        <div style={{ marginBottom:14 }}>
-          <div style={{ fontSize:11.5,color:"#8a95a5",marginBottom:6 }}>文字コード</div>
-          <div style={{ display:"flex",gap:8 }}>
-            {[["shift_jis","Shift-JIS（標準）"],["utf-8","UTF-8"]].map(([v,l])=>(
-              <button key={v} onClick={()=>setEncoding(v)} style={{ padding:"7px 14px",borderRadius:8,border:"1.5px solid",borderColor:encoding===v?"#0f2744":"#dde4ef",background:encoding===v?"#0f2744":"#fff",color:encoding===v?"#fff":"#555",fontSize:12.5,cursor:"pointer",fontWeight:encoding===v?700:400 }}>{l}</button>
-            ))}
-          </div>
-        </div>
-        {!preview&&(
-          <div className={`drop-zone${drag?" drag-over":""}`}
-            onDragOver={e=>{e.preventDefault();setDrag(true);}} onDragLeave={()=>setDrag(false)}
-            onDrop={e=>{e.preventDefault();setDrag(false);const f=e.dataTransfer.files[0];if(f)readFile(f);}}
-            onClick={()=>fileRef.current.click()}>
-            <div style={{ fontSize:36,marginBottom:10 }}>📂</div>
-            <div style={{ fontSize:14,fontWeight:700,color:"#0f2744",marginBottom:4 }}>CSVファイルをドラッグ＆ドロップ</div>
-            <div style={{ fontSize:12.5,color:"#8a95a5",marginBottom:12 }}>または</div>
-            <div style={{ display:"inline-block",padding:"9px 20px",borderRadius:9,background:"#0f2744",color:"#fff",fontSize:13,fontWeight:700,cursor:"pointer" }}>ファイルを選択</div>
-            <input ref={fileRef} type="file" accept=".csv" onChange={e=>{if(e.target.files[0])readFile(e.target.files[0]);}} style={{ display:"none" }}/>
-            <div style={{ fontSize:11,color:"#a0aab8",marginTop:12 }}>bcart管理画面 → 受注管理 → CSV書き出し</div>
-          </div>
-        )}
-        {error&&<div style={{ padding:"10px 14px",background:"#fff0f0",border:"1px solid #e0c0c0",borderRadius:10,color:"#c05050",fontSize:13,marginTop:12 }}>⚠ {error}</div>}
-        {preview&&(
-          <div>
-            <div style={{ padding:"10px 14px",background:"#f0fdf6",border:"1px solid #a0d8b8",borderRadius:10,marginBottom:14,fontSize:13,color:"#1a7a50",fontWeight:600 }}>
-              ✅ {preview.length}件の注文、合計{preview.reduce((s,o)=>s+o.products.length,0)}商品を読み込みました
-            </div>
-            <div style={{ maxHeight:240,overflowY:"auto",border:"1.5px solid #e4eaf3",borderRadius:12,marginBottom:14 }}>
-              {preview.map((o,i)=>(
-                <div key={i} style={{ padding:"10px 14px",borderBottom:"1px solid #f0f4f9" }}>
-                  <div style={{ display:"flex",justifyContent:"space-between",marginBottom:4 }}>
-                    <span style={{ fontSize:13.5,fontWeight:800,color:"#0f2744" }}>{o.id}</span>
-                    <span style={{ fontSize:11,color:"#8a95a5" }}>{o.date}</span>
-                  </div>
-                  <div style={{ fontSize:12,color:"#6a7a8a",marginBottom:6 }}>{o.clinic}</div>
-                  <div style={{ display:"flex",flexWrap:"wrap",gap:5 }}>
-                    {o.products.map((p,j)=>(
-                      <span key={j} style={{ padding:"3px 8px",borderRadius:6,background:"#f0f4ff",color:"#2a5090",fontSize:11,border:"1px solid #d0ddf0" }}>
-                        {p.name.length>22?p.name.slice(0,22)+"…":p.name}　{p.qty}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-            <div style={{ background:"#fffbef",border:"1px solid #e8c95a",borderRadius:10,padding:"10px 14px",fontSize:12.5,color:"#7a6020",marginBottom:14 }}>
-              💡 全商品「注文受付済み」で取り込まれます。取り込み後にステータスを更新してください。
-            </div>
-            <div style={{ display:"flex",gap:8 }}>
-              <button onClick={()=>setPreview(null)} style={{ flex:1,padding:12,borderRadius:10,border:"1.5px solid #dde4ef",background:"#fff",fontSize:14,cursor:"pointer",color:"#666" }}>やり直す</button>
-              <button onClick={()=>{ onImport(preview); onClose(); }} style={{ flex:2,padding:12,borderRadius:10,border:"none",background:"linear-gradient(135deg,#0f2744,#1a3d6e)",color:"#fff",fontWeight:800,fontSize:14,cursor:"pointer" }}>
-                {preview.length}件をインポートする
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ── Login ─────────────────────────────────────────────────────────────────
+// ── ログイン ──────────────────────────────────────────────────────────────
 function LoginScreen({ onLogin }) {
   const [pw,setPw]=useState(""); const [err,setErr]=useState(false); const [shake,setShake]=useState(false);
   const go=()=>{ if(pw===ADMIN_PASSWORD){onLogin();}else{setErr(true);setShake(true);setTimeout(()=>setShake(false),500);} };
@@ -240,7 +140,193 @@ function LoginScreen({ onLogin }) {
   );
 }
 
-// ── Product Editor ────────────────────────────────────────────────────────
+// ── クリニックアカウント管理 ───────────────────────────────────────────────
+function ClinicAccountManager() {
+  const [email, setEmail] = useState("");
+  const [status, setStatus] = useState(""); // "" | "loading" | "success" | "exists" | "error"
+  const [resetEmail, setResetEmail] = useState("");
+  const [resetStatus, setResetStatus] = useState("");
+
+  const waitFirebase = async () => {
+    let t=0; while(!window._firebase&&t<30){await new Promise(r=>setTimeout(r,200));t++;}
+  };
+
+  const handleCreate = async () => {
+    if (!email.trim()) return;
+    setStatus("loading");
+    await waitFirebase();
+    try {
+      await window._firebase.createClinicAccount(email.trim());
+      setStatus("success");
+      setEmail("");
+    } catch(e) {
+      if (e.message.includes("EMAIL_EXISTS")) { setStatus("exists"); }
+      else { setStatus("error"); console.error(e); }
+    }
+  };
+
+  const handleReset = async () => {
+    if (!resetEmail.trim()) return;
+    setResetStatus("loading");
+    await waitFirebase();
+    try {
+      await window._firebase.sendPasswordReset(resetEmail.trim());
+      setResetStatus("success");
+    } catch(e) {
+      setResetStatus("error");
+    }
+  };
+
+  const inp = { width:"100%",padding:"10px 12px",borderRadius:9,border:"1.5px solid #dde4ef",fontSize:14,outline:"none",color:"#1a2a3a" };
+
+  return (
+    <div style={{ display:"flex",flexDirection:"column",gap:16 }}>
+
+      {/* 新規クリニック登録 */}
+      <div style={{ background:"#fff",borderRadius:14,border:"1.5px solid #e4eaf3",padding:"20px",boxShadow:"0 2px 10px rgba(10,30,53,0.05)" }}>
+        <div style={{ fontSize:14,fontWeight:800,color:"#0f2744",marginBottom:4 }}>新規クリニックアカウントを登録</div>
+        <div style={{ fontSize:12,color:"#8a95a5",marginBottom:16,lineHeight:1.6 }}>
+          メールアドレスを登録すると、クリニック担当者にパスワード設定メールが自動送信されます。
+        </div>
+
+        <div style={{ marginBottom:12 }}>
+          <div style={{ fontSize:11.5,color:"#8a95a5",marginBottom:4 }}>クリニックのメールアドレス</div>
+          <input value={email} onChange={e=>{setEmail(e.target.value);setStatus("");}}
+            onKeyDown={e=>e.key==="Enter"&&handleCreate()}
+            placeholder="clinic@example.com" type="email" style={inp} />
+        </div>
+
+        {status==="success" && (
+          <div style={{ padding:"10px 14px",background:"#f0fdf6",border:"1px solid #a0d8b8",borderRadius:9,fontSize:13,color:"#1a7a50",fontWeight:600,marginBottom:12 }}>
+            ✅ アカウントを作成しました。パスワード設定メールを送信しました。
+          </div>
+        )}
+        {status==="exists" && (
+          <div style={{ padding:"10px 14px",background:"#fffbef",border:"1px solid #e8c95a",borderRadius:9,fontSize:13,color:"#7a6020",marginBottom:12 }}>
+            ⚠ このメールアドレスはすでに登録されています。
+          </div>
+        )}
+        {status==="error" && (
+          <div style={{ padding:"10px 14px",background:"#fff0f0",border:"1px solid #e0c0c0",borderRadius:9,fontSize:13,color:"#c05050",marginBottom:12 }}>
+            ❌ 登録に失敗しました。メールアドレスを確認してください。
+          </div>
+        )}
+
+        <button onClick={handleCreate} disabled={status==="loading"} style={{ width:"100%",padding:"12px",borderRadius:10,border:"none",background:"linear-gradient(135deg,#0f2744,#1a3d6e)",color:"#fff",fontWeight:800,fontSize:14,cursor:"pointer",opacity:status==="loading"?0.7:1 }}>
+          {status==="loading" ? "登録中..." : "アカウントを作成してメール送信"}
+        </button>
+      </div>
+
+      {/* パスワードリセット */}
+      <div style={{ background:"#fff",borderRadius:14,border:"1.5px solid #e4eaf3",padding:"20px",boxShadow:"0 2px 10px rgba(10,30,53,0.05)" }}>
+        <div style={{ fontSize:14,fontWeight:800,color:"#0f2744",marginBottom:4 }}>パスワードリセットメールを再送</div>
+        <div style={{ fontSize:12,color:"#8a95a5",marginBottom:16,lineHeight:1.6 }}>
+          パスワードを忘れたクリニックにリセットメールを再送します。
+        </div>
+        <div style={{ marginBottom:12 }}>
+          <div style={{ fontSize:11.5,color:"#8a95a5",marginBottom:4 }}>クリニックのメールアドレス</div>
+          <input value={resetEmail} onChange={e=>{setResetEmail(e.target.value);setResetStatus("");}}
+            onKeyDown={e=>e.key==="Enter"&&handleReset()}
+            placeholder="clinic@example.com" type="email" style={inp} />
+        </div>
+        {resetStatus==="success" && (
+          <div style={{ padding:"10px 14px",background:"#f0fdf6",border:"1px solid #a0d8b8",borderRadius:9,fontSize:13,color:"#1a7a50",fontWeight:600,marginBottom:12 }}>
+            ✅ パスワードリセットメールを送信しました。
+          </div>
+        )}
+        {resetStatus==="error" && (
+          <div style={{ padding:"10px 14px",background:"#fff0f0",border:"1px solid #e0c0c0",borderRadius:9,fontSize:13,color:"#c05050",marginBottom:12 }}>
+            ❌ 送信に失敗しました。メールアドレスを確認してください。
+          </div>
+        )}
+        <button onClick={handleReset} disabled={resetStatus==="loading"} style={{ width:"100%",padding:"12px",borderRadius:10,border:"none",background:"#6b8cba",color:"#fff",fontWeight:800,fontSize:14,cursor:"pointer",opacity:resetStatus==="loading"?0.7:1 }}>
+          {resetStatus==="loading" ? "送信中..." : "リセットメールを送信"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── CSV インポート ────────────────────────────────────────────────────────
+function CsvImportModal({ onImport, onClose }) {
+  const [drag,setDrag]=useState(false); const [preview,setPreview]=useState(null); const [error,setError]=useState(""); const [encoding,setEncoding]=useState("shift_jis");
+  const fileRef=useRef();
+  const readFile=(file)=>{
+    setError("");
+    const reader=new FileReader();
+    reader.onload=(e)=>{
+      try{
+        const bytes=new Uint8Array(e.target.result);
+        let text; try{ text=new TextDecoder(encoding).decode(bytes); }catch{ text=new TextDecoder("utf-8").decode(bytes); }
+        const orders=parseBcartCSV(text);
+        if(orders.length===0){ setError("注文データが見つかりませんでした。"); return; }
+        setPreview(orders);
+      }catch(err){ setError("読み込みに失敗しました: "+err.message); }
+    };
+    reader.readAsArrayBuffer(file);
+  };
+  return (
+    <div style={{ position:"fixed",inset:0,background:"rgba(10,20,40,0.6)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:200,padding:16 }}>
+      <div style={{ background:"#fff",borderRadius:18,padding:"24px 22px",width:"100%",maxWidth:480,maxHeight:"85vh",overflowY:"auto",boxShadow:"0 20px 60px rgba(0,0,0,0.3)" }}>
+        <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20 }}>
+          <div style={{ fontSize:16,fontWeight:800,color:"#0f2744" }}>bcart CSVインポート</div>
+          <button onClick={onClose} style={{ background:"none",border:"none",fontSize:22,cursor:"pointer",color:"#8a95a5" }}>✕</button>
+        </div>
+        <div style={{ marginBottom:14 }}>
+          <div style={{ fontSize:11.5,color:"#8a95a5",marginBottom:6 }}>文字コード</div>
+          <div style={{ display:"flex",gap:8 }}>
+            {[["shift_jis","Shift-JIS（標準）"],["utf-8","UTF-8"]].map(([v,l])=>(
+              <button key={v} onClick={()=>setEncoding(v)} style={{ padding:"7px 14px",borderRadius:8,border:"1.5px solid",borderColor:encoding===v?"#0f2744":"#dde4ef",background:encoding===v?"#0f2744":"#fff",color:encoding===v?"#fff":"#555",fontSize:12.5,cursor:"pointer",fontWeight:encoding===v?700:400 }}>{l}</button>
+            ))}
+          </div>
+        </div>
+        {!preview&&(
+          <div className={`drop-zone${drag?" drag-over":""}`}
+            onDragOver={e=>{e.preventDefault();setDrag(true);}} onDragLeave={()=>setDrag(false)}
+            onDrop={e=>{e.preventDefault();setDrag(false);const f=e.dataTransfer.files[0];if(f)readFile(f);}}
+            onClick={()=>fileRef.current.click()}>
+            <div style={{ fontSize:36,marginBottom:10 }}>📂</div>
+            <div style={{ fontSize:14,fontWeight:700,color:"#0f2744",marginBottom:4 }}>CSVファイルをドラッグ＆ドロップ</div>
+            <div style={{ fontSize:12.5,color:"#8a95a5",marginBottom:12 }}>または</div>
+            <div style={{ display:"inline-block",padding:"9px 20px",borderRadius:9,background:"#0f2744",color:"#fff",fontSize:13,fontWeight:700,cursor:"pointer" }}>ファイルを選択</div>
+            <input ref={fileRef} type="file" accept=".csv" onChange={e=>{if(e.target.files[0])readFile(e.target.files[0]);}} style={{ display:"none" }}/>
+          </div>
+        )}
+        {error&&<div style={{ padding:"10px 14px",background:"#fff0f0",border:"1px solid #e0c0c0",borderRadius:10,color:"#c05050",fontSize:13,marginTop:12 }}>⚠ {error}</div>}
+        {preview&&(
+          <div>
+            <div style={{ padding:"10px 14px",background:"#f0fdf6",border:"1px solid #a0d8b8",borderRadius:10,marginBottom:14,fontSize:13,color:"#1a7a50",fontWeight:600 }}>
+              ✅ {preview.length}件の注文、合計{preview.reduce((s,o)=>s+o.products.length,0)}商品を読み込みました
+            </div>
+            <div style={{ maxHeight:240,overflowY:"auto",border:"1.5px solid #e4eaf3",borderRadius:12,marginBottom:14 }}>
+              {preview.map((o,i)=>(
+                <div key={i} style={{ padding:"10px 14px",borderBottom:"1px solid #f0f4f9" }}>
+                  <div style={{ display:"flex",justifyContent:"space-between",marginBottom:4 }}>
+                    <span style={{ fontSize:13.5,fontWeight:800,color:"#0f2744" }}>{o.id}</span>
+                    <span style={{ fontSize:11,color:"#8a95a5" }}>{o.date}</span>
+                  </div>
+                  <div style={{ fontSize:12,color:"#6a7a8a",marginBottom:6 }}>{o.clinic}</div>
+                  <div style={{ display:"flex",flexWrap:"wrap",gap:5 }}>
+                    {o.products.map((p,j)=><span key={j} style={{ padding:"3px 8px",borderRadius:6,background:"#f0f4ff",color:"#2a5090",fontSize:11,border:"1px solid #d0ddf0" }}>{p.name.length>22?p.name.slice(0,22)+"…":p.name}　{p.qty}</span>)}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div style={{ background:"#fffbef",border:"1px solid #e8c95a",borderRadius:10,padding:"10px 14px",fontSize:12.5,color:"#7a6020",marginBottom:14 }}>
+              💡 全商品「注文受付済み」で取り込まれます。取り込み後にステータスを更新してください。
+            </div>
+            <div style={{ display:"flex",gap:8 }}>
+              <button onClick={()=>setPreview(null)} style={{ flex:1,padding:12,borderRadius:10,border:"1.5px solid #dde4ef",background:"#fff",fontSize:14,cursor:"pointer",color:"#666" }}>やり直す</button>
+              <button onClick={()=>{ onImport(preview); onClose(); }} style={{ flex:2,padding:12,borderRadius:10,border:"none",background:"linear-gradient(135deg,#0f2744,#1a3d6e)",color:"#fff",fontWeight:800,fontSize:14,cursor:"pointer" }}>{preview.length}件をインポートする</button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── 商品エディター ────────────────────────────────────────────────────────
 function ProductEditor({ product, index, onChange, onDelete }) {
   const [open,setOpen]=useState(false);
   const s=STATUS_STAGES[product.status];
@@ -254,7 +340,6 @@ function ProductEditor({ product, index, onChange, onDelete }) {
             <span style={{ fontSize:11,color:"#8a95a5" }}>{product.qty}</span>
             <span style={{ width:3,height:3,borderRadius:"50%",background:"#d0d8e4" }}/>
             <span style={{ fontSize:11,fontWeight:700,color:s.color }}>{s.icon} {s.short}</span>
-            {product.eta&&product.status<6&&<><span style={{ width:3,height:3,borderRadius:"50%",background:"#d0d8e4" }}/><span style={{ fontSize:11,color:"#8a95a5" }}>{product.eta}</span></>}
           </div>
         </div>
         <div style={{ fontSize:14,color:"#c0c8d4",transform:open?"rotate(180deg)":"none",transition:"transform 0.2s" }}>⌄</div>
@@ -300,7 +385,7 @@ function ProductEditor({ product, index, onChange, onDelete }) {
   );
 }
 
-// ── Order Card ────────────────────────────────────────────────────────────
+// ── 注文カード ────────────────────────────────────────────────────────────
 function OrderCard({ order, onUpdate, onDelete }) {
   const [open,setOpen]=useState(false);
   const active=order.products.filter(p=>p.status<6).length;
@@ -313,10 +398,7 @@ function OrderCard({ order, onUpdate, onDelete }) {
         <div style={{ flex:1,minWidth:0,paddingRight:8 }}>
           <div style={{ display:"flex",alignItems:"center",gap:8,marginBottom:4,flexWrap:"wrap" }}>
             <span style={{ fontSize:15,fontWeight:900,color:"#0f2744",letterSpacing:"0.04em" }}>{order.id}</span>
-            {active>0
-              ?<span style={{ padding:"3px 9px",borderRadius:20,fontSize:11,fontWeight:700,background:"#fff8e8",color:"#b87f0a",border:"1px solid #e8c95a" }}>対応中 {active}件</span>
-              :<span style={{ padding:"3px 9px",borderRadius:20,fontSize:11,fontWeight:700,background:"#e8f0fa",color:"#0f2744",border:"1px solid #c0d0e8" }}>✅ 全件完了</span>
-            }
+            {active>0?<span style={{ padding:"3px 9px",borderRadius:20,fontSize:11,fontWeight:700,background:"#fff8e8",color:"#b87f0a",border:"1px solid #e8c95a" }}>対応中 {active}件</span>:<span style={{ padding:"3px 9px",borderRadius:20,fontSize:11,fontWeight:700,background:"#e8f0fa",color:"#0f2744",border:"1px solid #c0d0e8" }}>✅ 全件完了</span>}
           </div>
           <div style={{ fontSize:11.5,color:"#8a95a5" }}>{order.date}　{order.clinic}　全{order.products.length}種類</div>
         </div>
@@ -324,9 +406,7 @@ function OrderCard({ order, onUpdate, onDelete }) {
       </div>
       {open&&(
         <div style={{ borderTop:"1.5px solid #f0f4f9" }}>
-          {order.products.map((p,i)=>(
-            <ProductEditor key={i} product={p} index={i} onChange={(f,v)=>updateProduct(i,f,v)} onDelete={()=>deleteProduct(i)}/>
-          ))}
+          {order.products.map((p,i)=><ProductEditor key={i} product={p} index={i} onChange={(f,v)=>updateProduct(i,f,v)} onDelete={()=>deleteProduct(i)}/>)}
           <div style={{ padding:"10px 14px",background:"#f8fafd",borderTop:"1px solid #edf0f6",display:"flex",justifyContent:"space-between",alignItems:"center" }}>
             <button onClick={addProduct} style={{ padding:"7px 14px",borderRadius:8,border:"1.5px solid #4a7cc7",background:"#f0f6ff",color:"#2a5090",fontSize:12.5,cursor:"pointer",fontWeight:700 }}>＋ 商品を追加</button>
             <div style={{ display:"flex",gap:8,alignItems:"center" }}>
@@ -340,7 +420,7 @@ function OrderCard({ order, onUpdate, onDelete }) {
   );
 }
 
-// ── Group Section ─────────────────────────────────────────────────────────
+// ── グループセクション ────────────────────────────────────────────────────
 function GroupSection({ title, orders, onUpdate, onDelete, defaultOpen }) {
   const [open,setOpen]=useState(defaultOpen??true);
   const activeCount=orders.filter(o=>o.products.some(p=>p.status<6)).length;
@@ -359,28 +439,23 @@ function GroupSection({ title, orders, onUpdate, onDelete, defaultOpen }) {
   );
 }
 
-// ── Main ──────────────────────────────────────────────────────────────────
+// ── メインApp ─────────────────────────────────────────────────────────────
 function App() {
   const [authed,setAuthed]=useState(false);
   const [orders,setOrders]=useState([]);
   const [loading,setLoading]=useState(true);
   const [showCsv,setShowCsv]=useState(false);
-  const [saveStatus,setSaveStatus]=useState(""); // idle / saving / saved / error
+  const [saveStatus,setSaveStatus]=useState("");
   const [groupMode,setGroupMode]=useState("month");
   const [search,setSearch]=useState("");
   const [importMsg,setImportMsg]=useState("");
+  const [tab,setTab]=useState("orders"); // "orders" | "accounts"
 
   useEffect(()=>{
     if(!authed) return;
     const load=async()=>{
-      let tries=0;
-      while(!window._firebase&&tries<20){ await new Promise(r=>setTimeout(r,200)); tries++; }
-      if(window._firebase){
-        try{
-          const data=await window._firebase.loadOrders();
-          setOrders(data||[]);
-        }catch(e){ console.error(e); }
-      }
+      let t=0; while(!window._firebase&&t<30){await new Promise(r=>setTimeout(r,200));t++;}
+      try{ const data=await window._firebase.loadOrders(); setOrders(data||[]); }catch(e){ console.error(e); }
       setLoading(false);
     };
     load();
@@ -388,27 +463,14 @@ function App() {
 
   const updateOrder=(id,field,value)=>setOrders(prev=>prev.map(o=>o.id===id?{...o,[field]:value,updatedAt:nowStr()}:o));
   const deleteOrder=(id)=>setOrders(prev=>prev.filter(o=>o.id!==id));
-
   const handleImport=(newOrders)=>{
-    setOrders(prev=>{
-      const map={};
-      prev.forEach(o=>map[o.id]=o);
-      newOrders.forEach(o=>map[o.id]=o);
-      return Object.values(map).sort((a,b)=>b.id.localeCompare(a.id));
-    });
+    setOrders(prev=>{ const map={}; prev.forEach(o=>map[o.id]=o); newOrders.forEach(o=>map[o.id]=o); return Object.values(map).sort((a,b)=>b.id.localeCompare(a.id)); });
     setImportMsg(`✅ ${newOrders.length}件をインポートしました。「Firebaseに保存」を押してください。`);
     setTimeout(()=>setImportMsg(""),6000);
   };
-
   const handleSave=async()=>{
     setSaveStatus("saving");
-    try{
-      await window._firebase.saveOrders(orders);
-      setSaveStatus("saved");
-    }catch(e){
-      console.error(e);
-      setSaveStatus("error");
-    }
+    try{ await window._firebase.saveOrders(orders); setSaveStatus("saved"); }catch(e){ setSaveStatus("error"); }
     setTimeout(()=>setSaveStatus(""),3000);
   };
 
@@ -425,7 +487,7 @@ function App() {
     <div style={{ minHeight:"100vh",background:"#f0f4f9" }}>
       {showCsv&&<CsvImportModal onImport={handleImport} onClose={()=>setShowCsv(false)}/>}
 
-      {/* Top bar */}
+      {/* トップバー */}
       <div style={{ background:"linear-gradient(135deg,#0a1e35,#0f2744)",padding:"18px 18px 20px",position:"sticky",top:0,zIndex:50 }}>
         <div style={{ maxWidth:700,margin:"0 auto" }}>
           <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14 }}>
@@ -433,15 +495,17 @@ function App() {
               <div style={{ fontSize:11,letterSpacing:"0.18em",color:"#d4a843",fontWeight:700,marginBottom:3 }}>ADMIN</div>
               <div style={{ fontSize:17,fontWeight:900,color:"#fff" }}>輸入状況 管理ダッシュボード</div>
             </div>
-            <div style={{ display:"flex",gap:8 }}>
-              <button onClick={()=>setShowCsv(true)} style={{ padding:"9px 14px",borderRadius:9,border:"1.5px solid rgba(100,200,150,0.6)",background:"transparent",color:"#7df0b0",fontWeight:700,fontSize:13,cursor:"pointer" }}>📂 CSV取込</button>
-              <button onClick={handleSave} disabled={saveStatus==="saving"}
-                style={{ padding:"9px 16px",borderRadius:9,border:"none",background:saveStatus==="saved"?"#3aa876":saveStatus==="error"?"#e05050":"#d4a843",color:"#0a1e35",fontWeight:800,fontSize:13,cursor:"pointer",opacity:saveStatus==="saving"?0.7:1 }}>
-                {saveStatus==="saving"?"保存中...":saveStatus==="saved"?"✓ 保存済み":saveStatus==="error"?"エラー":"Firebaseに保存"}
-              </button>
-            </div>
+            {tab==="orders"&&(
+              <div style={{ display:"flex",gap:8 }}>
+                <button onClick={()=>setShowCsv(true)} style={{ padding:"9px 14px",borderRadius:9,border:"1.5px solid rgba(100,200,150,0.6)",background:"transparent",color:"#7df0b0",fontWeight:700,fontSize:13,cursor:"pointer" }}>📂 CSV取込</button>
+                <button onClick={handleSave} disabled={saveStatus==="saving"} style={{ padding:"9px 16px",borderRadius:9,border:"none",background:saveStatus==="saved"?"#3aa876":saveStatus==="error"?"#e05050":"#d4a843",color:"#0a1e35",fontWeight:800,fontSize:13,cursor:"pointer" }}>
+                  {saveStatus==="saving"?"保存中...":saveStatus==="saved"?"✓ 保存済み":saveStatus==="error"?"エラー":"Firebaseに保存"}
+                </button>
+              </div>
+            )}
           </div>
-          <div style={{ display:"flex",gap:7,overflowX:"auto",paddingBottom:2 }}>
+          {/* サマリー */}
+          <div style={{ display:"flex",gap:7,overflowX:"auto",paddingBottom:2,marginBottom:14 }}>
             {[{l:"対応中商品",v:activeP,c:"#d4a843"},{l:"通関待ち",v:cnt[4]||0,c:"#e07d20"},{l:"配送中",v:cnt[5]||0,c:"#3aa876"},{l:"完了商品",v:cnt[6]||0,c:"#6b8cba"},{l:"全注文",v:orders.length,c:"#8a9ab5"}].map(s=>(
               <div key={s.l} style={{ background:"rgba(255,255,255,0.09)",borderRadius:10,padding:"7px 13px",flexShrink:0,border:`1px solid ${s.c}30` }}>
                 <div style={{ fontSize:18,fontWeight:900,color:s.c }}>{s.v}</div>
@@ -449,43 +513,39 @@ function App() {
               </div>
             ))}
           </div>
+          {/* タブ */}
+          <div style={{ display:"flex",gap:2,background:"rgba(255,255,255,0.08)",borderRadius:10,padding:3 }}>
+            {[["orders","📦 注文管理"],["accounts","👤 クリニック管理"]].map(([key,label])=>(
+              <button key={key} onClick={()=>setTab(key)} style={{ flex:1,padding:"8px",borderRadius:8,border:"none",background:tab===key?"#fff":"transparent",color:tab===key?"#0f2744":"rgba(255,255,255,0.6)",fontWeight:tab===key?700:500,fontSize:13,cursor:"pointer",transition:"all 0.2s" }}>{label}</button>
+            ))}
+          </div>
         </div>
       </div>
 
       <div style={{ maxWidth:700,margin:"0 auto",padding:"18px 14px 48px" }}>
-        {loading&&(
-          <div style={{ textAlign:"center",padding:"60px 0",color:"#8a95a5" }}>
-            <div style={{ fontSize:32,marginBottom:12 }}>🔄</div>
-            <div style={{ fontSize:14 }}>Firebaseからデータを読み込み中...</div>
-          </div>
-        )}
 
-        {!loading&&importMsg&&(
-          <div style={{ padding:"11px 16px",background:"#f0fdf6",border:"1.5px solid #3aa876",borderRadius:10,fontSize:13,fontWeight:700,color:"#1a7a50",marginBottom:14 }}>
-            {importMsg}
-          </div>
-        )}
+        {tab==="accounts" && <ClinicAccountManager />}
 
-        {!loading&&(
+        {tab==="orders" && (
           <>
-            <div style={{ display:"flex",gap:8,marginBottom:16,flexWrap:"wrap",alignItems:"center" }}>
-              <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="注文番号・クリニック・商品名で検索"
-                style={{ flex:1,minWidth:160,padding:"10px 14px",borderRadius:10,border:"1.5px solid #dde4ef",fontSize:13,outline:"none",background:"#fff",color:"#0f2744" }}/>
-              <div style={{ display:"flex",background:"#fff",borderRadius:10,border:"1.5px solid #dde4ef",overflow:"hidden" }}>
-                {[["month","📅 月別"],["clinic","🏥 クリニック別"]].map(([k,l])=>(
-                  <button key={k} onClick={()=>setGroupMode(k)} style={{ padding:"9px 13px",border:"none",background:groupMode===k?"#0f2744":"transparent",color:groupMode===k?"#fff":"#6a7a8a",fontWeight:groupMode===k?700:500,fontSize:12.5,cursor:"pointer",whiteSpace:"nowrap" }}>{l}</button>
-                ))}
-              </div>
-            </div>
-            {orders.length===0&&(
-              <div style={{ textAlign:"center",padding:"48px 0",color:"#8a95a5" }}>
-                <div style={{ fontSize:32,marginBottom:12 }}>📭</div>
-                <div style={{ fontSize:14,marginBottom:8 }}>まだ注文データがありません</div>
-                <div style={{ fontSize:12.5 }}>「📂 CSV取込」でbcartのデータを読み込んでください</div>
-              </div>
+            {loading&&<div style={{ textAlign:"center",padding:"60px 0",color:"#8a95a5" }}><div style={{ fontSize:32,marginBottom:12 }}>🔄</div><div style={{ fontSize:14 }}>データを読み込み中...</div></div>}
+            {!loading&&importMsg&&<div style={{ padding:"11px 16px",background:"#f0fdf6",border:"1.5px solid #3aa876",borderRadius:10,fontSize:13,fontWeight:700,color:"#1a7a50",marginBottom:14 }}>{importMsg}</div>}
+            {!loading&&(
+              <>
+                <div style={{ display:"flex",gap:8,marginBottom:16,flexWrap:"wrap",alignItems:"center" }}>
+                  <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="注文番号・クリニック・商品名で検索"
+                    style={{ flex:1,minWidth:160,padding:"10px 14px",borderRadius:10,border:"1.5px solid #dde4ef",fontSize:13,outline:"none",background:"#fff",color:"#0f2744" }}/>
+                  <div style={{ display:"flex",background:"#fff",borderRadius:10,border:"1.5px solid #dde4ef",overflow:"hidden" }}>
+                    {[["month","📅 月別"],["clinic","🏥 クリニック別"]].map(([k,l])=>(
+                      <button key={k} onClick={()=>setGroupMode(k)} style={{ padding:"9px 13px",border:"none",background:groupMode===k?"#0f2744":"transparent",color:groupMode===k?"#fff":"#6a7a8a",fontWeight:groupMode===k?700:500,fontSize:12.5,cursor:"pointer",whiteSpace:"nowrap" }}>{l}</button>
+                    ))}
+                  </div>
+                </div>
+                {orders.length===0&&<div style={{ textAlign:"center",padding:"48px 0",color:"#8a95a5" }}><div style={{ fontSize:32,marginBottom:12 }}>📭</div><div style={{ fontSize:14,marginBottom:8 }}>まだ注文データがありません</div><div style={{ fontSize:12.5 }}>「📂 CSV取込」でbcartのデータを読み込んでください</div></div>}
+                {keys.map((k,i)=><GroupSection key={k} title={k} orders={grouped[k]} onUpdate={updateOrder} onDelete={deleteOrder} defaultOpen={i===0}/>)}
+                {orders.length>0&&<div style={{ textAlign:"center",fontSize:12,color:"#c0c8d4",marginTop:8 }}>{filtered.length}件表示（全{orders.length}件）</div>}
+              </>
             )}
-            {keys.map((k,i)=><GroupSection key={k} title={k} orders={grouped[k]} onUpdate={updateOrder} onDelete={deleteOrder} defaultOpen={i===0}/>)}
-            {orders.length>0&&<div style={{ textAlign:"center",fontSize:12,color:"#c0c8d4",marginTop:8 }}>{filtered.length}件表示（全{orders.length}件）</div>}
           </>
         )}
       </div>
