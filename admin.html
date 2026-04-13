@@ -93,6 +93,7 @@ const STATUS_STAGES = [
   { id:4, label:"日本空港・通関待ち",   icon:"🛂", color:"#e07d20", short:"通関待ち" },
   { id:5, label:"通関完了・国内配送中", icon:"🚚", color:"#3aa876", short:"配送中" },
   { id:6, label:"お届け完了",           icon:"✅", color:"#0f2744", short:"完了" },
+  { id:7, label:"一部発送済み",         icon:"🔶", color:"#e07d20", short:"一部発送済" },
 ];
 
 function nowStr(){ return new Date().toLocaleString("ja-JP",{year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"}); }
@@ -111,47 +112,123 @@ function parseBcartCSV(text) {
   const lines=text.split(/\r?\n/).filter(l=>l.trim());
   if(lines.length<2) return [];
   const headers=parseRow(lines[0]);
-  const idx={
-    orderNo:    headers.indexOf("受注番号"),
-    company:    headers.indexOf("会社名"),
-    dateTime:   headers.indexOf("受注日時"),
-    itemName:   headers.indexOf("商品名"),
-    spec:       headers.indexOf("製品規格"),
-    qty:        headers.indexOf("受注数"),
-    unit:       headers.indexOf("単位"),
-    category:   headers.indexOf("明細区分"),
-    shipStatus: headers.indexOf("発送状況"),
-    shipDate:   headers.indexOf("発送日"),
-    delivDate:  headers.indexOf("納品日"),
-  };
-  const orderMap={};
-  for(let i=1;i<lines.length;i++){
-    const row=parseRow(lines[i]);
-    const orderNo=row[idx.orderNo]; if(!orderNo) continue;
-    const category=row[idx.category]||"";
-    if(category&&category!=="商品") continue;
-    const itemName=(row[idx.itemName]||"").replace(/\n/g," ").trim();
-    if(!itemName||itemName==="送料"||itemName==="決済手数料") continue;
-    if(!orderMap[orderNo]){
-      const rawDate=row[idx.dateTime]||"";
-      const d=rawDate?new Date(rawDate):null;
-      const dateStr=d?`${d.getFullYear()}年${String(d.getMonth()+1).padStart(2,"0")}月${String(d.getDate()).padStart(2,"0")}日`:"";
-      orderMap[orderNo]={ id:orderNo, date:dateStr, clinic:(row[idx.company]||"").trim(), updatedAt:nowStr(), products:[] };
+
+  // 物流CSVか受注CSVかを自動判定
+  const isLogistics = headers.indexOf("Bカート発送ID") === 0;
+
+  if(isLogistics) {
+    // ── 物流CSV（分納対応）────────────────────────────────
+    const idx={
+      orderNo:    headers.indexOf("受注番号"),
+      company:    headers.indexOf("会社名"),
+      dateTime:   headers.indexOf("受注日時"),
+      itemName:   headers.indexOf("商品名"),
+      spec:       headers.indexOf("製品規格"),
+      qty:        headers.indexOf("受注数"),
+      unit:       headers.indexOf("単位"),
+      shipStatus: headers.indexOf("発送状況"),
+      shipDate:   headers.indexOf("発送日"),
+      delivDate:  headers.indexOf("納品日"),
+    };
+    const orderMap={};
+    for(let i=1;i<lines.length;i++){
+      const row=parseRow(lines[i]);
+      const orderNo=row[idx.orderNo]; if(!orderNo) continue;
+      const itemName=(row[idx.itemName]||"").replace(/\n/g," ").trim();
+      if(!itemName) continue;
+      if(!orderMap[orderNo]){
+        const rawDate=row[idx.dateTime]||"";
+        const d=rawDate?new Date(rawDate):null;
+        const dateStr=d?`${d.getFullYear()}年${String(d.getMonth()+1).padStart(2,"0")}月${String(d.getDate()).padStart(2,"0")}日`:"";
+        orderMap[orderNo]={ id:orderNo, date:dateStr, clinic:(row[idx.company]||"").trim(), updatedAt:nowStr(), products:[] };
+      }
+      const shipStatus=row[idx.shipStatus]||"";
+      const delivDate=row[idx.delivDate]||"";
+      const qtyNum=parseInt(row[idx.qty]||"0",10)||0;
+      const unit=row[idx.unit]||"";
+      const spec=(row[idx.spec]||"").replace(/\n/g," ").trim();
+      const displayName=spec?`${itemName}（${spec}）`:itemName;
+      const isDelivered=shipStatus==="発送済"&&delivDate;
+
+      // 発送日・納品日を取得
+      const shipDateVal=row[idx.shipDate]||"";
+      const delivDateVal=row[idx.delivDate]||"";
+
+      // 同じ商品名を探して数量を累積
+      const existing=orderMap[orderNo].products.find(p=>p.name===displayName);
+      if(existing){
+        existing.totalQtyNum=(existing.totalQtyNum||0)+qtyNum;
+        if(isDelivered) existing.deliveredQtyNum=(existing.deliveredQtyNum||0)+qtyNum;
+        existing.deliveryRecords.push({ qty:qtyNum, unit, status:shipStatus, delivDate:delivDateVal, shipDate:shipDateVal });
+      } else {
+        orderMap[orderNo].products.push({
+          name: displayName,
+          unit: unit,
+          totalQtyNum: qtyNum,
+          deliveredQtyNum: isDelivered?qtyNum:0,
+          qty: "",
+          status: 0,
+          eta: "約30日",
+          note: "",
+          deliveryRecords: [{ qty:qtyNum, unit, status:shipStatus, delivDate:delivDateVal, shipDate:shipDateVal }]
+        });
+      }
     }
-    const qty=row[idx.qty]||""; const unit=row[idx.unit]||"";
-    const spec=(row[idx.spec]||"").replace(/\n/g," ").trim();
-    // 発送状況からステータスを自動判定
-    const shipStatus=row[idx.shipStatus]||"";
-    const delivDate=row[idx.delivDate]||"";
-    const shipDate=row[idx.shipDate]||"";
-    let autoStatus=0;
-    if(shipStatus==="発送済"&&delivDate) autoStatus=6;
-    else if(shipStatus==="発送済"&&!delivDate) autoStatus=5;
-    else autoStatus=0;
-    const etaStr=autoStatus===6?"—":autoStatus===5?"間もなくお届け":"約30日";
-    orderMap[orderNo].products.push({ name:spec?`${itemName}（${spec}）`:itemName, qty:qty&&unit?`${qty}${unit}`:qty||unit||"—", status:autoStatus, eta:etaStr, note:"" });
+    // 数量とステータスを確定
+    Object.values(orderMap).forEach(order=>{
+      order.products.forEach(p=>{
+        const total=p.totalQtyNum||0;
+        const delivered=p.deliveredQtyNum||0;
+        p.qty=`${total}${p.unit}`;
+        if(delivered>=total&&total>0){ p.status=6; p.eta="—"; p.deliveryInfo=""; }
+        else if(delivered>0){ p.status=7; p.eta="—"; p.deliveryInfo=`${total}${p.unit}中 ${delivered}${p.unit}納品済み`; }
+        else { p.status=0; p.eta="約30日"; p.deliveryInfo=""; }
+      });
+    });
+    return Object.values(orderMap);
+
+  } else {
+    // ── 受注CSV（通常）────────────────────────────────────
+    const idx={
+      orderNo:    headers.indexOf("受注番号"),
+      company:    headers.indexOf("会社名"),
+      dateTime:   headers.indexOf("受注日時"),
+      itemName:   headers.indexOf("商品名"),
+      spec:       headers.indexOf("製品規格"),
+      qty:        headers.indexOf("受注数"),
+      unit:       headers.indexOf("単位"),
+      category:   headers.indexOf("明細区分"),
+      shipStatus: headers.indexOf("発送状況"),
+      shipDate:   headers.indexOf("発送日"),
+      delivDate:  headers.indexOf("納品日"),
+    };
+    const orderMap={};
+    for(let i=1;i<lines.length;i++){
+      const row=parseRow(lines[i]);
+      const orderNo=row[idx.orderNo]; if(!orderNo) continue;
+      const category=row[idx.category]||"";
+      if(category&&category!=="商品") continue;
+      const itemName=(row[idx.itemName]||"").replace(/\n/g," ").trim();
+      if(!itemName||itemName==="送料"||itemName==="決済手数料") continue;
+      if(!orderMap[orderNo]){
+        const rawDate=row[idx.dateTime]||"";
+        const d=rawDate?new Date(rawDate):null;
+        const dateStr=d?`${d.getFullYear()}年${String(d.getMonth()+1).padStart(2,"0")}月${String(d.getDate()).padStart(2,"0")}日`:"";
+        orderMap[orderNo]={ id:orderNo, date:dateStr, clinic:(row[idx.company]||"").trim(), updatedAt:nowStr(), products:[] };
+      }
+      const qty=row[idx.qty]||""; const unit=row[idx.unit]||"";
+      const spec=(row[idx.spec]||"").replace(/\n/g," ").trim();
+      const shipStatus=row[idx.shipStatus]||"";
+      const delivDate=row[idx.delivDate]||"";
+      let autoStatus=0;
+      if(shipStatus==="発送済"&&delivDate) autoStatus=6;
+      else if(shipStatus==="発送済"&&!delivDate) autoStatus=5;
+      else autoStatus=0;
+      const etaStr=autoStatus===6?"—":autoStatus===5?"間もなくお届け":"約30日";
+      orderMap[orderNo].products.push({ name:spec?`${itemName}（${spec}）`:itemName, qty:qty&&unit?`${qty}${unit}`:qty||unit||"—", status:autoStatus, eta:etaStr, note:"", deliveryInfo:"" });
+    }
+    return Object.values(orderMap);
   }
-  return Object.values(orderMap);
 }
 
 // ── ログイン ──────────────────────────────────────────────────────────────
@@ -371,16 +448,32 @@ function ProductEditor({ product, index, onChange, onDelete }) {
         <div style={{ width:22,height:22,borderRadius:6,background:"#f0f4ff",color:"#4a7cc7",fontSize:10,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0 }}>{index+1}</div>
         <div style={{ flex:1,minWidth:0 }}>
           <div style={{ fontSize:13,fontWeight:600,color:"#1a2a3a",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{product.name||"（未入力）"}</div>
-          <div style={{ display:"flex",gap:6,alignItems:"center",marginTop:2 }}>
+          <div style={{ display:"flex",alignItems:"center",gap:6,marginTop:3,flexWrap:"wrap" }}>
             <span style={{ fontSize:11,color:"#8a95a5" }}>{product.qty}</span>
             <span style={{ width:3,height:3,borderRadius:"50%",background:"#d0d8e4" }}/>
             <span style={{ fontSize:11,fontWeight:700,color:s.color }}>{s.icon} {s.short}</span>
+            {product.deliveryInfo&&<span style={{ fontSize:11,color:"#e07d20",fontWeight:700,background:"#fff8f0",padding:"1px 6px",borderRadius:6,border:"1px solid #f0c090" }}>{product.deliveryInfo}</span>}
           </div>
         </div>
         <div style={{ fontSize:14,color:"#c0c8d4",transform:open?"rotate(180deg)":"none",transition:"transform 0.2s" }}>⌄</div>
       </div>
       {open&&(
         <div style={{ padding:"12px 14px 14px",background:"#f4f7fc",borderTop:"1px solid #edf0f6" }}>
+          {product.deliveryRecords&&product.deliveryRecords.length>0&&(
+            <div style={{ marginBottom:10,padding:"10px 12px",background:"#fff8f0",borderRadius:9,border:"1px solid #f0c090" }}>
+              <div style={{ fontSize:11,color:"#a04010",fontWeight:700,marginBottom:8 }}>🔶 分納履歴</div>
+              {product.deliveryRecords.map((r,i)=>(
+                <div key={i} style={{ display:"flex",alignItems:"center",gap:8,marginBottom:4,fontSize:12 }}>
+                  <span style={{ padding:"2px 7px",borderRadius:5,background:r.status==="発送済"?"#e8f4ee":"#f4f6fb",color:r.status==="発送済"?"#1a7a50":"#6a7a8a",fontWeight:700,fontSize:11,flexShrink:0 }}>
+                    {r.status==="発送済"?"✅ 発送済":"📋 未発送"}
+                  </span>
+                  <span style={{ color:"#1a2a3a",fontWeight:600 }}>{r.qty}{r.unit}</span>
+                  {r.delivDate&&<span style={{ color:"#8a95a5" }}>納品日：{r.delivDate}</span>}
+                  {r.shipDate&&!r.delivDate&&<span style={{ color:"#8a95a5" }}>発送日：{r.shipDate}</span>}
+                </div>
+              ))}
+            </div>
+          )}
           <div style={{ display:"grid",gridTemplateColumns:"1fr auto",gap:8,marginBottom:10 }}>
             <div>
               <div style={{ fontSize:11,color:"#8a95a5",marginBottom:3 }}>商品名</div>
