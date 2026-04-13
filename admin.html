@@ -644,11 +644,17 @@ function ClinicBindingManager({ orders }) {
                     </span>
                   ))}
                   {/* クリニック追加セレクト */}
-                  <select onChange={e => { if(e.target.value) handleAddClinicToEmail(email, e.target.value); e.target.value=""; }}
-                    style={{ padding:"4px 8px", borderRadius:20, border:"1.5px dashed #4a7cc7", fontSize:12, color:"#4a7cc7", background:"#fff", cursor:"pointer", outline:"none" }}>
-                    <option value="">＋ クリニックを追加</option>
-                    {clinicNames.filter(n => !clinics.includes(n)).map(n => <option key={n} value={n}>{n}</option>)}
-                  </select>
+                  {clinicNames.filter(n => !clinics.includes(n)).length > 0 && (
+                    <select onChange={e => {
+                      const val = e.target.value;
+                      if(val) handleAddClinicToEmail(email, val);
+                      e.target.value="";
+                    }}
+                      style={{ padding:"4px 8px", borderRadius:20, border:"1.5px dashed #4a7cc7", fontSize:12, color:"#4a7cc7", background:"#fff", cursor:"pointer", outline:"none" }}>
+                      <option value="">＋ クリニックを追加</option>
+                      {clinicNames.filter(n => !clinics.includes(n)).map(n => <option key={n} value={n}>{n}</option>)}
+                    </select>
+                  )}
                 </div>
               </div>
             ))}
@@ -664,11 +670,21 @@ function ClinicBindingManager({ orders }) {
             </div>
             <div style={{ marginBottom:10 }}>
               <div style={{ fontSize:11, color:"#8a95a5", marginBottom:4 }}>紐づけるクリニック（複数可）</div>
-              <select onChange={e => { if(e.target.value && !addClinics.includes(e.target.value)) setAddClinics(c => [...c, e.target.value]); e.target.value=""; }}
-                style={{ width:"100%", padding:"8px 10px", borderRadius:8, border:"1.5px solid #dde4ef", fontSize:12.5, outline:"none", background:"#fff", boxSizing:"border-box" }}>
-                <option value="">-- クリニックを選択して追加 --</option>
-                {clinicNames.map(n => <option key={n} value={n}>{n}</option>)}
-              </select>
+              {clinicNames.length === 0 ? (
+                <div style={{ padding:"10px 12px", background:"#fff8e8", border:"1px solid #e8c95a", borderRadius:8, fontSize:12.5, color:"#7a6020" }}>
+                  ⚠ CSVを取込んで「Firebaseに保存」後にクリニック名が表示されます
+                </div>
+              ) : (
+                <select onChange={e => {
+                  const val = e.target.value;
+                  if(val && !addClinics.includes(val)) setAddClinics(prev => [...prev, val]);
+                  e.target.value="";
+                }}
+                  style={{ width:"100%", padding:"8px 10px", borderRadius:8, border:"1.5px solid #dde4ef", fontSize:12.5, outline:"none", background:"#fff", boxSizing:"border-box" }}>
+                  <option value="">-- クリニックを選択して追加 --</option>
+                  {clinicNames.map(n => <option key={n} value={n}>{n}</option>)}
+                </select>
+              )}
               {addClinics.length > 0 && (
                 <div style={{ display:"flex", gap:5, flexWrap:"wrap", marginTop:6 }}>
                   {addClinics.map(c => (
