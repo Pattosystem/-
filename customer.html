@@ -71,13 +71,15 @@ const STATUS_STAGES = [
   { id:4, label:"日本空港・通関待ち",   icon:"🛂", color:"#e07d20", short:"通関待ち" },
   { id:5, label:"通関完了・国内配送中", icon:"🚚", color:"#3aa876", short:"配送中" },
   { id:6, label:"お届け完了",           icon:"✅", color:"#0f2744", short:"完了" },
+  { id:7, label:"一部発送済み",         icon:"🔶", color:"#e07d20", short:"一部発送済" },
 ];
 
 const GROUP_DEFS = [
-  { label:"🚚 もうすぐ到着", ids:[4,5], bg:"#f0fdf6", border:"#3aa876", text:"#1a7a50" },
-  { label:"🌏 輸送中",       ids:[2,3], bg:"#fffbef", border:"#d4a843", text:"#8a6010" },
-  { label:"📦 準備中",       ids:[0,1], bg:"#f4f6fb", border:"#6b8cba", text:"#3a5080" },
-  { label:"✅ お届け済み",   ids:[6],   bg:"#f4f7fa", border:"#c0cdd8", text:"#607080" },
+  { label:"🚚 もうすぐ到着・配送中", ids:[4,5],  bg:"#f0fdf6", border:"#3aa876", text:"#1a7a50" },
+  { label:"🔶 一部発送済み",          ids:[7],    bg:"#fff8f0", border:"#e07d20", text:"#a04010" },
+  { label:"🌏 輸送中",                ids:[2,3],  bg:"#fffbef", border:"#d4a843", text:"#8a6010" },
+  { label:"📦 準備中",                ids:[0,1],  bg:"#f4f6fb", border:"#6b8cba", text:"#3a5080" },
+  { label:"✅ お届け済み",            ids:[6],    bg:"#f4f7fa", border:"#c0cdd8", text:"#607080" },
 ];
 
 // ── ログイン ──────────────────────────────────────────────────────────────
@@ -169,11 +171,12 @@ function ProductRow({ product, index }) {
         <div style={{ flex:1,minWidth:0 }}>
           <div style={{ fontSize:13,fontWeight:600,color:"#1a2a3a",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:open?"normal":"nowrap" }}>{product.name}</div>
           {!open&&(
-            <div style={{ display:"flex",alignItems:"center",gap:6,marginTop:3 }}>
+            <div style={{ display:"flex",alignItems:"center",gap:6,marginTop:3,flexWrap:"wrap" }}>
               <span style={{ fontSize:11,color:"#8a95a5" }}>{product.qty}</span>
               <span style={{ width:3,height:3,borderRadius:"50%",background:"#d0d8e4" }}/>
               <span style={{ fontSize:11,fontWeight:700,color:s.color }}>{s.icon} {s.short}</span>
-              {product.eta&&product.eta!=="—"&&product.status<6&&<><span style={{ width:3,height:3,borderRadius:"50%",background:"#d0d8e4" }}/><span style={{ fontSize:11,color:"#8a95a5" }}>{product.eta}</span></>}
+              {product.deliveryInfo&&<span style={{ fontSize:11,color:"#e07d20",fontWeight:700,background:"#fff8f0",padding:"2px 7px",borderRadius:6,border:"1px solid #f0c090" }}>{product.deliveryInfo}</span>}
+              {product.eta&&product.eta!=="—"&&product.status<6&&product.status!==7&&<><span style={{ width:3,height:3,borderRadius:"50%",background:"#d0d8e4" }}/><span style={{ fontSize:11,color:"#8a95a5" }}>{product.eta}</span></>}
             </div>
           )}
         </div>
@@ -182,12 +185,29 @@ function ProductRow({ product, index }) {
       </div>
       {open&&(
         <div style={{ padding:"12px 14px 14px 48px",background:"#f8fafd",borderTop:"1px solid #edf0f6" }}>
-          <div style={{ display:"grid",gridTemplateColumns:"auto 1fr",gap:"6px 14px",fontSize:12.5 }}>
+          <div style={{ display:"grid",gridTemplateColumns:"auto 1fr",gap:"6px 14px",fontSize:12.5,marginBottom: product.deliveryRecords&&product.deliveryRecords.length>0?12:0 }}>
             <span style={{ color:"#8a95a5" }}>数量</span><span style={{ color:"#1a2a3a",fontWeight:600 }}>{product.qty}</span>
             <span style={{ color:"#8a95a5" }}>ステータス</span><span style={{ color:s.color,fontWeight:700 }}>{s.icon} {s.label}</span>
-            {product.eta&&product.eta!=="—"&&product.status<6&&<><span style={{ color:"#8a95a5" }}>お届け目安</span><span style={{ color:"#1a2a3a",fontWeight:700 }}>{product.eta}</span></>}
+            {product.deliveryInfo&&<><span style={{ color:"#8a95a5" }}>納品状況</span><span style={{ color:"#e07d20",fontWeight:700 }}>{product.deliveryInfo}</span></>}
+            {product.eta&&product.eta!=="—"&&product.status<6&&product.status!==7&&<><span style={{ color:"#8a95a5" }}>お届け目安</span><span style={{ color:"#1a2a3a",fontWeight:700 }}>{product.eta}</span></>}
             {product.note&&<><span style={{ color:"#8a95a5" }}>備考</span><span style={{ color:"#5a6a7a",lineHeight:1.5 }}>{product.note}</span></>}
           </div>
+          {product.deliveryRecords&&product.deliveryRecords.length>0&&(
+            <div style={{ padding:"10px 12px",background:"#fff8f0",borderRadius:9,border:"1px solid #f0c090" }}>
+              <div style={{ fontSize:11,color:"#a04010",fontWeight:700,marginBottom:8 }}>🔶 分納履歴</div>
+              {product.deliveryRecords.map((r,i)=>(
+                <div key={i} style={{ display:"flex",alignItems:"center",gap:8,marginBottom:i<product.deliveryRecords.length-1?6:0,fontSize:12 }}>
+                  <span style={{ padding:"2px 7px",borderRadius:5,background:r.status==="発送済"?"#e8f4ee":"#f4f6fb",color:r.status==="発送済"?"#1a7a50":"#6a7a8a",fontWeight:700,fontSize:11,flexShrink:0 }}>
+                    {r.status==="発送済"?"✅ 納品済":"📋 未発送"}
+                  </span>
+                  <span style={{ color:"#1a2a3a",fontWeight:600 }}>{r.qty}{r.unit}</span>
+                  {r.delivDate&&<span style={{ color:"#8a95a5" }}>納品日：{r.delivDate}</span>}
+                  {!r.delivDate&&r.shipDate&&<span style={{ color:"#8a95a5" }}>発送日：{r.shipDate}</span>}
+                  {!r.delivDate&&!r.shipDate&&r.status!=="発送済"&&<span style={{ color:"#a0aab8" }}>未発送</span>}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -197,9 +217,12 @@ function ProductRow({ product, index }) {
 // ── グループ別商品リスト ──────────────────────────────────────────────────
 function GroupedProductList({ products }) {
   const [openGroups, setOpenGroups] = useState({0:true,1:true,2:true,3:false});
-  const done=products.filter(p=>p.status===6).length, soon=products.filter(p=>p.status>=4&&p.status<6).length;
-  const trans=products.filter(p=>p.status>=2&&p.status<4).length, prep=products.filter(p=>p.status<2).length;
-  const chips=[done&&{label:`✅ 完了 ${done}件`,bg:"#e8f4ee",color:"#1a7a50"},soon&&{label:`🚚 到着まもなく ${soon}件`,bg:"#fff8e8",color:"#8a6010"},trans&&{label:`🌏 輸送中 ${trans}件`,bg:"#f0f6ff",color:"#2a5090"},prep&&{label:`📦 準備中 ${prep}件`,bg:"#f4f6fb",color:"#4a6080"}].filter(Boolean);
+  const done=products.filter(p=>p.status===6).length;
+  const partial=products.filter(p=>p.status===7).length;
+  const soon=products.filter(p=>p.status>=4&&p.status<6).length;
+  const trans=products.filter(p=>p.status>=2&&p.status<4).length;
+  const prep=products.filter(p=>p.status<2).length;
+  const chips=[done&&{label:`✅ 完了 ${done}件`,bg:"#e8f4ee",color:"#1a7a50"},partial&&{label:`🔶 一部発送済み ${partial}件`,bg:"#fff8f0",color:"#a04010"},soon&&{label:`🚚 到着まもなく ${soon}件`,bg:"#fff8e8",color:"#8a6010"},trans&&{label:`🌏 輸送中 ${trans}件`,bg:"#f0f6ff",color:"#2a5090"},prep&&{label:`📦 準備中 ${prep}件`,bg:"#f4f6fb",color:"#4a6080"}].filter(Boolean);
   return (
     <div style={{ background:"#fff",borderRadius:14,border:"1.5px solid #e4eaf3",overflow:"hidden",boxShadow:"0 2px 10px rgba(10,30,53,0.05)" }}>
       <div style={{ display:"flex",gap:6,flexWrap:"wrap",padding:"13px 14px",borderBottom:"1px solid #edf0f6" }}>
