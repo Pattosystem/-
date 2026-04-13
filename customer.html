@@ -369,18 +369,24 @@ function MainScreen({ user }) {
       window._firebase.loadMyRequests(user.email),
       window._firebase.loadBindings(),
     ]);
+    console.log("📦 注文データ件数:", orderData.length);
+    console.log("🔗 紐づけデータ:", JSON.stringify(bindings));
     setOrders(orderData);
     setMyRequests(requestData);
-    // メールアドレスからクリニック名を特定して注文を絞り込む
-    // 複数クリニック対応（bindingsの値が配列or文字列どちらでも対応）
+    // 複数クリニック対応
     const clinicVal = bindings[user.email];
+    console.log("👤 ログイン中:", user.email, "→ クリニック値:", clinicVal);
     const clinicNames = clinicVal
       ? (Array.isArray(clinicVal) ? clinicVal : [clinicVal]).filter(Boolean)
       : [];
+    console.log("🏥 紐づきクリニック:", clinicNames);
     if (clinicNames.length > 0) {
       const filtered = orderData.filter(o => clinicNames.includes(o.clinic));
+      console.log("📋 表示対象注文:", filtered.length, "件");
       filtered.sort((a,b) => b.id.localeCompare(a.id));
       setMyOrders(filtered);
+    } else {
+      console.log("⚠ 紐づけなし or 注文データなし");
     }
     setLoading(false);
   };
