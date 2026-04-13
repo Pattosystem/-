@@ -9,7 +9,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-  import { getFirestore, collection, getDocs, doc, setDoc, deleteDoc, updateDoc, writeBatch } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+  import { getFirestore, collection, getDocs, doc, getDoc, setDoc, deleteDoc, updateDoc, writeBatch } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
   import { getAuth, sendPasswordResetEmail } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
   const firebaseConfig = {
@@ -27,31 +27,32 @@
   const API_KEY = "AIzaSyDNg5KsLABnwJbN5EpvWjpLnkstFzXA1HE";
 
   window._firebase = {
+    // 全注文を1ドキュメントに保存（確実性最優先）
     loadOrders: async () => {
-      const snap = await getDocs(collection(db, "orders"));
-      const list = [];
-      snap.forEach(d => list.push(d.data()));
-      return list;
+      try {
+        const d = await getDoc(doc(db, "appdata", "orders"));
+        if (d.exists()) return d.data().list || [];
+        // 旧形式（個別ドキュメント）からの移行
+        const snap = await getDocs(collection(db, "orders"));
+        const list = [];
+        snap.forEach(d => list.push(d.data()));
+        return list;
+      } catch(e) {
+        console.error("loadOrders error:", e);
+        return [];
+      }
     },
     saveOrders: async (orders) => {
-      // ステップ1: 既存データを50件ずつバッチ削除
-      const snap = await getDocs(collection(db, "orders"));
-      const existingDocs = snap.docs;
-      for (let i = 0; i < existingDocs.length; i += 50) {
-        const batch = writeBatch(db);
-        existingDocs.slice(i, i+50).forEach(d => batch.delete(doc(db,"orders",d.id)));
-        await batch.commit();
-      }
-      // ステップ2: 新データを50件ずつバッチ保存
-      for (let i = 0; i < orders.length; i += 50) {
-        const batch = writeBatch(db);
-        orders.slice(i, i+50).forEach(o => batch.set(doc(db,"orders",o.id), o));
-        await batch.commit();
-      }
-      // ステップ3: 保存確認（件数チェック）
-      const verifySnap = await getDocs(collection(db, "orders"));
-      if (verifySnap.size !== orders.length) {
-        throw new Error(`保存件数が一致しません（期待: ${orders.length}, 実際: ${verifySnap.size}）`);
+      // 全注文を1つのドキュメントにまとめて保存
+      await setDoc(doc(db, "appdata", "orders"), {
+        list: orders,
+        savedAt: new Date().toISOString(),
+        count: orders.length
+      });
+      // 保存確認
+      const verify = await getDoc(doc(db, "appdata", "orders"));
+      if (!verify.exists() || (verify.data().list||[]).length !== orders.length) {
+        throw new Error(`保存確認失敗 (期待:${orders.length}件)`);
       }
       return true;
     },
@@ -97,15 +98,26 @@
     },
     // リストア：全データを上書き保存
     restoreAllData: async (data) => {
-      // ordersを上書き
-      const ordersSnap = await getDocs(collection(db, "orders"));
-      await Promise.all(ordersSnap.docs.map(d => deleteDoc(doc(db,"orders",d.id))));
-      await Promise.all((data.orders||[]).map(o => setDoc(doc(db,"orders",o.id), o)));
-      // requestsを上書き
+      // ordersを1ドキュメントで保存
+      await setDoc(doc(db, "appdata", "orders"), {
+        list: data.orders || [],
+        savedAt: new Date().toISOString(),
+        count: (data.orders||[]).length,
+        restoredFrom: data.exportedAt || ""
+      });
+      // requestsは個別ドキュメントのまま
       if (data.requests && data.requests.length > 0) {
         const reqSnap = await getDocs(collection(db, "requests"));
-        await Promise.all(reqSnap.docs.map(d => deleteDoc(doc(db,"requests",d.id))));
-        await Promise.all(data.requests.map(r => setDoc(doc(db,"requests",r.id), r)));
+        for (let i = 0; i < reqSnap.docs.length; i += 50) {
+          const batch = writeBatch(db);
+          reqSnap.docs.slice(i, i+50).forEach(d => batch.delete(d.ref));
+          await batch.commit();
+        }
+        for (let i = 0; i < data.requests.length; i += 50) {
+          const batch = writeBatch(db);
+          data.requests.slice(i, i+50).forEach(r => batch.set(doc(db,"requests",r.id), r));
+          await batch.commit();
+        }
       }
       return true;
     }
