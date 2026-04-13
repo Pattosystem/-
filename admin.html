@@ -109,126 +109,116 @@ function parseBcartCSV(text) {
     }
     result.push(cur.trim()); return result;
   }
+
   const lines=text.split(/\r?\n/).filter(l=>l.trim());
   if(lines.length<2) return [];
   const headers=parseRow(lines[0]);
 
   // 物流CSVか受注CSVかを自動判定
-  const isLogistics = headers.indexOf("Bカート発送ID") === 0;
+  const isLogistics = headers[0]==="Bカート発送ID";
 
-  if(isLogistics) {
-    // ── 物流CSV（分納対応）────────────────────────────────
-    const idx={
-      orderNo:    headers.indexOf("受注番号"),
-      company:    headers.indexOf("会社名"),
-      dateTime:   headers.indexOf("受注日時"),
-      itemName:   headers.indexOf("商品名"),
-      spec:       headers.indexOf("製品規格"),
-      qty:        headers.indexOf("受注数"),
-      unit:       headers.indexOf("単位"),
-      shipStatus: headers.indexOf("発送状況"),
-      shipDate:   headers.indexOf("発送日"),
-      delivDate:  headers.indexOf("納品日"),
-    };
-    const orderMap={};
-    for(let i=1;i<lines.length;i++){
-      const row=parseRow(lines[i]);
-      const orderNo=row[idx.orderNo]; if(!orderNo) continue;
-      const itemName=(row[idx.itemName]||"").replace(/\n/g," ").trim();
-      if(!itemName) continue;
-      if(!orderMap[orderNo]){
-        const rawDate=row[idx.dateTime]||"";
-        const d=rawDate?new Date(rawDate):null;
-        const dateStr=d?`${d.getFullYear()}年${String(d.getMonth()+1).padStart(2,"0")}月${String(d.getDate()).padStart(2,"0")}日`:"";
-        orderMap[orderNo]={ id:orderNo, date:dateStr, clinic:(row[idx.company]||"").trim(), updatedAt:nowStr(), products:[] };
-      }
-      const shipStatus=row[idx.shipStatus]||"";
-      const delivDate=row[idx.delivDate]||"";
-      const qtyNum=parseInt(row[idx.qty]||"0",10)||0;
-      const unit=row[idx.unit]||"";
-      const spec=(row[idx.spec]||"").replace(/\n/g," ").trim();
-      const displayName=spec?`${itemName}（${spec}）`:itemName;
-      const isDelivered=shipStatus==="発送済"&&delivDate;
+  const idx={
+    orderNo:    headers.indexOf("受注番号"),
+    company:    headers.indexOf("会社名"),
+    dateTime:   headers.indexOf("受注日時"),
+    itemName:   headers.indexOf("商品名"),
+    spec:       headers.indexOf("製品規格"),
+    qty:        headers.indexOf("受注数"),
+    unit:       headers.indexOf("単位"),
+    shipStatus: headers.indexOf("発送状況"),
+    shipDate:   headers.indexOf("発送日"),
+    delivDate:  headers.indexOf("納品日"),
+    category:   headers.indexOf("明細区分"),
+  };
 
-      // 発送日・納品日を取得
-      const shipDateVal=row[idx.shipDate]||"";
-      const delivDateVal=row[idx.delivDate]||"";
+  const orderMap={};
 
-      // 同じ商品名を探して数量を累積
+  for(let i=1;i<lines.length;i++){
+    const row=parseRow(lines[i]);
+    const orderNo=row[idx.orderNo]||""; if(!orderNo) continue;
+
+    // 受注CSVの場合は明細区分チェック
+    if(!isLogistics){
+      const cat=row[idx.category]||"";
+      if(cat&&cat!=="商品") continue;
+    }
+
+    const itemName=(row[idx.itemName]||"").replace(/\n/g," ").trim();
+    if(!itemName||itemName==="送料"||itemName==="決済手数料") continue;
+
+    // 注文情報を初期化
+    if(!orderMap[orderNo]){
+      const rawDate=row[idx.dateTime]||"";
+      const d=rawDate?new Date(rawDate):null;
+      const dateStr=d?`${d.getFullYear()}年${String(d.getMonth()+1).padStart(2,"0")}月${String(d.getDate()).padStart(2,"0")}日`:"";
+      orderMap[orderNo]={ id:orderNo, date:dateStr, clinic:(row[idx.company]||"").trim(), updatedAt:nowStr(), products:[] };
+    }
+
+    const qtyNum=parseInt(row[idx.qty]||"0",10)||0;
+    const unit=row[idx.unit]||"";
+    const spec=(row[idx.spec]||"").replace(/\n/g," ").trim();
+    const displayName=spec?`${itemName}（${spec}）`:itemName;
+    const shipStatus=row[idx.shipStatus]||"";
+    const delivDate=row[idx.delivDate]||"";
+    const shipDate=row[idx.shipDate]||"";
+    const isDelivered=shipStatus==="発送済"&&delivDate;
+
+    if(isLogistics){
+      // ── 物流CSV：同一商品を累積して分納管理 ──────────────────
       const existing=orderMap[orderNo].products.find(p=>p.name===displayName);
+      const record={ qty:qtyNum, unit, status:shipStatus, delivDate, shipDate };
       if(existing){
         existing.totalQtyNum=(existing.totalQtyNum||0)+qtyNum;
         if(isDelivered) existing.deliveredQtyNum=(existing.deliveredQtyNum||0)+qtyNum;
-        existing.deliveryRecords.push({ qty:qtyNum, unit, status:shipStatus, delivDate:delivDateVal, shipDate:shipDateVal });
+        existing.deliveryRecords.push(record);
       } else {
         orderMap[orderNo].products.push({
-          name: displayName,
-          unit: unit,
+          name: displayName, unit,
           totalQtyNum: qtyNum,
           deliveredQtyNum: isDelivered?qtyNum:0,
-          qty: "",
-          status: 0,
-          eta: "約30日",
-          note: "",
-          deliveryRecords: [{ qty:qtyNum, unit, status:shipStatus, delivDate:delivDateVal, shipDate:shipDateVal }]
+          qty: "", status:0, eta:"約30日", note:"",
+          deliveryRecords:[record]
         });
       }
+    } else {
+      // ── 受注CSV：1行1商品（シンプル）──────────────────────────
+      let autoStatus=0;
+      if(shipStatus==="発送済"&&delivDate) autoStatus=6;
+      else if(shipStatus==="発送済") autoStatus=5;
+      orderMap[orderNo].products.push({
+        name:displayName, qty:qtyNum&&unit?`${qtyNum}${unit}`:unit||"—",
+        status:autoStatus, eta:autoStatus===6?"—":autoStatus===5?"間もなくお届け":"約30日",
+        note:"", deliveryInfo:"", deliveryRecords:[]
+      });
     }
-    // 数量とステータスを確定
+  }
+
+  // 物流CSV：数量・ステータスを確定
+  if(isLogistics){
     Object.values(orderMap).forEach(order=>{
       order.products.forEach(p=>{
         const total=p.totalQtyNum||0;
         const delivered=p.deliveredQtyNum||0;
         p.qty=`${total}${p.unit}`;
-        if(delivered>=total&&total>0){ p.status=6; p.eta="—"; p.deliveryInfo=""; }
-        else if(delivered>0){ p.status=7; p.eta="—"; p.deliveryInfo=`${total}${p.unit}中 ${delivered}${p.unit}納品済み`; }
-        else { p.status=0; p.eta="約30日"; p.deliveryInfo=""; }
+        if(delivered>=total&&total>0){
+          p.status=6; p.eta="—"; p.deliveryInfo="";
+        } else if(delivered>0){
+          p.status=7; p.eta="—";
+          p.deliveryInfo=`${total}${p.unit}中 ${delivered}${p.unit}納品済み`;
+        } else {
+          p.status=0; p.eta="約30日"; p.deliveryInfo="";
+        }
+        // deliveryRecordsを日付でソート（納品済み→未発送の順）
+        p.deliveryRecords.sort((a,b)=>{
+          if(a.status==="発送済"&&b.status!=="発送済") return -1;
+          if(a.status!=="発送済"&&b.status==="発送済") return 1;
+          return (b.delivDate||"").localeCompare(a.delivDate||"");
+        });
       });
     });
-    return Object.values(orderMap);
-
-  } else {
-    // ── 受注CSV（通常）────────────────────────────────────
-    const idx={
-      orderNo:    headers.indexOf("受注番号"),
-      company:    headers.indexOf("会社名"),
-      dateTime:   headers.indexOf("受注日時"),
-      itemName:   headers.indexOf("商品名"),
-      spec:       headers.indexOf("製品規格"),
-      qty:        headers.indexOf("受注数"),
-      unit:       headers.indexOf("単位"),
-      category:   headers.indexOf("明細区分"),
-      shipStatus: headers.indexOf("発送状況"),
-      shipDate:   headers.indexOf("発送日"),
-      delivDate:  headers.indexOf("納品日"),
-    };
-    const orderMap={};
-    for(let i=1;i<lines.length;i++){
-      const row=parseRow(lines[i]);
-      const orderNo=row[idx.orderNo]; if(!orderNo) continue;
-      const category=row[idx.category]||"";
-      if(category&&category!=="商品") continue;
-      const itemName=(row[idx.itemName]||"").replace(/\n/g," ").trim();
-      if(!itemName||itemName==="送料"||itemName==="決済手数料") continue;
-      if(!orderMap[orderNo]){
-        const rawDate=row[idx.dateTime]||"";
-        const d=rawDate?new Date(rawDate):null;
-        const dateStr=d?`${d.getFullYear()}年${String(d.getMonth()+1).padStart(2,"0")}月${String(d.getDate()).padStart(2,"0")}日`:"";
-        orderMap[orderNo]={ id:orderNo, date:dateStr, clinic:(row[idx.company]||"").trim(), updatedAt:nowStr(), products:[] };
-      }
-      const qty=row[idx.qty]||""; const unit=row[idx.unit]||"";
-      const spec=(row[idx.spec]||"").replace(/\n/g," ").trim();
-      const shipStatus=row[idx.shipStatus]||"";
-      const delivDate=row[idx.delivDate]||"";
-      let autoStatus=0;
-      if(shipStatus==="発送済"&&delivDate) autoStatus=6;
-      else if(shipStatus==="発送済"&&!delivDate) autoStatus=5;
-      else autoStatus=0;
-      const etaStr=autoStatus===6?"—":autoStatus===5?"間もなくお届け":"約30日";
-      orderMap[orderNo].products.push({ name:spec?`${itemName}（${spec}）`:itemName, qty:qty&&unit?`${qty}${unit}`:qty||unit||"—", status:autoStatus, eta:etaStr, note:"", deliveryInfo:"" });
-    }
-    return Object.values(orderMap);
   }
+
+  return Object.values(orderMap);
 }
 
 // ── ログイン ──────────────────────────────────────────────────────────────
@@ -568,6 +558,192 @@ function GroupSection({ title, orders, onUpdate, onDelete, defaultOpen }) {
 }
 
 
+
+// ── ステータス管理 ─────────────────────────────────────────────────────────
+function StatusManager({ orders }) {
+  const [selectedMonth, setSelectedMonth] = useState(null);
+  const [selectedClinic, setSelectedClinic] = useState("all");
+
+  // 月キーを抽出（降順）
+  function toMonthKey(d) {
+    const m = (d||"").match(/(\d{4}年\d{2}月)/);
+    return m ? m[1] : "不明";
+  }
+
+  const months = [...new Set(orders.map(o => toMonthKey(o.date)))].sort((a,b) => b.localeCompare(a));
+  const currentMonth = selectedMonth || months[0] || "";
+  const monthOrders = orders.filter(o => toMonthKey(o.date) === currentMonth);
+
+  // クリニック一覧
+  const clinics = ["all", ...new Set(monthOrders.map(o => o.clinic))].filter(Boolean);
+  const filteredOrders = selectedClinic === "all" ? monthOrders : monthOrders.filter(o => o.clinic === selectedClinic);
+
+  // 統計
+  const allProducts = filteredOrders.flatMap(o => o.products);
+  const totalProducts = allProducts.length;
+  const doneProducts = allProducts.filter(p => p.status === 6).length;
+  const partialProducts = allProducts.filter(p => p.status === 7).length;
+  const pendingProducts = allProducts.filter(p => p.status < 5).length;
+
+  // ステータス色
+  function statusColor(p) {
+    if (p.status === 6) return { bg:"#e8f4ee", color:"#1a7a50", text:"完了" };
+    if (p.status === 7) return { bg:"#fff8f0", color:"#e07d20", text:"一部納品" };
+    if (p.status === 5) return { bg:"#f0f6ff", color:"#3aa876", text:"配送中" };
+    return { bg:"#fff8e8", color:"#b87f0a", text:"未納" };
+  }
+
+  // 納品履歴を見やすく整形
+  function deliveryText(p) {
+    if (!p.deliveryRecords || p.deliveryRecords.length === 0) {
+      if (p.status === 6) return [{ label: p.qty, date: "—", done: true }];
+      return [{ label: p.qty, date: "未発送", done: false }];
+    }
+    return p.deliveryRecords
+      .filter(r => r.qty > 0)
+      .map(r => ({
+        label: `${r.qty}${r.unit}`,
+        date: r.delivDate || r.shipDate || "未発送",
+        done: r.status === "発送済"
+      }));
+  }
+
+  return (
+    <div>
+      {/* 月選択 */}
+      <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:14, overflowX:"auto" }}>
+        {months.map(m => (
+          <button key={m} onClick={() => { setSelectedMonth(m); setSelectedClinic("all"); }}
+            style={{ padding:"7px 14px", borderRadius:20, border:"1.5px solid", flexShrink:0,
+              borderColor: currentMonth===m ? "#0f2744" : "#dde4ef",
+              background: currentMonth===m ? "#0f2744" : "#fff",
+              color: currentMonth===m ? "#fff" : "#4a5568",
+              fontWeight: currentMonth===m ? 700 : 400, fontSize:13, cursor:"pointer" }}>
+            {m}
+          </button>
+        ))}
+      </div>
+
+      {/* サマリー */}
+      <div style={{ display:"flex", gap:8, marginBottom:14, flexWrap:"wrap" }}>
+        {[
+          { label:"完了", value:doneProducts, color:"#1a7a50", bg:"#e8f4ee" },
+          { label:"一部納品", value:partialProducts, color:"#e07d20", bg:"#fff8f0" },
+          { label:"未納・対応中", value:pendingProducts, color:"#b87f0a", bg:"#fff8e8" },
+          { label:"商品合計", value:totalProducts, color:"#0f2744", bg:"#f0f4f9" },
+          { label:"注文数", value:filteredOrders.length, color:"#6b8cba", bg:"#f4f6fb" },
+        ].map(s => (
+          <div key={s.label} style={{ background:s.bg, borderRadius:10, padding:"8px 14px", flex:1, minWidth:80, textAlign:"center" }}>
+            <div style={{ fontSize:20, fontWeight:900, color:s.color }}>{s.value}</div>
+            <div style={{ fontSize:10, color:s.color, marginTop:1, opacity:0.8 }}>{s.label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* クリニック絞り込み */}
+      <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:14, overflowX:"auto" }}>
+        {clinics.map(c => (
+          <button key={c} onClick={() => setSelectedClinic(c)}
+            style={{ padding:"6px 12px", borderRadius:20, border:"1.5px solid", flexShrink:0,
+              borderColor: selectedClinic===c ? "#d4a843" : "#dde4ef",
+              background: selectedClinic===c ? "#d4a843" : "#fff",
+              color: selectedClinic===c ? "#0f2744" : "#4a5568",
+              fontWeight: selectedClinic===c ? 700 : 400, fontSize:12, cursor:"pointer" }}>
+            {c === "all" ? "🏥 全クリニック" : c}
+          </button>
+        ))}
+      </div>
+
+      {/* テーブル */}
+      {filteredOrders.length === 0 && (
+        <div style={{ textAlign:"center", padding:"40px", color:"#aaa", fontSize:14 }}>
+          該当する注文がありません
+        </div>
+      )}
+
+      {filteredOrders.map(order => (
+        <div key={order.id} style={{ background:"#fff", borderRadius:14, border:"1.5px solid #e4eaf3", marginBottom:14, overflow:"hidden", boxShadow:"0 2px 8px rgba(10,30,53,0.05)" }}>
+          {/* 注文ヘッダー */}
+          <div style={{ background:"#0f2744", padding:"10px 16px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+            <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+              <span style={{ fontSize:13, fontWeight:900, color:"#fff", letterSpacing:"0.04em" }}>{order.id}</span>
+              <span style={{ fontSize:11, color:"rgba(255,255,255,0.6)" }}>{order.date}</span>
+            </div>
+            <span style={{ fontSize:12, fontWeight:700, color:"#d4a843" }}>{order.clinic}</span>
+          </div>
+
+          {/* 商品テーブル */}
+          <div style={{ overflowX:"auto" }}>
+            <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12.5, minWidth:560 }}>
+              <thead>
+                <tr style={{ background:"#f8fafd", borderBottom:"1.5px solid #e4eaf3" }}>
+                  <th style={{ padding:"8px 12px", textAlign:"left", color:"#6a7a8a", fontWeight:700, width:"35%" }}>商品名</th>
+                  <th style={{ padding:"8px 8px", textAlign:"center", color:"#6a7a8a", fontWeight:700, width:"8%" }}>受注数</th>
+                  <th style={{ padding:"8px 8px", textAlign:"center", color:"#6a7a8a", fontWeight:700, width:"30%" }}>納品履歴</th>
+                  <th style={{ padding:"8px 8px", textAlign:"center", color:"#6a7a8a", fontWeight:700, width:"12%" }}>未納数</th>
+                  <th style={{ padding:"8px 8px", textAlign:"center", color:"#6a7a8a", fontWeight:700, width:"15%" }}>ステータス</th>
+                </tr>
+              </thead>
+              <tbody>
+                {order.products.map((p, i) => {
+                  const sc = statusColor(p);
+                  const delivs = deliveryText(p);
+                  const totalQty = p.totalQtyNum || parseInt(p.qty) || 0;
+                  const deliveredQty = p.deliveredQtyNum || (p.status === 6 ? totalQty : 0);
+                  const remaining = Math.max(0, totalQty - deliveredQty);
+                  return (
+                    <tr key={i} style={{ borderBottom:"1px solid #f0f4f9", background: i%2===0?"#fff":"#fcfdff" }}>
+                      {/* 商品名 */}
+                      <td style={{ padding:"10px 12px", color:"#1a2a3a", fontWeight:500, lineHeight:1.4 }}>
+                        {p.name.length > 35 ? p.name.slice(0,35)+"…" : p.name}
+                      </td>
+                      {/* 受注数 */}
+                      <td style={{ padding:"10px 8px", textAlign:"center", color:"#1a2a3a", fontWeight:700 }}>
+                        {p.qty}
+                      </td>
+                      {/* 納品履歴 */}
+                      <td style={{ padding:"8px 8px", textAlign:"center" }}>
+                        <div style={{ display:"flex", flexDirection:"column", gap:3 }}>
+                          {delivs.map((d, j) => (
+                            <div key={j} style={{ display:"flex", alignItems:"center", gap:5, justifyContent:"center" }}>
+                              <span style={{ fontSize:11, fontWeight:700, padding:"1px 6px", borderRadius:4,
+                                background: d.done ? "#e8f4ee" : "#f4f6fb",
+                                color: d.done ? "#1a7a50" : "#8a95a5" }}>
+                                {d.label}
+                              </span>
+                              <span style={{ fontSize:10.5, color: d.done ? "#1a7a50" : "#a0aab8" }}>
+                                {d.date}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </td>
+                      {/* 未納数 */}
+                      <td style={{ padding:"10px 8px", textAlign:"center" }}>
+                        {remaining > 0
+                          ? <span style={{ fontSize:13, fontWeight:900, color:"#e05050" }}>{remaining}{p.unit||""}</span>
+                          : <span style={{ fontSize:13, color:"#3aa876", fontWeight:700 }}>—</span>
+                        }
+                      </td>
+                      {/* ステータス */}
+                      <td style={{ padding:"10px 8px", textAlign:"center" }}>
+                        <span style={{ padding:"4px 10px", borderRadius:20, fontSize:11.5, fontWeight:700,
+                          background:sc.bg, color:sc.color }}>
+                          {sc.text}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ── リクエスト管理 ────────────────────────────────────────────────────────
 function RequestManager(props) {
   const [requests, setRequests] = useState([]);
@@ -768,7 +944,7 @@ function App() {
           </div>
           {/* タブ */}
           <div style={{ display:"flex",gap:2,background:"rgba(255,255,255,0.08)",borderRadius:10,padding:3 }}>
-            {[["orders","📦 注文管理"],["requests", unreadCount > 0 ? `📬 リクエスト ${unreadCount}件` : "📬 リクエスト"],["accounts","👤 クリニック管理"]].map(([key,label])=>(
+            {[["orders","📦 注文管理"],["status","📊 ステータス管理"],["requests", unreadCount > 0 ? `📬 リクエスト ${unreadCount}件` : "📬 リクエスト"],["accounts","👤 クリニック管理"]].map(([key,label])=>(
               <button key={key} onClick={()=>setTab(key)} style={{ flex:1,padding:"8px",borderRadius:8,border:"none",background:tab===key?"#fff":"transparent",color:tab===key?"#0f2744":"rgba(255,255,255,0.6)",fontWeight:tab===key?700:500,fontSize:13,cursor:"pointer",transition:"all 0.2s" }}>{label}</button>
             ))}
           </div>
@@ -779,6 +955,7 @@ function App() {
 
         {tab==="accounts" && <ClinicAccountManager />}
         {tab==="requests" && <RequestManager onUnreadCount={setUnreadCount}/>}
+        {tab==="status" && <StatusManager orders={orders} />}
 
         {tab==="orders" && (
           <>
