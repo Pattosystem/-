@@ -67,6 +67,31 @@
     },
     markRequestRead: async (id) => {
       await updateDoc(doc(db, "requests", id), { status: "read" });
+    },
+    // バックアップ：全データ取得
+    loadAllData: async () => {
+      const [ordersSnap, requestsSnap] = await Promise.all([
+        getDocs(collection(db, "orders")),
+        getDocs(collection(db, "requests")),
+      ]);
+      const orders = [], requests = [];
+      ordersSnap.forEach(d => orders.push(d.data()));
+      requestsSnap.forEach(d => requests.push(d.data()));
+      return { orders, requests };
+    },
+    // リストア：全データを上書き保存
+    restoreAllData: async (data) => {
+      // ordersを上書き
+      const ordersSnap = await getDocs(collection(db, "orders"));
+      await Promise.all(ordersSnap.docs.map(d => deleteDoc(doc(db,"orders",d.id))));
+      await Promise.all((data.orders||[]).map(o => setDoc(doc(db,"orders",o.id), o)));
+      // requestsを上書き
+      if (data.requests && data.requests.length > 0) {
+        const reqSnap = await getDocs(collection(db, "requests"));
+        await Promise.all(reqSnap.docs.map(d => deleteDoc(doc(db,"requests",d.id))));
+        await Promise.all(data.requests.map(r => setDoc(doc(db,"requests",r.id), r)));
+      }
+      return true;
     }
   };
 </script>
@@ -256,6 +281,146 @@ function LoginScreen({ onLogin }) {
           style={{ width:"100%",padding:"13px 14px",borderRadius:10,border:`1.5px solid ${err?"#e05050":"#dde4ef"}`,fontSize:16,outline:"none",color:"#0f2744",marginBottom:err?6:14 }}/>
         {err&&<div style={{ color:"#e05050",fontSize:12,marginBottom:10 }}>パスワードが正しくありません</div>}
         <button onClick={go} style={{ width:"100%",padding:14,borderRadius:10,border:"none",background:"linear-gradient(135deg,#0f2744,#1a3d6e)",color:"#fff",fontWeight:800,fontSize:15,cursor:"pointer" }}>ログイン</button>
+      </div>
+    </div>
+  );
+}
+
+// ── バックアップ管理 ──────────────────────────────────────────────────────────
+function BackupManager({ orders, downloadBackup }) {
+  const [restoreStatus, setRestoreStatus] = useState("");
+  const [restorePreview, setRestorePreview] = useState(null);
+  const [pendingData, setPendingData] = useState(null);
+  const fileRef = React.useRef();
+
+  const waitFB = async () => { let t=0; while(!window._firebase&&t<30){await new Promise(r=>setTimeout(r,200));t++;} };
+
+  // 手動バックアップ
+  const handleManualBackup = async () => {
+    await downloadBackup(orders);
+  };
+
+  // リストアファイル読み込み
+  const handleFileRead = (file) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const data = JSON.parse(e.target.result);
+        if (!data.orders) { setRestoreStatus("error"); return; }
+        setPendingData(data);
+        setRestorePreview({
+          exportedAt: data.exportedAt || "不明",
+          orderCount: data.orders.length,
+          requestCount: (data.requests||[]).length,
+          version: data.version || 1,
+        });
+        setRestoreStatus("preview");
+      } catch(e) {
+        setRestoreStatus("parse_error");
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  // リストア実行
+  const handleRestore = async () => {
+    if (!pendingData) return;
+    setRestoreStatus("restoring");
+    await waitFB();
+    try {
+      await window._firebase.restoreAllData(pendingData);
+      setRestoreStatus("success");
+      setPendingData(null);
+      setRestorePreview(null);
+      setTimeout(() => { setRestoreStatus(""); window.location.reload(); }, 2000);
+    } catch(e) {
+      setRestoreStatus("restore_error");
+    }
+  };
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+
+      {/* 手動バックアップ */}
+      <div style={{ background:"#fff", borderRadius:14, border:"1.5px solid #e4eaf3", padding:"20px", boxShadow:"0 2px 10px rgba(10,30,53,0.05)" }}>
+        <div style={{ fontSize:14, fontWeight:800, color:"#0f2744", marginBottom:4 }}>💾 手動バックアップ</div>
+        <div style={{ fontSize:12, color:"#8a95a5", marginBottom:16, lineHeight:1.6 }}>
+          現在のFirebaseデータ（注文・リクエスト・入金状況・出荷指示など全て）をJSONファイルとしてダウンロードします。
+        </div>
+        <div style={{ padding:"10px 14px", background:"#f0f6ff", borderRadius:9, border:"1px solid #c0d8f0", fontSize:12.5, color:"#1a4a90", marginBottom:14 }}>
+          💡 「Firebaseに保存」を押すたびに自動でもバックアップされます。
+        </div>
+        <button onClick={handleManualBackup}
+          style={{ width:"100%", padding:"12px", borderRadius:10, border:"none", background:"linear-gradient(135deg,#0f2744,#1a3d6e)", color:"#fff", fontWeight:800, fontSize:14, cursor:"pointer" }}>
+          📥 今すぐバックアップをダウンロード
+        </button>
+      </div>
+
+      {/* リストア */}
+      <div style={{ background:"#fff", borderRadius:14, border:"1.5px solid #e4eaf3", padding:"20px", boxShadow:"0 2px 10px rgba(10,30,53,0.05)" }}>
+        <div style={{ fontSize:14, fontWeight:800, color:"#0f2744", marginBottom:4 }}>🔄 バックアップから復元</div>
+        <div style={{ fontSize:12, color:"#8a95a5", marginBottom:16, lineHeight:1.6 }}>
+          以前ダウンロードしたJSONファイルを選択すると、Firebaseのデータを復元できます。<br/>
+          <strong style={{ color:"#e05050" }}>※ 現在のデータは上書きされます。必ず事前にバックアップを取ってください。</strong>
+        </div>
+
+        {restoreStatus === "" && (
+          <>
+            <input ref={fileRef} type="file" accept=".json" onChange={e => { if(e.target.files[0]) handleFileRead(e.target.files[0]); }} style={{ display:"none" }}/>
+            <button onClick={() => fileRef.current.click()}
+              style={{ width:"100%", padding:"12px", borderRadius:10, border:"1.5px solid #6b8cba", background:"#f4f6fb", color:"#0f2744", fontWeight:700, fontSize:14, cursor:"pointer" }}>
+              📂 バックアップファイルを選択
+            </button>
+          </>
+        )}
+
+        {restoreStatus === "parse_error" && (
+          <div style={{ padding:"12px", background:"#fff0f0", borderRadius:9, color:"#e05050", fontSize:13 }}>
+            ❌ ファイルの読み込みに失敗しました。正しいバックアップファイルか確認してください。
+            <button onClick={() => setRestoreStatus("")} style={{ display:"block", marginTop:8, padding:"6px 12px", borderRadius:7, border:"1.5px solid #dde4ef", background:"#fff", cursor:"pointer", fontSize:12 }}>やり直す</button>
+          </div>
+        )}
+
+        {restoreStatus === "preview" && restorePreview && (
+          <div>
+            <div style={{ padding:"12px 14px", background:"#fffbef", border:"1.5px solid #e8c95a", borderRadius:10, marginBottom:12 }}>
+              <div style={{ fontSize:13, fontWeight:800, color:"#7a6020", marginBottom:8 }}>⚠️ 復元内容の確認</div>
+              <div style={{ fontSize:12, color:"#5a4010", lineHeight:1.8 }}>
+                <div>バックアップ日時：<strong>{restorePreview.exportedAt.replace("T"," ").slice(0,16)}</strong></div>
+                <div>注文データ：<strong>{restorePreview.orderCount}件</strong></div>
+                <div>リクエスト：<strong>{restorePreview.requestCount}件</strong></div>
+              </div>
+            </div>
+            <div style={{ display:"flex", gap:8 }}>
+              <button onClick={() => { setRestoreStatus(""); setPendingData(null); setRestorePreview(null); }}
+                style={{ flex:1, padding:"11px", borderRadius:9, border:"1.5px solid #dde4ef", background:"#fff", fontSize:13, cursor:"pointer", color:"#666" }}>
+                キャンセル
+              </button>
+              <button onClick={handleRestore}
+                style={{ flex:2, padding:"11px", borderRadius:9, border:"none", background:"#e05050", color:"#fff", fontWeight:800, fontSize:13, cursor:"pointer" }}>
+                ✅ この内容で復元する
+              </button>
+            </div>
+          </div>
+        )}
+
+        {restoreStatus === "restoring" && (
+          <div style={{ padding:"16px", textAlign:"center", color:"#4a7cc7", fontSize:13, fontWeight:700 }}>
+            🔄 復元中... しばらくお待ちください
+          </div>
+        )}
+
+        {restoreStatus === "success" && (
+          <div style={{ padding:"12px", background:"#f0fdf6", borderRadius:9, color:"#1a7a50", fontSize:13, fontWeight:700, textAlign:"center" }}>
+            ✅ 復元完了！画面を再読み込みします...
+          </div>
+        )}
+
+        {restoreStatus === "restore_error" && (
+          <div style={{ padding:"12px", background:"#fff0f0", borderRadius:9, color:"#e05050", fontSize:13 }}>
+            ❌ 復元に失敗しました。もう一度お試しください。
+          </div>
+        )}
       </div>
     </div>
   );
@@ -819,6 +984,7 @@ function StatusManager({ orders, onUpdate }) {
   const [selectedMonth, setSelectedMonth] = useState(null);
   const [selectedClinic, setSelectedClinic] = useState("all");
   const [showPrint, setShowPrint] = useState(false);
+  const [search, setSearch] = useState("");
 
   function toMonthKey(d) {
     const m = (d||"").match(/(\d{4}年\d{2}月)/);
@@ -829,7 +995,12 @@ function StatusManager({ orders, onUpdate }) {
   const currentMonth = selectedMonth || months[0] || "";
   const monthOrders = orders.filter(o => toMonthKey(o.date) === currentMonth);
   const clinics = ["all", ...new Set(monthOrders.map(o => o.clinic).filter(Boolean))];
-  const filtered = selectedClinic === "all" ? monthOrders : monthOrders.filter(o => o.clinic === selectedClinic);
+  const baseOrders = selectedClinic === "all" ? monthOrders : monthOrders.filter(o => o.clinic === selectedClinic);
+  const filtered = !search.trim() ? baseOrders : baseOrders.filter(o =>
+    o.id.includes(search.trim()) ||
+    (o.clinic||"").includes(search.trim()) ||
+    o.products.some(p => (p.name||"").includes(search.trim()))
+  );
   const allP = filtered.flatMap(o => o.products);
 
   const stats = {
@@ -900,6 +1071,16 @@ function StatusManager({ orders, onUpdate }) {
               <div style={{ fontSize:9, color:s.c, opacity:0.8 }}>{s.l}</div>
             </div>
           ))}
+        </div>
+        {/* 検索欄 */}
+        <div style={{ width:"100%", marginBottom:6 }}>
+          <input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="受注番号・クリニック名・商品名で検索"
+            style={{ width:"100%", padding:"8px 14px", borderRadius:9, border:"1.5px solid #dde4ef",
+              fontSize:13, outline:"none", background:"#fff", color:"#1a2a3a" }}
+          />
         </div>
         <div style={{ display:"flex", gap:4, flexWrap:"wrap", flex:1 }}>
           {clinics.map(c => (
@@ -1097,7 +1278,7 @@ function StatusManager({ orders, onUpdate }) {
       </div>
 
       <div style={{ fontSize:11, color:"#c0c8d4", marginTop:6, textAlign:"right" }}>
-        {filtered.length}注文 / {allP.length}商品
+        {search.trim() ? `検索結果：${filtered.length}注文 / ${allP.length}商品` : `${filtered.length}注文 / ${allP.length}商品`}
       </div>
     </div>
   );
@@ -1257,9 +1438,30 @@ function App() {
     setImportMsg(`✅ ${newOrders.length}件をインポートしました。「Firebaseに保存」を押してください。`);
     setTimeout(()=>setImportMsg(""),6000);
   };
+  const downloadBackup = async (ordersData) => {
+    let allData = { version:2, exportedAt: new Date().toISOString(), orders: ordersData, requests:[] };
+    try {
+      const full = await window._firebase.loadAllData();
+      allData.requests = full.requests || [];
+    } catch(e) {}
+    const blob = new Blob([JSON.stringify(allData, null, 2)], {type:"application/json"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const d = new Date();
+    a.href = url;
+    a.download = `backup_${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}_${String(d.getHours()).padStart(2,"0")}${String(d.getMinutes()).padStart(2,"0")}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const handleSave=async()=>{
     setSaveStatus("saving");
-    try{ await window._firebase.saveOrders(orders); setSaveStatus("saved"); }catch(e){ setSaveStatus("error"); }
+    try{
+      await window._firebase.saveOrders(orders);
+      setSaveStatus("saved");
+      // 自動バックアップ
+      await downloadBackup(orders);
+    }catch(e){ setSaveStatus("error"); }
     setTimeout(()=>setSaveStatus(""),3000);
   };
 
@@ -1304,7 +1506,7 @@ function App() {
           </div>
           {/* タブ */}
           <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:3 }}>
-            {[["orders","📦 注文管理"],["status","📊 ステータス管理"],["requests", unreadCount > 0 ? `📬 リクエスト ${unreadCount}件` : "📬 リクエスト"],["accounts","👤 クリニック管理"]].map(([key,label])=>(
+            {[["orders","📦 注文管理"],["status","📊 ステータス管理"],["requests", unreadCount > 0 ? `📬 リクエスト ${unreadCount}件` : "📬 リクエスト"],["accounts","👤 クリニック管理"],["backup","💾 バックアップ"]].map(([key,label])=>(
               <button key={key} onClick={()=>setTab(key)} style={{ padding:"9px 8px",borderRadius:8,border:"none",background:tab===key?"#fff":"rgba(255,255,255,0.08)",color:tab===key?"#0f2744":"rgba(255,255,255,0.7)",fontWeight:tab===key?700:500,fontSize:12.5,cursor:"pointer",transition:"all 0.2s",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis" }}>{label}</button>
             ))}
           </div>
@@ -1316,6 +1518,7 @@ function App() {
         {tab==="accounts" && <ClinicAccountManager />}
         {tab==="requests" && <RequestManager onUnreadCount={setUnreadCount}/>}
         {tab==="status" && <StatusManager orders={orders} onUpdate={updateOrder} />}
+        {tab==="backup" && <BackupManager orders={orders} downloadBackup={downloadBackup} />}
 
         {tab==="orders" && (
           <>
