@@ -564,7 +564,6 @@ function StatusManager({ orders }) {
   const [selectedMonth, setSelectedMonth] = useState(null);
   const [selectedClinic, setSelectedClinic] = useState("all");
 
-  // 月キーを抽出（降順）
   function toMonthKey(d) {
     const m = (d||"").match(/(\d{4}年\d{2}月)/);
     return m ? m[1] : "不明";
@@ -573,173 +572,181 @@ function StatusManager({ orders }) {
   const months = [...new Set(orders.map(o => toMonthKey(o.date)))].sort((a,b) => b.localeCompare(a));
   const currentMonth = selectedMonth || months[0] || "";
   const monthOrders = orders.filter(o => toMonthKey(o.date) === currentMonth);
+  const clinics = ["all", ...new Set(monthOrders.map(o => o.clinic).filter(Boolean))];
+  const filtered = selectedClinic === "all" ? monthOrders : monthOrders.filter(o => o.clinic === selectedClinic);
 
-  // クリニック一覧
-  const clinics = ["all", ...new Set(monthOrders.map(o => o.clinic))].filter(Boolean);
-  const filteredOrders = selectedClinic === "all" ? monthOrders : monthOrders.filter(o => o.clinic === selectedClinic);
+  const allP = filtered.flatMap(o => o.products);
+  const stats = {
+    done:    allP.filter(p => p.status === 6).length,
+    partial: allP.filter(p => p.status === 7).length,
+    pending: allP.filter(p => p.status < 5 || p.status === 7 ? false : p.status < 6).length,
+    notship: allP.filter(p => p.status < 5).length,
+    total:   allP.length,
+  };
 
-  // 統計
-  const allProducts = filteredOrders.flatMap(o => o.products);
-  const totalProducts = allProducts.length;
-  const doneProducts = allProducts.filter(p => p.status === 6).length;
-  const partialProducts = allProducts.filter(p => p.status === 7).length;
-  const pendingProducts = allProducts.filter(p => p.status < 5).length;
-
-  // ステータス色
-  function statusColor(p) {
-    if (p.status === 6) return { bg:"#e8f4ee", color:"#1a7a50", text:"完了" };
-    if (p.status === 7) return { bg:"#fff8f0", color:"#e07d20", text:"一部納品" };
-    if (p.status === 5) return { bg:"#f0f6ff", color:"#3aa876", text:"配送中" };
-    return { bg:"#fff8e8", color:"#b87f0a", text:"未納" };
+  function statusLabel(p) {
+    if (p.status === 6) return { text:"完了",    bg:"#e8f4ee", color:"#1a7a50" };
+    if (p.status === 7) return { text:"一部納品", bg:"#fff8f0", color:"#e07d20" };
+    if (p.status === 5) return { text:"配送中",   bg:"#f0f6ff", color:"#3aa876" };
+    if (p.status === 4) return { text:"通関中",   bg:"#fff8e8", color:"#b87f0a" };
+    return                     { text:"未納",     bg:"#fff0f0", color:"#e05050" };
   }
 
-  // 納品履歴を見やすく整形
-  function deliveryText(p) {
+  function delivSummary(p) {
     if (!p.deliveryRecords || p.deliveryRecords.length === 0) {
-      if (p.status === 6) return [{ label: p.qty, date: "—", done: true }];
-      return [{ label: p.qty, date: "未発送", done: false }];
+      if (p.status === 6) return [{ label: p.qty, date:"完了", done:true }];
+      return [{ label: p.qty, date:"未発送", done:false }];
     }
-    return p.deliveryRecords
-      .filter(r => r.qty > 0)
-      .map(r => ({
-        label: `${r.qty}${r.unit}`,
-        date: r.delivDate || r.shipDate || "未発送",
-        done: r.status === "発送済"
-      }));
+    return p.deliveryRecords.filter(r => r.qty > 0).map(r => ({
+      label: `${r.qty}${r.unit||""}`,
+      date:  r.delivDate ? r.delivDate.replace("2026-","") : (r.shipDate ? r.shipDate.replace("2026-","") : "未発送"),
+      done:  r.status === "発送済"
+    }));
   }
 
   return (
-    <div>
-      {/* 月選択 */}
-      <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:14, overflowX:"auto" }}>
+    <div style={{ fontSize:13 }}>
+
+      {/* 月タブ */}
+      <div style={{ display:"flex", gap:4, marginBottom:10, overflowX:"auto", paddingBottom:2 }}>
         {months.map(m => (
           <button key={m} onClick={() => { setSelectedMonth(m); setSelectedClinic("all"); }}
-            style={{ padding:"7px 14px", borderRadius:20, border:"1.5px solid", flexShrink:0,
-              borderColor: currentMonth===m ? "#0f2744" : "#dde4ef",
-              background: currentMonth===m ? "#0f2744" : "#fff",
-              color: currentMonth===m ? "#fff" : "#4a5568",
-              fontWeight: currentMonth===m ? 700 : 400, fontSize:13, cursor:"pointer" }}>
+            style={{ padding:"5px 12px", borderRadius:16, border:"1.5px solid", flexShrink:0,
+              borderColor:currentMonth===m?"#0f2744":"#dde4ef",
+              background:currentMonth===m?"#0f2744":"#fff",
+              color:currentMonth===m?"#fff":"#4a5568",
+              fontWeight:currentMonth===m?700:400, fontSize:12, cursor:"pointer" }}>
             {m}
           </button>
         ))}
       </div>
 
-      {/* サマリー */}
-      <div style={{ display:"flex", gap:8, marginBottom:14, flexWrap:"wrap" }}>
-        {[
-          { label:"完了", value:doneProducts, color:"#1a7a50", bg:"#e8f4ee" },
-          { label:"一部納品", value:partialProducts, color:"#e07d20", bg:"#fff8f0" },
-          { label:"未納・対応中", value:pendingProducts, color:"#b87f0a", bg:"#fff8e8" },
-          { label:"商品合計", value:totalProducts, color:"#0f2744", bg:"#f0f4f9" },
-          { label:"注文数", value:filteredOrders.length, color:"#6b8cba", bg:"#f4f6fb" },
-        ].map(s => (
-          <div key={s.label} style={{ background:s.bg, borderRadius:10, padding:"8px 14px", flex:1, minWidth:80, textAlign:"center" }}>
-            <div style={{ fontSize:20, fontWeight:900, color:s.color }}>{s.value}</div>
-            <div style={{ fontSize:10, color:s.color, marginTop:1, opacity:0.8 }}>{s.label}</div>
-          </div>
-        ))}
-      </div>
-
-      {/* クリニック絞り込み */}
-      <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:14, overflowX:"auto" }}>
-        {clinics.map(c => (
-          <button key={c} onClick={() => setSelectedClinic(c)}
-            style={{ padding:"6px 12px", borderRadius:20, border:"1.5px solid", flexShrink:0,
-              borderColor: selectedClinic===c ? "#d4a843" : "#dde4ef",
-              background: selectedClinic===c ? "#d4a843" : "#fff",
-              color: selectedClinic===c ? "#0f2744" : "#4a5568",
-              fontWeight: selectedClinic===c ? 700 : 400, fontSize:12, cursor:"pointer" }}>
-            {c === "all" ? "🏥 全クリニック" : c}
-          </button>
-        ))}
-      </div>
-
-      {/* テーブル */}
-      {filteredOrders.length === 0 && (
-        <div style={{ textAlign:"center", padding:"40px", color:"#aaa", fontSize:14 }}>
-          該当する注文がありません
+      {/* サマリー + クリニック絞り込みを横並び */}
+      <div style={{ display:"flex", gap:8, marginBottom:10, alignItems:"flex-start", flexWrap:"wrap" }}>
+        {/* サマリーバッジ */}
+        <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+          {[
+            { l:"完了",    v:stats.done,    c:"#1a7a50", bg:"#e8f4ee" },
+            { l:"一部納品", v:stats.partial, c:"#e07d20", bg:"#fff8f0" },
+            { l:"未納",    v:stats.notship, c:"#e05050", bg:"#fff0f0" },
+            { l:"商品計",  v:stats.total,   c:"#0f2744", bg:"#f0f4f9" },
+          ].map(s => (
+            <div key={s.l} style={{ background:s.bg, borderRadius:8, padding:"5px 10px", textAlign:"center", minWidth:54 }}>
+              <div style={{ fontSize:16, fontWeight:900, color:s.c, lineHeight:1 }}>{s.v}</div>
+              <div style={{ fontSize:9.5, color:s.c, opacity:0.8 }}>{s.l}</div>
+            </div>
+          ))}
         </div>
+
+        {/* クリニック絞り込み */}
+        <div style={{ display:"flex", gap:4, flexWrap:"wrap", flex:1 }}>
+          {clinics.map(c => (
+            <button key={c} onClick={() => setSelectedClinic(c)}
+              style={{ padding:"4px 10px", borderRadius:14, border:"1.5px solid", flexShrink:0,
+                borderColor:selectedClinic===c?"#d4a843":"#dde4ef",
+                background:selectedClinic===c?"#d4a843":"#fff",
+                color:selectedClinic===c?"#0f2744":"#4a5568",
+                fontWeight:selectedClinic===c?700:400, fontSize:11.5, cursor:"pointer" }}>
+              {c === "all" ? "全て" : c}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* テーブル本体 */}
+      {filtered.length === 0 && (
+        <div style={{ textAlign:"center", padding:"40px", color:"#aaa" }}>該当する注文がありません</div>
       )}
 
-      {filteredOrders.map(order => (
-        <div key={order.id} style={{ background:"#fff", borderRadius:14, border:"1.5px solid #e4eaf3", marginBottom:14, overflow:"hidden", boxShadow:"0 2px 8px rgba(10,30,53,0.05)" }}>
-          {/* 注文ヘッダー */}
-          <div style={{ background:"#0f2744", padding:"10px 16px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-            <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-              <span style={{ fontSize:13, fontWeight:900, color:"#fff", letterSpacing:"0.04em" }}>{order.id}</span>
-              <span style={{ fontSize:11, color:"rgba(255,255,255,0.6)" }}>{order.date}</span>
-            </div>
-            <span style={{ fontSize:12, fontWeight:700, color:"#d4a843" }}>{order.clinic}</span>
-          </div>
+      <div style={{ border:"1.5px solid #e4eaf3", borderRadius:12, overflow:"hidden", boxShadow:"0 2px 8px rgba(10,30,53,0.05)" }}>
+        <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+          <thead>
+            <tr style={{ background:"#0f2744" }}>
+              <th style={{ padding:"8px 10px", textAlign:"left",   color:"rgba(255,255,255,0.8)", fontWeight:700, width:"14%", whiteSpace:"nowrap" }}>受注番号</th>
+              <th style={{ padding:"8px 10px", textAlign:"left",   color:"rgba(255,255,255,0.8)", fontWeight:700, width:"12%", whiteSpace:"nowrap" }}>クリニック</th>
+              <th style={{ padding:"8px 10px", textAlign:"left",   color:"rgba(255,255,255,0.8)", fontWeight:700, width:"28%", whiteSpace:"nowrap" }}>商品名</th>
+              <th style={{ padding:"8px 8px",  textAlign:"center", color:"rgba(255,255,255,0.8)", fontWeight:700, width:"7%",  whiteSpace:"nowrap" }}>受注数</th>
+              <th style={{ padding:"8px 10px", textAlign:"center", color:"rgba(255,255,255,0.8)", fontWeight:700, width:"24%", whiteSpace:"nowrap" }}>納品履歴（数量・日付）</th>
+              <th style={{ padding:"8px 8px",  textAlign:"center", color:"rgba(255,255,255,0.8)", fontWeight:700, width:"7%",  whiteSpace:"nowrap" }}>未納数</th>
+              <th style={{ padding:"8px 8px",  textAlign:"center", color:"rgba(255,255,255,0.8)", fontWeight:700, width:"8%",  whiteSpace:"nowrap" }}>状況</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.map((order, oi) =>
+              order.products.map((p, pi) => {
+                const sc = statusLabel(p);
+                const delivs = delivSummary(p);
+                const totalQty  = p.totalQtyNum || 0;
+                const delivered = p.deliveredQtyNum || (p.status===6 ? totalQty : 0);
+                const remaining = Math.max(0, totalQty - delivered);
+                const isFirstRow = pi === 0;
+                const rowCount   = order.products.length;
+                const rowBg = oi % 2 === 0 ? "#fff" : "#f9fafc";
+                return (
+                  <tr key={`${order.id}-${pi}`} style={{ borderBottom:"1px solid #edf0f6", background:rowBg }}>
+                    {/* 受注番号・クリニックは最初の行のみ表示 */}
+                    {isFirstRow && (
+                      <td rowSpan={rowCount} style={{ padding:"8px 10px", verticalAlign:"top", borderRight:"1px solid #edf0f6",
+                        color:"#0f2744", fontWeight:700, fontSize:11.5, lineHeight:1.5, background:rowBg }}>
+                        <a href={`https://pitto.i15.bcart.jp/admin/order/list?order_code=${order.id}&sort=order_time-desc&limit=25`}
+                          target="_blank" rel="noopener noreferrer"
+                          style={{ color:"#1a6abf", textDecoration:"underline", fontWeight:700, cursor:"pointer" }}>
+                          {order.id}
+                        </a>
+                        <div style={{ fontSize:10, color:"#8a95a5", marginTop:2 }}>{order.date.replace("2026年","").replace("日","")}</div>
+                      </td>
+                    )}
+                    {isFirstRow && (
+                      <td rowSpan={rowCount} style={{ padding:"8px 10px", verticalAlign:"top", borderRight:"1px solid #edf0f6",
+                        color:"#333", fontSize:11.5, lineHeight:1.5, background:rowBg }}>
+                        {order.clinic}
+                      </td>
+                    )}
+                    {/* 商品名 */}
+                    <td style={{ padding:"7px 10px", color:"#1a2a3a", lineHeight:1.4, borderRight:"1px solid #edf0f6" }}>
+                      {p.name.length > 30 ? p.name.slice(0,30)+"…" : p.name}
+                    </td>
+                    {/* 受注数 */}
+                    <td style={{ padding:"7px 8px", textAlign:"center", fontWeight:700, color:"#1a2a3a", borderRight:"1px solid #edf0f6" }}>
+                      {p.qty}
+                    </td>
+                    {/* 納品履歴 */}
+                    <td style={{ padding:"6px 10px", borderRight:"1px solid #edf0f6" }}>
+                      <div style={{ display:"flex", flexWrap:"wrap", gap:"3px 8px", justifyContent:"center" }}>
+                        {delivs.map((d, j) => (
+                          <span key={j} style={{ fontSize:11, whiteSpace:"nowrap",
+                            color: d.done ? "#1a7a50" : "#a0aab8",
+                            fontWeight: d.done ? 700 : 400 }}>
+                            {d.done ? "✅" : "📋"} {d.label} {d.date}
+                          </span>
+                        ))}
+                      </div>
+                    </td>
+                    {/* 未納数 */}
+                    <td style={{ padding:"7px 8px", textAlign:"center", borderRight:"1px solid #edf0f6" }}>
+                      {remaining > 0
+                        ? <span style={{ fontWeight:900, color:"#e05050", fontSize:13 }}>{remaining}{p.unit||""}</span>
+                        : <span style={{ color:"#3aa876", fontWeight:700 }}>—</span>
+                      }
+                    </td>
+                    {/* 状況 */}
+                    <td style={{ padding:"7px 8px", textAlign:"center" }}>
+                      <span style={{ padding:"3px 8px", borderRadius:20, fontSize:11, fontWeight:700,
+                        background:sc.bg, color:sc.color, whiteSpace:"nowrap" }}>
+                        {sc.text}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
 
-          {/* 商品テーブル */}
-          <div style={{ overflowX:"auto" }}>
-            <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12.5, minWidth:560 }}>
-              <thead>
-                <tr style={{ background:"#f8fafd", borderBottom:"1.5px solid #e4eaf3" }}>
-                  <th style={{ padding:"8px 12px", textAlign:"left", color:"#6a7a8a", fontWeight:700, width:"35%" }}>商品名</th>
-                  <th style={{ padding:"8px 8px", textAlign:"center", color:"#6a7a8a", fontWeight:700, width:"8%" }}>受注数</th>
-                  <th style={{ padding:"8px 8px", textAlign:"center", color:"#6a7a8a", fontWeight:700, width:"30%" }}>納品履歴</th>
-                  <th style={{ padding:"8px 8px", textAlign:"center", color:"#6a7a8a", fontWeight:700, width:"12%" }}>未納数</th>
-                  <th style={{ padding:"8px 8px", textAlign:"center", color:"#6a7a8a", fontWeight:700, width:"15%" }}>ステータス</th>
-                </tr>
-              </thead>
-              <tbody>
-                {order.products.map((p, i) => {
-                  const sc = statusColor(p);
-                  const delivs = deliveryText(p);
-                  const totalQty = p.totalQtyNum || parseInt(p.qty) || 0;
-                  const deliveredQty = p.deliveredQtyNum || (p.status === 6 ? totalQty : 0);
-                  const remaining = Math.max(0, totalQty - deliveredQty);
-                  return (
-                    <tr key={i} style={{ borderBottom:"1px solid #f0f4f9", background: i%2===0?"#fff":"#fcfdff" }}>
-                      {/* 商品名 */}
-                      <td style={{ padding:"10px 12px", color:"#1a2a3a", fontWeight:500, lineHeight:1.4 }}>
-                        {p.name.length > 35 ? p.name.slice(0,35)+"…" : p.name}
-                      </td>
-                      {/* 受注数 */}
-                      <td style={{ padding:"10px 8px", textAlign:"center", color:"#1a2a3a", fontWeight:700 }}>
-                        {p.qty}
-                      </td>
-                      {/* 納品履歴 */}
-                      <td style={{ padding:"8px 8px", textAlign:"center" }}>
-                        <div style={{ display:"flex", flexDirection:"column", gap:3 }}>
-                          {delivs.map((d, j) => (
-                            <div key={j} style={{ display:"flex", alignItems:"center", gap:5, justifyContent:"center" }}>
-                              <span style={{ fontSize:11, fontWeight:700, padding:"1px 6px", borderRadius:4,
-                                background: d.done ? "#e8f4ee" : "#f4f6fb",
-                                color: d.done ? "#1a7a50" : "#8a95a5" }}>
-                                {d.label}
-                              </span>
-                              <span style={{ fontSize:10.5, color: d.done ? "#1a7a50" : "#a0aab8" }}>
-                                {d.date}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      </td>
-                      {/* 未納数 */}
-                      <td style={{ padding:"10px 8px", textAlign:"center" }}>
-                        {remaining > 0
-                          ? <span style={{ fontSize:13, fontWeight:900, color:"#e05050" }}>{remaining}{p.unit||""}</span>
-                          : <span style={{ fontSize:13, color:"#3aa876", fontWeight:700 }}>—</span>
-                        }
-                      </td>
-                      {/* ステータス */}
-                      <td style={{ padding:"10px 8px", textAlign:"center" }}>
-                        <span style={{ padding:"4px 10px", borderRadius:20, fontSize:11.5, fontWeight:700,
-                          background:sc.bg, color:sc.color }}>
-                          {sc.text}
-                        </span>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      ))}
+      <div style={{ fontSize:11, color:"#c0c8d4", marginTop:8, textAlign:"right" }}>
+        {filtered.length}注文 / {allP.length}商品
+      </div>
     </div>
   );
 }
@@ -943,9 +950,9 @@ function App() {
             ))}
           </div>
           {/* タブ */}
-          <div style={{ display:"flex",gap:2,background:"rgba(255,255,255,0.08)",borderRadius:10,padding:3 }}>
+          <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:3 }}>
             {[["orders","📦 注文管理"],["status","📊 ステータス管理"],["requests", unreadCount > 0 ? `📬 リクエスト ${unreadCount}件` : "📬 リクエスト"],["accounts","👤 クリニック管理"]].map(([key,label])=>(
-              <button key={key} onClick={()=>setTab(key)} style={{ flex:1,padding:"8px",borderRadius:8,border:"none",background:tab===key?"#fff":"transparent",color:tab===key?"#0f2744":"rgba(255,255,255,0.6)",fontWeight:tab===key?700:500,fontSize:13,cursor:"pointer",transition:"all 0.2s" }}>{label}</button>
+              <button key={key} onClick={()=>setTab(key)} style={{ padding:"9px 8px",borderRadius:8,border:"none",background:tab===key?"#fff":"rgba(255,255,255,0.08)",color:tab===key?"#0f2744":"rgba(255,255,255,0.7)",fontWeight:tab===key?700:500,fontSize:12.5,cursor:"pointer",transition:"all 0.2s",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis" }}>{label}</button>
             ))}
           </div>
         </div>
