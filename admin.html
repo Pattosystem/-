@@ -53,11 +53,23 @@
     // ── 注文データ：50件ずつバッチ書き込み（確実保存）──────────────
     loadOrders: async () => {
       try {
-        const snap = await getDocs(collection(db, "orders"));
+        // キャッシュを使わずサーバーから直接取得
+        const { getDocsFromServer } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
+        const snap = await getDocsFromServer(collection(db, "orders"));
         const list = [];
         snap.forEach(d => list.push(d.data()));
+        console.log("📦 orders from server:", list.length, "件");
         return list;
-      } catch(e) { console.error("loadOrders error:", e); return []; }
+      } catch(e) {
+        console.error("loadOrders error:", e);
+        // フォールバック
+        try {
+          const snap = await getDocs(collection(db, "orders"));
+          const list = [];
+          snap.forEach(d => list.push(d.data()));
+          return list;
+        } catch(e2) { return []; }
+      }
     },
     saveOrders: async (orders) => {
       // ステップ1: 既存を50件ずつ削除
@@ -127,20 +139,32 @@
     loadBindings: async () => {
       try {
         const d = await getDoc(doc(db, "appdata", "bindings"));
-        return d.exists() ? d.data().data || {} : {};
-      } catch(e) { return {}; }
+        if (!d.exists()) return {};
+        const raw = d.data();
+        // 配列形式 [{email, clinics}] → {email: clinics} に変換
+        if (Array.isArray(raw.list)) {
+          const obj = {};
+          raw.list.forEach(item => { if(item.email) obj[item.email] = item.clinics || []; });
+          console.log("📂 loadBindings(array):", JSON.stringify(obj));
+          return obj;
+        }
+        // 旧形式マップ
+        return raw.data || {};
+      } catch(e) { console.error("loadBindings error:", e); return {}; }
     },
     saveBindings: async (bindings) => {
-      console.log("💾 紐づけ保存開始:", JSON.stringify(bindings));
+      // {email: clinics} → [{email, clinics}] 配列形式で保存（@などの特殊文字問題を回避）
+      const list = Object.entries(bindings).map(([email, clinics]) => ({ email, clinics }));
+      console.log("💾 saveBindings:", JSON.stringify(list));
       await setDoc(doc(db, "appdata", "bindings"), {
-        data: bindings, savedAt: new Date().toISOString()
+        list, savedAt: new Date().toISOString(), count: list.length
       });
-      // キャッシュ更新
       window._bindings = bindings;
       // 確認
       const verify = await getDoc(doc(db, "appdata", "bindings"));
-      if (!verify.exists()) throw new Error("紐づけ保存確認失敗");
-      console.log("✅ 紐づけ保存確認:", JSON.stringify(verify.data().data));
+      const savedList = verify.data().list || [];
+      console.log("✅ 保存確認 list:", JSON.stringify(savedList));
+      if (savedList.length !== list.length) throw new Error(`件数不一致: ${savedList.length}/${list.length}`);
       return true;
     },
     // リストア：注釈データのみ復元
