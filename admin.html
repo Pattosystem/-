@@ -1214,21 +1214,21 @@ function StatusManager({ orders, onUpdate }) {
                       <td rowSpan={rowCount} style={{ padding:"6px 8px", verticalAlign:"top",
                         borderLeft:"1px solid #edf0f6", background:rowBg }}>
                         <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
-                          {["", "入金済み", "未入金"].map(opt => (
+                          {["", "入金済み", "未入金", "クレジット"].map(opt => (
                             <button key={opt}
                               onClick={() => onUpdate(order.id, "paymentStatus", opt)}
                               style={{
                                 padding:"4px 8px", borderRadius:6, border:"1.5px solid", cursor:"pointer",
                                 fontSize:11, fontWeight:700, whiteSpace:"nowrap",
                                 borderColor: order.paymentStatus===opt
-                                  ? (opt==="入金済み" ? "#1a7a50" : opt==="未入金" ? "#e05050" : "#dde4ef")
+                                  ? (opt==="入金済み" ? "#1a7a50" : opt==="未入金" ? "#e05050" : opt==="クレジット" ? "#4a7cc7" : "#dde4ef")
                                   : "#dde4ef",
                                 background: order.paymentStatus===opt
-                                  ? (opt==="入金済み" ? "#1a7a50" : opt==="未入金" ? "#e05050" : "#f5f7fa")
+                                  ? (opt==="入金済み" ? "#1a7a50" : opt==="未入金" ? "#e05050" : opt==="クレジット" ? "#4a7cc7" : "#f5f7fa")
                                   : "#fff",
                                 color: order.paymentStatus===opt
                                   ? (opt ? "#fff" : "#8a95a5")
-                                  : (opt==="入金済み" ? "#1a7a50" : opt==="未入金" ? "#e05050" : "#aab"),
+                                  : (opt==="入金済み" ? "#1a7a50" : opt==="未入金" ? "#e05050" : opt==="クレジット" ? "#4a7cc7" : "#aab"),
                               }}>
                               {opt || "—"}
                             </button>
@@ -1434,9 +1434,27 @@ function App() {
   const updateOrder=(id,field,value)=>setOrders(prev=>prev.map(o=>o.id===id?{...o,[field]:value,updatedAt:nowStr()}:o));
   const deleteOrder=(id)=>setOrders(prev=>prev.filter(o=>o.id!==id));
   const handleImport=(newOrders)=>{
-    setOrders(prev=>{ const map={}; prev.forEach(o=>map[o.id]=o); newOrders.forEach(o=>map[o.id]=o); return Object.values(map).sort((a,b)=>b.id.localeCompare(a.id)); });
-    setImportMsg(`✅ ${newOrders.length}件をインポートしました。「Firebaseに保存」を押してください。`);
-    setTimeout(()=>setImportMsg(""),6000);
+    setOrders(prev=>{
+      const map={};
+      prev.forEach(o=>map[o.id]=o);
+      newOrders.forEach(newOrder=>{
+        const existing = map[newOrder.id];
+        if (existing) {
+          // 手動入力データを引き継ぐ
+          map[newOrder.id] = {
+            ...newOrder,
+            paymentStatus:   existing.paymentStatus   || newOrder.paymentStatus || "",
+            paymentDate:     existing.paymentDate     || newOrder.paymentDate   || "",
+            shipInstructions: existing.shipInstructions || [],
+          };
+        } else {
+          map[newOrder.id] = newOrder;
+        }
+      });
+      return Object.values(map).sort((a,b)=>b.id.localeCompare(a.id));
+    });
+    setImportMsg(`✅ ${newOrders.length}件をインポートしました。手動入力データは保持されています。「Firebaseに保存」を押してください。`);
+    setTimeout(()=>setImportMsg(""),8000);
   };
   const downloadBackup = async (ordersData) => {
     let allData = { version:2, exportedAt: new Date().toISOString(), orders: ordersData, requests:[] };
