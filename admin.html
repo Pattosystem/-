@@ -630,18 +630,23 @@ function ClinicBindingManager({ orders }) {
                   )}
                 </div>
                 {/* クリニックタグ */}
-                <div style={{ display:"flex", gap:5, flexWrap:"wrap", paddingLeft:4 }}>
+                <div style={{ display:"flex", gap:5, flexWrap:"wrap", paddingLeft:4, alignItems:"center" }}>
+                  {clinics.length === 0 && (
+                    <span style={{ fontSize:12, color:"#e05050", fontWeight:700, padding:"3px 8px", borderRadius:20, background:"#fff0f0", border:"1px solid #e0c0c0" }}>
+                      ⚠ クリニック未設定
+                    </span>
+                  )}
                   {clinics.map(clinic => (
-                    <span key={clinic} style={{ display:"flex", alignItems:"center", gap:4, padding:"3px 8px", borderRadius:20, background:"#f0f4ff", border:"1px solid #c0d0f0", fontSize:11.5, color:"#1a4a90" }}>
+                    <span key={clinic} style={{ display:"flex", alignItems:"center", gap:4, padding:"4px 10px", borderRadius:20, background:"#f0f4ff", border:"1px solid #c0d0f0", fontSize:12, color:"#1a4a90", fontWeight:700 }}>
                       {clinic}
                       <span onClick={() => handleRemoveClinic(email, clinic)}
-                        style={{ cursor:"pointer", color:"#e05050", fontWeight:700, fontSize:12, lineHeight:1 }}>×</span>
+                        style={{ cursor:"pointer", color:"#e05050", fontWeight:700, fontSize:13, lineHeight:1 }}>×</span>
                     </span>
                   ))}
                   {/* クリニック追加セレクト */}
                   <select onChange={e => { if(e.target.value) handleAddClinicToEmail(email, e.target.value); e.target.value=""; }}
-                    style={{ padding:"2px 6px", borderRadius:20, border:"1.5px dashed #c0d0f0", fontSize:11, color:"#4a7cc7", background:"#fff", cursor:"pointer", outline:"none" }}>
-                    <option value="">＋ 追加</option>
+                    style={{ padding:"4px 8px", borderRadius:20, border:"1.5px dashed #4a7cc7", fontSize:12, color:"#4a7cc7", background:"#fff", cursor:"pointer", outline:"none" }}>
+                    <option value="">＋ クリニックを追加</option>
                     {clinicNames.filter(n => !clinics.includes(n)).map(n => <option key={n} value={n}>{n}</option>)}
                   </select>
                 </div>
@@ -676,6 +681,11 @@ function ClinicBindingManager({ orders }) {
                 </div>
               )}
             </div>
+            {addEmail.trim() && addClinics.length === 0 && (
+              <div style={{ padding:"8px 10px", background:"#fff8e8", border:"1px solid #e8c95a", borderRadius:8, fontSize:12, color:"#7a6020", marginBottom:8 }}>
+                ⚠ クリニックを1つ以上選択してください
+              </div>
+            )}
             <button onClick={handleAdd} disabled={!addEmail.trim() || addClinics.length===0}
               style={{ width:"100%", padding:"9px", borderRadius:9, border:"none", background:"#0f2744", color:"#fff", fontWeight:700, fontSize:13, cursor:"pointer", opacity:(!addEmail.trim()||addClinics.length===0)?0.4:1 }}>
               追加する
