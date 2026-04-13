@@ -111,7 +111,19 @@ function parseBcartCSV(text) {
   const lines=text.split(/\r?\n/).filter(l=>l.trim());
   if(lines.length<2) return [];
   const headers=parseRow(lines[0]);
-  const idx={ orderNo:headers.indexOf("受注番号"), company:headers.indexOf("会社名"), dateTime:headers.indexOf("受注日時"), itemName:headers.indexOf("商品名"), spec:headers.indexOf("製品規格"), qty:headers.indexOf("受注数"), unit:headers.indexOf("単位"), category:headers.indexOf("明細区分") };
+  const idx={
+    orderNo:    headers.indexOf("受注番号"),
+    company:    headers.indexOf("会社名"),
+    dateTime:   headers.indexOf("受注日時"),
+    itemName:   headers.indexOf("商品名"),
+    spec:       headers.indexOf("製品規格"),
+    qty:        headers.indexOf("受注数"),
+    unit:       headers.indexOf("単位"),
+    category:   headers.indexOf("明細区分"),
+    shipStatus: headers.indexOf("発送状況"),
+    shipDate:   headers.indexOf("発送日"),
+    delivDate:  headers.indexOf("納品日"),
+  };
   const orderMap={};
   for(let i=1;i<lines.length;i++){
     const row=parseRow(lines[i]);
