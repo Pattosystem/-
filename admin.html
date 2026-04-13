@@ -561,6 +561,88 @@ function GroupSection({ title, orders, onUpdate, onDelete, defaultOpen }) {
 
 
 
+// ── 出荷指示セルコンポーネント ──────────────────────────────────────────────
+function ShipInstructCell({ product: p, rowBg, instructions, onAdd, onCancel }) {
+  const [showForm, setShowForm] = useState(false);
+  const [inputQty, setInputQty] = useState("");
+  const unit = p.unit || "";
+
+  const handleConfirm = () => {
+    if (!inputQty.trim()) return;
+    onAdd(inputQty);
+    setInputQty(""); setShowForm(false);
+  };
+
+  // 完了・配送中・通関中は不要
+  if (p.status === 6 || p.status === 5 || p.status === 4) {
+    return (
+      <td style={{ padding:"6px 8px", borderLeft:"1px solid #edf0f6", background:rowBg, textAlign:"center" }}>
+        <span style={{ fontSize:10, color:"#c0c8d4" }}>—</span>
+      </td>
+    );
+  }
+
+  return (
+    <td style={{ padding:"6px 8px", borderLeft:"1px solid #edf0f6", background:rowBg, verticalAlign:"top" }}>
+      {/* 履歴一覧 */}
+      {instructions.length > 0 && (
+        <div style={{ marginBottom:4 }}>
+          {instructions.map((instr, idx) => (
+            <div key={instr.id||idx} style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between",
+              background:"#f0fdf6", border:"1px solid #b8e8cc", borderRadius:5,
+              padding:"3px 5px", marginBottom:3, gap:4 }}>
+              <div>
+                <div style={{ fontSize:10, fontWeight:700, color:"#1a7a50" }}>📤 {instr.qty}{instr.unit}</div>
+                <div style={{ fontSize:9.5, color:"#8a95a5" }}>{instr.instructedAt}</div>
+              </div>
+              <button onClick={() => onCancel(instr.id||idx)} title="取消"
+                style={{ border:"none", background:"none", color:"#e05050",
+                  fontSize:12, cursor:"pointer", padding:"0 2px", lineHeight:1, flexShrink:0 }}>
+                ✕
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      {/* 入力フォーム */}
+      {showForm ? (
+        <div style={{ background:"#fffbef", border:"1px solid #e8c95a", borderRadius:6, padding:"5px" }}>
+          <div style={{ fontSize:10, color:"#7a6020", marginBottom:3, fontWeight:700 }}>出荷数量</div>
+          <div style={{ display:"flex", gap:3, alignItems:"center", marginBottom:4 }}>
+            <input type="number" min="1" value={inputQty}
+              onChange={e => setInputQty(e.target.value)}
+              onKeyDown={e => e.key==="Enter" && handleConfirm()}
+              placeholder="数量" autoFocus
+              style={{ width:"55px", padding:"3px 5px", borderRadius:5,
+                border:"1.5px solid #e8c95a", fontSize:11, outline:"none" }}
+            />
+            <span style={{ fontSize:10, color:"#7a6020" }}>{unit}</span>
+          </div>
+          <div style={{ display:"flex", gap:3 }}>
+            <button onClick={handleConfirm}
+              style={{ flex:2, padding:"4px 0", borderRadius:5, border:"none",
+                background:"#e07d20", color:"#fff", fontSize:10, fontWeight:700, cursor:"pointer" }}>
+              確定
+            </button>
+            <button onClick={() => { setShowForm(false); setInputQty(""); }}
+              style={{ flex:1, padding:"4px 0", borderRadius:5,
+                border:"1.5px solid #dde4ef", background:"#fff", color:"#888", fontSize:10, cursor:"pointer" }}>
+              戻る
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button onClick={() => setShowForm(true)}
+          style={{ width:"100%", padding:"4px 0", borderRadius:6,
+            border:"1.5px solid #e07d20", background:"#fff8f0",
+            color:"#e07d20", fontSize:10.5, fontWeight:700, cursor:"pointer" }}>
+          {instructions.length > 0 ? "📤 再指示" : "📤 出荷指示"}
+        </button>
+      )}
+    </td>
+  );
+}
+
 // ── ステータス管理 ─────────────────────────────────────────────────────────
 function StatusManager({ orders, onUpdate }) {
   const [selectedMonth, setSelectedMonth] = useState(null);
@@ -809,103 +891,21 @@ function StatusManager({ orders, onUpdate }) {
                         )}
                       </td>
                     )}
-                    {/* 出荷指示セル（商品単位・数量入力・取消対応） */}
-                    {(() => {
-                      const instrKey = `${order.id}_${pi}`;
-                      const instructions = (order.shipInstructions||[]).filter(i => i.productName === p.name);
-                      const [showForm, setShowForm] = React.useState(false);
-                      const [inputQty, setInputQty] = React.useState("");
-                      const unit = p.unit || "";
-
-                      const handleConfirm = () => {
-                        if (!inputQty.trim()) return;
+                    {/* 出荷指示セル（別コンポーネント） */}
+                    <ShipInstructCell
+                      product={p}
+                      rowBg={rowBg}
+                      instructions={(order.shipInstructions||[]).filter(i => i.productName === p.name)}
+                      onAdd={(qty) => {
                         const now = new Date().toLocaleDateString("ja-JP",{year:"numeric",month:"2-digit",day:"2-digit"});
-                        const id = Date.now();
-                        const updated = [...(order.shipInstructions||[]), { id, productName: p.name, qty: inputQty, unit, instructedAt: now }];
+                        const updated = [...(order.shipInstructions||[]), { id:Date.now(), productName:p.name, qty, unit:p.unit||"", instructedAt:now }];
                         onUpdate(order.id, "shipInstructions", updated);
-                        setInputQty(""); setShowForm(false);
-                      };
-
-                      const handleCancel = (instrId) => {
+                      }}
+                      onCancel={(instrId) => {
                         const updated = (order.shipInstructions||[]).filter(i => i.id !== instrId);
                         onUpdate(order.id, "shipInstructions", updated);
-                      };
-
-                      // 完了・配送中・通関中は出荷指示不要
-                      if (p.status === 6 || p.status === 5 || p.status === 4) {
-                        return (
-                          <td style={{ padding:"6px 8px", borderLeft:"1px solid #edf0f6", background:rowBg, textAlign:"center" }}>
-                            <span style={{ fontSize:10, color:"#c0c8d4" }}>—</span>
-                          </td>
-                        );
-                      }
-                      return (
-                        <td style={{ padding:"6px 8px", borderLeft:"1px solid #edf0f6", background:rowBg, verticalAlign:"top" }}>
-                          {/* 指示履歴一覧 */}
-                          {instructions.length > 0 && (
-                            <div style={{ marginBottom:4 }}>
-                              {instructions.map((instr, idx) => (
-                                <div key={instr.id||idx} style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between",
-                                  background:"#f0fdf6", border:"1px solid #b8e8cc", borderRadius:5,
-                                  padding:"3px 5px", marginBottom:3, gap:4 }}>
-                                  <div>
-                                    <div style={{ fontSize:10, fontWeight:700, color:"#1a7a50" }}>
-                                      📤 {instr.qty}{instr.unit}
-                                    </div>
-                                    <div style={{ fontSize:9.5, color:"#8a95a5" }}>{instr.instructedAt}</div>
-                                  </div>
-                                  <button onClick={() => handleCancel(instr.id||idx)}
-                                    title="取消"
-                                    style={{ border:"none", background:"none", color:"#e05050",
-                                      fontSize:12, cursor:"pointer", padding:"0 2px", lineHeight:1, flexShrink:0 }}>
-                                    ✕
-                                  </button>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                          {/* 入力フォーム */}
-                          {showForm ? (
-                            <div style={{ background:"#fffbef", border:"1px solid #e8c95a", borderRadius:6, padding:"5px" }}>
-                              <div style={{ fontSize:10, color:"#7a6020", marginBottom:3, fontWeight:700 }}>出荷数量</div>
-                              <div style={{ display:"flex", gap:3, alignItems:"center", marginBottom:4 }}>
-                                <input
-                                  type="number" min="1"
-                                  value={inputQty}
-                                  onChange={e => setInputQty(e.target.value)}
-                                  onKeyDown={e => e.key==="Enter" && handleConfirm()}
-                                  placeholder="数量"
-                                  autoFocus
-                                  style={{ width:"55px", padding:"3px 5px", borderRadius:5,
-                                    border:"1.5px solid #e8c95a", fontSize:11, outline:"none" }}
-                                />
-                                <span style={{ fontSize:10, color:"#7a6020" }}>{unit}</span>
-                              </div>
-                              <div style={{ display:"flex", gap:3 }}>
-                                <button onClick={handleConfirm}
-                                  style={{ flex:2, padding:"4px 0", borderRadius:5, border:"none",
-                                    background:"#e07d20", color:"#fff", fontSize:10, fontWeight:700, cursor:"pointer" }}>
-                                  確定
-                                </button>
-                                <button onClick={() => { setShowForm(false); setInputQty(""); }}
-                                  style={{ flex:1, padding:"4px 0", borderRadius:5,
-                                    border:"1.5px solid #dde4ef", background:"#fff",
-                                    color:"#888", fontSize:10, cursor:"pointer" }}>
-                                  戻る
-                                </button>
-                              </div>
-                            </div>
-                          ) : (
-                            <button onClick={() => setShowForm(true)}
-                              style={{ width:"100%", padding:"4px 0", borderRadius:6,
-                                border:"1.5px solid #e07d20", background:"#fff8f0",
-                                color:"#e07d20", fontSize:10.5, fontWeight:700, cursor:"pointer" }}>
-                              {instructions.length > 0 ? "📤 再指示" : "📤 出荷指示"}
-                            </button>
-                          )}
-                        </td>
-                      );
-                    })()}
+                      }}
+                    />
                   </tr>
                 );
               })
