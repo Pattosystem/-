@@ -101,18 +101,35 @@ function toMonthKey(d){ const m=(d||"").match(/(\d{4}年\d{2}月)/); return m?m[
 function groupBy(arr,fn){ return arr.reduce((a,o)=>{ const k=fn(o); if(!a[k])a[k]=[]; a[k].push(o); return a; },{}); }
 
 function parseBcartCSV(text) {
-  function parseRow(line) {
-    const result=[]; let cur="",inQ=false;
-    for(let i=0;i<line.length;i++){
-      const c=line[i];
-      if(c==='"'){inQ=!inQ;}else if(c===','&&!inQ){result.push(cur.trim());cur="";}else{cur+=c;}
+  // 引用符内の改行を正しく処理するCSVパーサー
+  function parseCSV(text) {
+    const rows = [];
+    let row = [], cur = "", inQ = false;
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      const next = text[i+1];
+      if (inQ) {
+        if (c === '"' && next === '"') { cur += '"'; i++; }
+        else if (c === '"') { inQ = false; }
+        else { cur += c; }
+      } else {
+        if (c === '"') { inQ = true; }
+        else if (c === ',') { row.push(cur.trim()); cur = ""; }
+        else if (c === '\n' || (c === '\r' && next === '\n')) {
+          if (c === '\r') i++;
+          row.push(cur.trim()); cur = "";
+          if (row.some(f => f !== "")) rows.push(row);
+          row = [];
+        } else { cur += c; }
+      }
     }
-    result.push(cur.trim()); return result;
+    if (cur || row.length) { row.push(cur.trim()); if (row.some(f => f !== "")) rows.push(row); }
+    return rows;
   }
 
-  const lines=text.split(/\r?\n/).filter(l=>l.trim());
-  if(lines.length<2) return [];
-  const headers=parseRow(lines[0]);
+  const allRows = parseCSV(text);
+  if (allRows.length < 2) return [];
+  const headers = allRows[0];
 
   // 物流CSVか受注CSVかを自動判定
   const isLogistics = headers[0]==="Bカート発送ID";
@@ -133,8 +150,8 @@ function parseBcartCSV(text) {
 
   const orderMap={};
 
-  for(let i=1;i<lines.length;i++){
-    const row=parseRow(lines[i]);
+  for(let i=1;i<allRows.length;i++){
+    const row=allRows[i];
     const orderNo=row[idx.orderNo]||""; if(!orderNo) continue;
 
     // 受注CSVの場合は明細区分チェック
