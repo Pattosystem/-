@@ -658,17 +658,17 @@ function StatusManager({ orders }) {
         <div style={{ textAlign:"center", padding:"40px", color:"#aaa" }}>該当する注文がありません</div>
       )}
 
-      <div style={{ border:"1.5px solid #e4eaf3", borderRadius:12, overflowX:"auto", boxShadow:"0 2px 8px rgba(10,30,53,0.05)" }}>
-        <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12, tableLayout:"fixed" }}>
+      <div style={{ border:"1.5px solid #e4eaf3", borderRadius:12, overflow:"hidden", boxShadow:"0 2px 8px rgba(10,30,53,0.05)" }}>
+        <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
           <thead>
             <tr style={{ background:"#0f2744" }}>
-              <th style={{ padding:"8px 10px", textAlign:"left",   color:"rgba(255,255,255,0.8)", fontWeight:700, width:"140px", whiteSpace:"nowrap" }}>受注番号</th>
-              <th style={{ padding:"8px 10px", textAlign:"left",   color:"rgba(255,255,255,0.8)", fontWeight:700, width:"160px", whiteSpace:"nowrap" }}>クリニック</th>
+              <th style={{ padding:"8px 10px", textAlign:"left",   color:"rgba(255,255,255,0.8)", fontWeight:700, width:"12%", whiteSpace:"nowrap" }}>受注番号</th>
+              <th style={{ padding:"8px 10px", textAlign:"left",   color:"rgba(255,255,255,0.8)", fontWeight:700, width:"14%", whiteSpace:"nowrap" }}>クリニック</th>
               <th style={{ padding:"8px 10px", textAlign:"left",   color:"rgba(255,255,255,0.8)", fontWeight:700, whiteSpace:"nowrap" }}>商品名</th>
-              <th style={{ padding:"8px 8px",  textAlign:"center", color:"rgba(255,255,255,0.8)", fontWeight:700, width:"70px", whiteSpace:"nowrap" }}>受注数</th>
-              <th style={{ padding:"8px 10px", textAlign:"center", color:"rgba(255,255,255,0.8)", fontWeight:700, width:"260px", whiteSpace:"nowrap" }}>納品履歴（数量・日付）</th>
-              <th style={{ padding:"8px 8px",  textAlign:"center", color:"rgba(255,255,255,0.8)", fontWeight:700, width:"70px", whiteSpace:"nowrap" }}>未納数</th>
-              <th style={{ padding:"8px 8px",  textAlign:"center", color:"rgba(255,255,255,0.8)", fontWeight:700, width:"72px", whiteSpace:"nowrap" }}>状況</th>
+              <th style={{ padding:"8px 8px",  textAlign:"center", color:"rgba(255,255,255,0.8)", fontWeight:700, width:"7%", whiteSpace:"nowrap" }}>受注数</th>
+              <th style={{ padding:"8px 10px", textAlign:"center", color:"rgba(255,255,255,0.8)", fontWeight:700, width:"26%", whiteSpace:"nowrap" }}>納品履歴（数量・日付）</th>
+              <th style={{ padding:"8px 8px",  textAlign:"center", color:"rgba(255,255,255,0.8)", fontWeight:700, width:"7%", whiteSpace:"nowrap" }}>未納数</th>
+              <th style={{ padding:"8px 8px",  textAlign:"center", color:"rgba(255,255,255,0.8)", fontWeight:700, width:"8%", whiteSpace:"nowrap" }}>状況</th>
             </tr>
           </thead>
           <tbody>
@@ -698,14 +698,12 @@ function StatusManager({ orders }) {
                     )}
                     {isFirstRow && (
                       <td rowSpan={rowCount} style={{ padding:"8px 10px", verticalAlign:"top", borderRight:"1px solid #edf0f6",
-                        color:"#333", fontSize:11.5, lineHeight:1.5, background:rowBg,
-                        whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", maxWidth:"160px" }}>
+                        color:"#333", fontSize:11.5, lineHeight:1.4, background:rowBg }}>
                         {order.clinic}
                       </td>
                     )}
                     {/* 商品名 */}
-                    <td style={{ padding:"7px 10px", color:"#1a2a3a", lineHeight:1.4, borderRight:"1px solid #edf0f6",
-                      whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>
+                    <td style={{ padding:"7px 10px", color:"#1a2a3a", lineHeight:1.4, borderRight:"1px solid #edf0f6" }}>
                       {p.name}
                     </td>
                     {/* 受注数 */}
