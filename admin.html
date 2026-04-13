@@ -135,6 +135,8 @@
       await setDoc(doc(db, "appdata", "bindings"), {
         data: bindings, savedAt: new Date().toISOString()
       });
+      // キャッシュ更新
+      window._bindings = bindings;
       // 確認
       const verify = await getDoc(doc(db, "appdata", "bindings"));
       if (!verify.exists()) throw new Error("紐づけ保存確認失敗");
@@ -524,13 +526,13 @@ function ClinicBindingManager({ orders }) {
     });
   };
 
-  // Firebase直接操作
+  // Firebase直接操作（最大10秒待つ）
   const getDB = () => {
     let t = 0;
     return new Promise((resolve, reject) => {
       const check = () => {
         if (window._firebase) resolve(window._firebase);
-        else if (t++ > 30) reject(new Error("Firebase未初期化"));
+        else if (t++ > 50) reject(new Error("Firebase未初期化（タイムアウト）"));
         else setTimeout(check, 200);
       };
       check();
@@ -538,21 +540,29 @@ function ClinicBindingManager({ orders }) {
   };
 
   useEffect(() => {
-    (async () => {
+    setLoading(true);
+    const load = async () => {
       try {
-        const fb = await getDB();
-        const data = await fb.loadBindings();
-        // 旧形式（string）を配列に変換
+        // window._bindingsにキャッシュがあれば使用、なければFirebaseから読込
+        let data = window._bindings || {};
+        if (Object.keys(data).length === 0) {
+          const fb = await getDB();
+          data = await fb.loadBindings();
+          window._bindings = data;
+        }
+        console.log('📂 紐づけ読込:', JSON.stringify(data));
         const normalized = {};
         Object.entries(data).forEach(([email, val]) => {
           normalized[email] = Array.isArray(val) ? val : (val ? [val] : []);
         });
         updateBindings(normalized);
-        console.log('📂 紐づけ読込:', JSON.stringify(normalized));
-      } catch(e) { console.error("loadBindings error:", e); }
+      } catch(e) {
+        console.error("loadBindings error:", e);
+      }
       setLoading(false);
-    })();
-  }, []);
+    };
+    load();
+  }, []); // マウント時のみ実行
 
   const handleSave = async () => {
     setSaveMsg("saving");
@@ -1717,7 +1727,10 @@ function App() {
         // 注釈データもキャッシュ
         const annotations = await window._firebase.loadAnnotations();
         window._annotations = annotations;
-        console.log("✅ 読込完了:", (orders||[]).length, "件 / 注釈:", Object.keys(annotations).length, "件");
+        // 紐づけデータをwindowにキャッシュ
+        const bindings = await window._firebase.loadBindings();
+        window._bindings = bindings;
+        console.log("✅ 読込完了:", (orders||[]).length, "件 / 注釈:", Object.keys(annotations).length, "件 / 紐づけ:", Object.keys(bindings).length, "件");
       }catch(e){ console.error("load error:", e); }
       setLoading(false);
     };
