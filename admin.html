@@ -672,11 +672,11 @@ function ClinicBindingManager({ orders }) {
               {addClinics.length > 0 && (
                 <div style={{ display:"flex", gap:5, flexWrap:"wrap", marginTop:6 }}>
                   {addClinics.map(c => (
-                    <span key={c} style={{ display:"flex", alignItems:"center", gap:4, padding:"3px 8px", borderRadius:20, background:"#f0f4ff", border:"1px solid #c0d0f0", fontSize:11.5, color:"#1a4a90" }}>
-                      {c}
-                      <span onClick={() => setAddClinics(prev => prev.filter(x => x !== c))}
-                        style={{ cursor:"pointer", color:"#e05050", fontWeight:700, fontSize:12 }}>×</span>
-                    </span>
+                    <div key={c} style={{ display:"flex", alignItems:"center", gap:6, padding:"5px 10px", borderRadius:20, background:"#f0f4ff", border:"1.5px solid #4a7cc7" }}>
+                      <span style={{ fontSize:12.5, color:"#1a4a90", fontWeight:700 }}>{c}</span>
+                      <button onClick={() => setAddClinics(prev => prev.filter(x => x !== c))}
+                        style={{ border:"none", background:"none", color:"#e05050", fontWeight:900, fontSize:14, cursor:"pointer", padding:0, lineHeight:1 }}>×</button>
+                    </div>
                   ))}
                 </div>
               )}
