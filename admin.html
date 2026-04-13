@@ -156,7 +156,9 @@ function parseBcartCSV(text) {
 
     const qtyNum=parseInt(row[idx.qty]||"0",10)||0;
     const unit=row[idx.unit]||"";
-    const spec=(row[idx.spec]||"").replace(/\n/g," ").trim();
+    const rawSpec=(row[idx.spec]||"").replace(/\n/g," ").trim();
+    // HTMLタグが含まれている場合は規格表示を除去
+    const spec = rawSpec.includes("<") ? "" : rawSpec;
     const displayName=spec?`${itemName}（${spec}）`:itemName;
     const shipStatus=row[idx.shipStatus]||"";
     const delivDate=row[idx.delivDate]||"";
