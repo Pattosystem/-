@@ -27,33 +27,71 @@
   const API_KEY = "AIzaSyDNg5KsLABnwJbN5EpvWjpLnkstFzXA1HE";
 
   window._firebase = {
-    // 全注文を1ドキュメントに保存（確実性最優先）
+    // ── 注釈データ（入金状況・入金日・出荷指示）────────────────────
+    loadAnnotations: async () => {
+      try {
+        const d = await getDoc(doc(db, "appdata", "annotations"));
+        return d.exists() ? (d.data().data || {}) : {};
+      } catch(e) { return {}; }
+    },
+    saveAnnotations: async (orders) => {
+      const data = {};
+      orders.forEach(o => {
+        if (o.paymentStatus || o.paymentDate || (o.shipInstructions||[]).length > 0) {
+          data[o.id] = {
+            paymentStatus:    o.paymentStatus    || "",
+            paymentDate:      o.paymentDate      || "",
+            shipInstructions: o.shipInstructions || [],
+          };
+        }
+      });
+      await setDoc(doc(db, "appdata", "annotations"), {
+        data, savedAt: new Date().toISOString(), count: Object.keys(data).length
+      });
+      return true;
+    },
+    // ── 注文データ（CSV取込分）月別分割保存 ──────────────────────
     loadOrders: async () => {
       try {
-        const d = await getDoc(doc(db, "appdata", "orders"));
-        if (d.exists()) return d.data().list || [];
-        // 旧形式（個別ドキュメント）からの移行
-        const snap = await getDocs(collection(db, "orders"));
-        const list = [];
-        snap.forEach(d => list.push(d.data()));
-        return list;
-      } catch(e) {
-        console.error("loadOrders error:", e);
-        return [];
-      }
+        const indexDoc = await getDoc(doc(db, "appdata", "orders_index"));
+        if (!indexDoc.exists()) return [];
+        const months = indexDoc.data().months || [];
+        const all = [];
+        for (const m of months) {
+          const d = await getDoc(doc(db, "appdata", "orders_" + m));
+          if (d.exists()) all.push(...(d.data().list || []));
+        }
+        return all;
+      } catch(e) { console.error("loadOrders error:", e); return []; }
     },
     saveOrders: async (orders) => {
-      // 全注文を1つのドキュメントにまとめて保存
-      await setDoc(doc(db, "appdata", "orders"), {
-        list: orders,
-        savedAt: new Date().toISOString(),
-        count: orders.length
+      // 月ごとにグループ化して保存
+      const byMonth = {};
+      orders.forEach(o => {
+        const match = (o.date||"").match(/(\d{4})年(\d{2})月/);
+        const key = match ? (match[1] + "_" + match[2]) : "unknown";
+        if (!byMonth[key]) byMonth[key] = [];
+        byMonth[key].push(o);
       });
-      // 保存確認
-      const verify = await getDoc(doc(db, "appdata", "orders"));
-      if (!verify.exists() || (verify.data().list||[]).length !== orders.length) {
-        throw new Error(`保存確認失敗 (期待:${orders.length}件)`);
+      const months = Object.keys(byMonth).sort();
+      // 各月を個別ドキュメントに保存
+      for (const month of months) {
+        await setDoc(doc(db, "appdata", "orders_" + month), {
+          list: byMonth[month],
+          count: byMonth[month].length,
+          savedAt: new Date().toISOString()
+        });
       }
+      // インデックス保存
+      await setDoc(doc(db, "appdata", "orders_index"), {
+        months, total: orders.length, savedAt: new Date().toISOString()
+      });
+      // 注釈も同時保存
+      await window._firebase.saveAnnotations(orders);
+      // 確認
+      const verify = await getDoc(doc(db, "appdata", "orders_index"));
+      if (!verify.exists()) throw new Error("インデックス保存失敗");
+      console.log("✅ 保存完了:", orders.length, "件 /", months.length, "ヶ月分");
       return true;
     },
     // 新規クリニックアカウント作成（REST API経由）
@@ -96,16 +134,20 @@
       requestsSnap.forEach(d => requests.push(d.data()));
       return { orders, requests };
     },
-    // リストア：全データを上書き保存
+    // リストア：注釈データのみ復元
     restoreAllData: async (data) => {
-      // ordersを1ドキュメントで保存
-      await setDoc(doc(db, "appdata", "orders"), {
-        list: data.orders || [],
-        savedAt: new Date().toISOString(),
-        count: (data.orders||[]).length,
-        restoredFrom: data.exportedAt || ""
-      });
-      // requestsは個別ドキュメントのまま
+      // 注釈データを復元
+      if (data.annotations) {
+        await setDoc(doc(db, "appdata", "annotations"), {
+          data: data.annotations,
+          savedAt: new Date().toISOString(),
+          restoredFrom: data.exportedAt || ""
+        });
+      } else if (data.orders) {
+        // 旧バックアップ形式からの移行
+        await window._firebase.saveAnnotations(data.orders);
+      }
+      // requestsを復元
       if (data.requests && data.requests.length > 0) {
         const reqSnap = await getDocs(collection(db, "requests"));
         for (let i = 0; i < reqSnap.docs.length; i += 50) {
@@ -1453,13 +1495,33 @@ function App() {
     if(!authed) return;
     const load=async()=>{
       let t=0; while(!window._firebase&&t<30){await new Promise(r=>setTimeout(r,200));t++;}
-      try{ const data=await window._firebase.loadOrders(); setOrders(data||[]); }catch(e){ console.error(e); }
+      try{
+        // 注文データをFirebaseから読込
+        const orders = await window._firebase.loadOrders();
+        setOrders(orders || []);
+        // 注釈データもキャッシュ
+        const annotations = await window._firebase.loadAnnotations();
+        window._annotations = annotations;
+        console.log("✅ 読込完了:", (orders||[]).length, "件 / 注釈:", Object.keys(annotations).length, "件");
+      }catch(e){ console.error("load error:", e); }
       setLoading(false);
     };
     load();
   },[authed]);
 
-  const updateOrder=(id,field,value)=>setOrders(prev=>prev.map(o=>o.id===id?{...o,[field]:value,updatedAt:nowStr()}:o));
+  const updateOrder=(id,field,value)=>{
+    setOrders(prev=>prev.map(o=>{
+      if(o.id!==id) return o;
+      const updated={...o,[field]:value,updatedAt:nowStr()};
+      // 注釈フィールドはwindow._annotationsにも即時反映
+      if(["paymentStatus","paymentDate","shipInstructions"].includes(field)){
+        if(!window._annotations) window._annotations={};
+        if(!window._annotations[id]) window._annotations[id]={};
+        window._annotations[id][field]=value;
+      }
+      return updated;
+    }));
+  };
   const deleteOrder=(id)=>setOrders(prev=>prev.filter(o=>o.id!==id));
   const handleImport=(newOrders)=>{
     setOrders(prev=>{
@@ -1467,17 +1529,15 @@ function App() {
       prev.forEach(o=>map[o.id]=o);
       newOrders.forEach(newOrder=>{
         const existing = map[newOrder.id];
-        if (existing) {
-          // 手動入力データを引き継ぐ
-          map[newOrder.id] = {
-            ...newOrder,
-            paymentStatus:   existing.paymentStatus   || newOrder.paymentStatus || "",
-            paymentDate:     existing.paymentDate     || newOrder.paymentDate   || "",
-            shipInstructions: existing.shipInstructions || [],
-          };
-        } else {
-          map[newOrder.id] = newOrder;
-        }
+        // 既存データ（Firebase保存済み）と注釈をマージ
+        const ann = (window._annotations || {})[newOrder.id] || {};
+        const base = existing || {};
+        map[newOrder.id] = {
+          ...newOrder,
+          paymentStatus:    base.paymentStatus    || ann.paymentStatus    || "",
+          paymentDate:      base.paymentDate      || ann.paymentDate      || "",
+          shipInstructions: base.shipInstructions || ann.shipInstructions || [],
+        };
       });
       return Object.values(map).sort((a,b)=>b.id.localeCompare(a.id));
     });
@@ -1485,7 +1545,18 @@ function App() {
     setTimeout(()=>setImportMsg(""),8000);
   };
   const downloadBackup = async (ordersData) => {
-    let allData = { version:2, exportedAt: new Date().toISOString(), orders: ordersData, requests:[] };
+    // 注釈データと、リクエスト履歴だけバックアップ
+    const annotations = {};
+    ordersData.forEach(o => {
+      if (o.paymentStatus || o.paymentDate || (o.shipInstructions && o.shipInstructions.length > 0)) {
+        annotations[o.id] = {
+          paymentStatus:    o.paymentStatus    || "",
+          paymentDate:      o.paymentDate      || "",
+          shipInstructions: o.shipInstructions || [],
+        };
+      }
+    });
+    let allData = { version:3, exportedAt: new Date().toISOString(), annotations, requests:[] };
     try {
       const full = await window._firebase.loadAllData();
       allData.requests = full.requests || [];
