@@ -507,12 +507,22 @@ function BackupManager({ orders, downloadBackup }) {
 // ── クリニック紐づけ管理 ──────────────────────────────────────────────────
 function ClinicBindingManager({ orders }) {
   const [bindings, setBindings] = useState({});
+  const bindingsRef = React.useRef({});  // 常に最新のbindingsを保持
   const [loading, setLoading] = useState(true);
   const [saveMsg, setSaveMsg] = useState("");
   const [editEmail, setEditEmail] = useState(null);
   const [newEmail, setNewEmail] = useState("");
   const [addEmail, setAddEmail] = useState("");
   const [addClinics, setAddClinics] = useState([]);
+
+  // bindingsをsetしてrefも更新するヘルパー
+  const updateBindings = (updater) => {
+    setBindings(prev => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      bindingsRef.current = next;
+      return next;
+    });
+  };
 
   // Firebase直接操作
   const getDB = () => {
@@ -537,7 +547,8 @@ function ClinicBindingManager({ orders }) {
         Object.entries(data).forEach(([email, val]) => {
           normalized[email] = Array.isArray(val) ? val : (val ? [val] : []);
         });
-        setBindings(normalized);
+        updateBindings(normalized);
+        console.log('📂 紐づけ読込:', JSON.stringify(normalized));
       } catch(e) { console.error("loadBindings error:", e); }
       setLoading(false);
     })();
@@ -547,9 +558,15 @@ function ClinicBindingManager({ orders }) {
     setSaveMsg("saving");
     try {
       const fb = await getDB();
-      // bindingsの中身を確認
-      console.log("保存するデータ:", JSON.stringify(bindings));
-      await fb.saveBindings(bindings);
+      const latestBindings = bindingsRef.current;
+      console.log("保存するデータ(ref):", JSON.stringify(latestBindings));
+      console.log("保存するデータ(state):", JSON.stringify(bindings));
+      if (Object.keys(latestBindings).length === 0) {
+        alert("⚠ 紐づけデータが空です。先に「追加する」ボタンでクリニックを追加してから保存してください。");
+        setSaveMsg("");
+        return;
+      }
+      await fb.saveBindings(latestBindings);
       setSaveMsg("saved");
       setTimeout(() => setSaveMsg(""), 3000);
     } catch(e) {
@@ -561,28 +578,32 @@ function ClinicBindingManager({ orders }) {
 
   const handleDelete = (email) => {
     if (!confirm(`${email} の紐づけを削除しますか？`)) return;
-    setBindings(b => { const nb = {...b}; delete nb[email]; return nb; });
+    updateBindings(b => { const nb = {...b}; delete nb[email]; return nb; });
   };
 
   const handleEmailChange = (oldEmail) => {
     if (!newEmail.trim() || newEmail === oldEmail) { setEditEmail(null); return; }
-    setBindings(b => { const nb = {...b}; nb[newEmail.trim()] = nb[oldEmail]; delete nb[oldEmail]; return nb; });
+    updateBindings(b => { const nb = {...b}; nb[newEmail.trim()] = nb[oldEmail]; delete nb[oldEmail]; return nb; });
     setEditEmail(null); setNewEmail("");
   };
 
   const handleRemoveClinic = (email, clinic) => {
-    setBindings(b => { const nb = {...b}; nb[email] = nb[email].filter(c => c !== clinic); if (nb[email].length === 0) delete nb[email]; return nb; });
+    updateBindings(b => { const nb = {...b}; nb[email] = nb[email].filter(c => c !== clinic); if (nb[email].length === 0) delete nb[email]; return nb; });
   };
 
   const handleAddClinicToEmail = (email, clinic) => {
     if (!clinic) return;
-    setBindings(b => { const nb = {...b}; if (!nb[email]) nb[email] = []; if (!nb[email].includes(clinic)) nb[email] = [...nb[email], clinic]; return nb; });
+    updateBindings(b => { const nb = {...b}; if (!nb[email]) nb[email] = []; if (!nb[email].includes(clinic)) nb[email] = [...nb[email], clinic]; return nb; });
   };
 
   const handleAdd = () => {
     const email = addEmail.trim();
     if (!email || addClinics.length === 0) return;
-    setBindings(b => ({...b, [email]: addClinics}));
+    updateBindings(b => {
+      const nb = {...b, [email]: [...addClinics]};
+      console.log("追加後のbindings:", JSON.stringify(nb));
+      return nb;
+    });
     setAddEmail(""); setAddClinics([]);
   };
 
