@@ -930,7 +930,7 @@ function App() {
 
       {/* トップバー */}
       <div style={{ background:"linear-gradient(135deg,#0a1e35,#0f2744)",padding:"18px 18px 20px",position:"sticky",top:0,zIndex:50 }}>
-        <div style={{ maxWidth:700,margin:"0 auto" }}>
+        <div style={{ maxWidth:1200,margin:"0 auto" }}>
           <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14 }}>
             <div>
               <div style={{ fontSize:11,letterSpacing:"0.18em",color:"#d4a843",fontWeight:700,marginBottom:3 }}>ADMIN</div>
@@ -963,7 +963,7 @@ function App() {
         </div>
       </div>
 
-      <div style={{ maxWidth:700,margin:"0 auto",padding:"18px 14px 48px" }}>
+      <div style={{ maxWidth:1200,margin:"0 auto",padding:"18px 14px 48px" }}>
 
         {tab==="accounts" && <ClinicAccountManager />}
         {tab==="requests" && <RequestManager onUnreadCount={setUnreadCount}/>}
