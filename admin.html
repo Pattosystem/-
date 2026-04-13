@@ -128,7 +128,16 @@ function parseBcartCSV(text) {
     }
     const qty=row[idx.qty]||""; const unit=row[idx.unit]||"";
     const spec=(row[idx.spec]||"").replace(/\n/g," ").trim();
-    orderMap[orderNo].products.push({ name:spec?`${itemName}（${spec}）`:itemName, qty:qty&&unit?`${qty}${unit}`:qty||unit||"—", status:0, eta:"約30日", note:"" });
+    // 発送状況からステータスを自動判定
+    const shipStatus=row[idx.shipStatus]||"";
+    const delivDate=row[idx.delivDate]||"";
+    const shipDate=row[idx.shipDate]||"";
+    let autoStatus=0;
+    if(shipStatus==="発送済"&&delivDate) autoStatus=6;
+    else if(shipStatus==="発送済"&&!delivDate) autoStatus=5;
+    else autoStatus=0;
+    const etaStr=autoStatus===6?"—":autoStatus===5?"間もなくお届け":"約30日";
+    orderMap[orderNo].products.push({ name:spec?`${itemName}（${spec}）`:itemName, qty:qty&&unit?`${qty}${unit}`:qty||unit||"—", status:autoStatus, eta:etaStr, note:"" });
   }
   return Object.values(orderMap);
 }
