@@ -9,7 +9,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-  import { getFirestore, collection, getDocs, doc, getDoc, setDoc, deleteDoc, updateDoc, writeBatch } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+  import { getFirestore, collection, getDocs, getDocsFromServer, doc, getDoc, setDoc, deleteDoc, updateDoc, writeBatch } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
   import { getAuth, sendPasswordResetEmail } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
   const firebaseConfig = {
@@ -53,24 +53,17 @@
     // ── 注文データ：50件ずつバッチ書き込み（確実保存）──────────────
     loadOrders: async () => {
       try {
-        // キャッシュを使わずサーバーから直接取得
-        const { getDocsFromServer } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
+        // 常にサーバーから取得（キャッシュ無効）
         const snap = await getDocsFromServer(collection(db, "orders"));
         const list = [];
         snap.forEach(d => list.push(d.data()));
-        // 受注番号降順（新しい順）でソート
-        list.sort((a, b) => String(b.id).localeCompare(String(a.id)));
-        console.log("📦 orders from server:", list.length, "件");
+        list.sort((a, b) => String(b.id) > String(a.id) ? -1 : 1);
+        list.reverse(); // 降順（新しい順）
+        console.log("📦 サーバーから取得:", list.length, "件 / 先頭:", list[0]?.id);
         return list;
       } catch(e) {
         console.error("loadOrders error:", e);
-        // フォールバック
-        try {
-          const snap = await getDocs(collection(db, "orders"));
-          const list = [];
-          snap.forEach(d => list.push(d.data()));
-          return list;
-        } catch(e2) { return []; }
+        return [];
       }
     },
     saveOrders: async (orders) => {
