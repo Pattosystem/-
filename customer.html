@@ -380,10 +380,13 @@ function MainScreen({ user }) {
     setOrders(orderData);
     setMyRequests(requestData);
     // メールアドレスからクリニック名を特定して注文を絞り込む
-    const clinicName = bindings[user.email] || "";
-    if (clinicName) {
-      const filtered = orderData.filter(o => o.clinic === clinicName);
-      // 月別降順でソート
+    // 複数クリニック対応（bindingsの値が配列or文字列どちらでも対応）
+    const clinicVal = bindings[user.email];
+    const clinicNames = clinicVal
+      ? (Array.isArray(clinicVal) ? clinicVal : [clinicVal]).filter(Boolean)
+      : [];
+    if (clinicNames.length > 0) {
+      const filtered = orderData.filter(o => clinicNames.includes(o.clinic));
       filtered.sort((a,b) => b.id.localeCompare(a.id));
       setMyOrders(filtered);
     }
