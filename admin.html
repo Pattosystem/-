@@ -50,48 +50,37 @@
       });
       return true;
     },
-    // ── 注文データ（CSV取込分）月別分割保存 ──────────────────────
+    // ── 注文データ：50件ずつバッチ書き込み（確実保存）──────────────
     loadOrders: async () => {
       try {
-        const indexDoc = await getDoc(doc(db, "appdata", "orders_index"));
-        if (!indexDoc.exists()) return [];
-        const months = indexDoc.data().months || [];
-        const all = [];
-        for (const m of months) {
-          const d = await getDoc(doc(db, "appdata", "orders_" + m));
-          if (d.exists()) all.push(...(d.data().list || []));
-        }
-        return all;
+        const snap = await getDocs(collection(db, "orders"));
+        const list = [];
+        snap.forEach(d => list.push(d.data()));
+        return list;
       } catch(e) { console.error("loadOrders error:", e); return []; }
     },
     saveOrders: async (orders) => {
-      // 月ごとにグループ化して保存
-      const byMonth = {};
-      orders.forEach(o => {
-        const match = (o.date||"").match(/(\d{4})年(\d{2})月/);
-        const key = match ? (match[1] + "_" + match[2]) : "unknown";
-        if (!byMonth[key]) byMonth[key] = [];
-        byMonth[key].push(o);
-      });
-      const months = Object.keys(byMonth).sort();
-      // 各月を個別ドキュメントに保存
-      for (const month of months) {
-        await setDoc(doc(db, "appdata", "orders_" + month), {
-          list: byMonth[month],
-          count: byMonth[month].length,
-          savedAt: new Date().toISOString()
-        });
+      // ステップ1: 既存を50件ずつ削除
+      const snap = await getDocs(collection(db, "orders"));
+      for (let i = 0; i < snap.docs.length; i += 50) {
+        const batch = writeBatch(db);
+        snap.docs.slice(i, i+50).forEach(d => batch.delete(d.ref));
+        await batch.commit();
       }
-      // インデックス保存
-      await setDoc(doc(db, "appdata", "orders_index"), {
-        months, total: orders.length, savedAt: new Date().toISOString()
-      });
-      // 注釈も同時保存
+      // ステップ2: 新データを50件ずつ書き込み
+      for (let i = 0; i < orders.length; i += 50) {
+        const batch = writeBatch(db);
+        orders.slice(i, i+50).forEach(o => batch.set(doc(db, "orders", String(o.id)), o));
+        await batch.commit();
+      }
+      // ステップ3: 注釈も同時保存
       await window._firebase.saveAnnotations(orders);
-      // 確認
-      const verify = await getDoc(doc(db, "appdata", "orders_index"));
-      if (!verify.exists()) throw new Error("インデックス保存失敗");
-      console.log("✅ 保存完了:", orders.length, "件 /", months.length, "ヶ月分");
+      // ステップ4: 確認
+      const verify = await getDocs(collection(db, "orders"));
+      console.log("✅ 保存完了:", verify.size, "/", orders.length, "件");
+      if (verify.size !== orders.length) {
+        throw new Error("保存件数不一致: " + verify.size + "/" + orders.length);
+      }
       return true;
     },
     // 新規クリニックアカウント作成（REST API経由）
