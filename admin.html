@@ -58,6 +58,8 @@
         const snap = await getDocsFromServer(collection(db, "orders"));
         const list = [];
         snap.forEach(d => list.push(d.data()));
+        // 受注番号降順（新しい順）でソート
+        list.sort((a, b) => String(b.id).localeCompare(String(a.id)));
         console.log("📦 orders from server:", list.length, "件");
         return list;
       } catch(e) {
