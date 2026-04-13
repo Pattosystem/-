@@ -574,13 +574,12 @@ function StatusManager({ orders }) {
   const monthOrders = orders.filter(o => toMonthKey(o.date) === currentMonth);
   const clinics = ["all", ...new Set(monthOrders.map(o => o.clinic).filter(Boolean))];
   const filtered = selectedClinic === "all" ? monthOrders : monthOrders.filter(o => o.clinic === selectedClinic);
-
   const allP = filtered.flatMap(o => o.products);
+
   const stats = {
     done:    allP.filter(p => p.status === 6).length,
     partial: allP.filter(p => p.status === 7).length,
-    pending: allP.filter(p => p.status < 5 || p.status === 7 ? false : p.status < 6).length,
-    notship: allP.filter(p => p.status < 5).length,
+    notship: allP.filter(p => p.status < 5 && p.status !== 7).length,
     total:   allP.length,
   };
 
@@ -599,76 +598,79 @@ function StatusManager({ orders }) {
     }
     return p.deliveryRecords.filter(r => r.qty > 0).map(r => ({
       label: `${r.qty}${r.unit||""}`,
-      date:  r.delivDate ? r.delivDate.replace("2026-","") : (r.shipDate ? r.shipDate.replace("2026-","") : "未発送"),
+      date:  r.delivDate ? r.delivDate.slice(5) : (r.shipDate ? r.shipDate.slice(5) : "未発送"),
       done:  r.status === "発送済"
     }));
   }
 
   return (
-    <div style={{ fontSize:13 }}>
+    <div style={{ fontSize:12 }}>
 
       {/* 月タブ */}
-      <div style={{ display:"flex", gap:4, marginBottom:10, overflowX:"auto", paddingBottom:2 }}>
+      <div style={{ display:"flex", gap:4, marginBottom:10, flexWrap:"wrap" }}>
         {months.map(m => (
           <button key={m} onClick={() => { setSelectedMonth(m); setSelectedClinic("all"); }}
-            style={{ padding:"5px 12px", borderRadius:16, border:"1.5px solid", flexShrink:0,
+            style={{ padding:"4px 11px", borderRadius:14, border:"1.5px solid", flexShrink:0,
               borderColor:currentMonth===m?"#0f2744":"#dde4ef",
               background:currentMonth===m?"#0f2744":"#fff",
               color:currentMonth===m?"#fff":"#4a5568",
-              fontWeight:currentMonth===m?700:400, fontSize:12, cursor:"pointer" }}>
+              fontWeight:currentMonth===m?700:400, fontSize:11.5, cursor:"pointer" }}>
             {m}
           </button>
         ))}
       </div>
 
-      {/* サマリー + クリニック絞り込みを横並び */}
-      <div style={{ display:"flex", gap:8, marginBottom:10, alignItems:"flex-start", flexWrap:"wrap" }}>
-        {/* サマリーバッジ */}
-        <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+      {/* サマリー + クリニック絞り込み */}
+      <div style={{ display:"flex", gap:10, marginBottom:10, alignItems:"flex-start", flexWrap:"wrap" }}>
+        <div style={{ display:"flex", gap:5 }}>
           {[
             { l:"完了",    v:stats.done,    c:"#1a7a50", bg:"#e8f4ee" },
             { l:"一部納品", v:stats.partial, c:"#e07d20", bg:"#fff8f0" },
             { l:"未納",    v:stats.notship, c:"#e05050", bg:"#fff0f0" },
             { l:"商品計",  v:stats.total,   c:"#0f2744", bg:"#f0f4f9" },
           ].map(s => (
-            <div key={s.l} style={{ background:s.bg, borderRadius:8, padding:"5px 10px", textAlign:"center", minWidth:54 }}>
-              <div style={{ fontSize:16, fontWeight:900, color:s.c, lineHeight:1 }}>{s.v}</div>
-              <div style={{ fontSize:9.5, color:s.c, opacity:0.8 }}>{s.l}</div>
+            <div key={s.l} style={{ background:s.bg, borderRadius:8, padding:"4px 10px", textAlign:"center", minWidth:50 }}>
+              <div style={{ fontSize:15, fontWeight:900, color:s.c, lineHeight:1 }}>{s.v}</div>
+              <div style={{ fontSize:9, color:s.c, opacity:0.8 }}>{s.l}</div>
             </div>
           ))}
         </div>
-
-        {/* クリニック絞り込み */}
         <div style={{ display:"flex", gap:4, flexWrap:"wrap", flex:1 }}>
           {clinics.map(c => (
             <button key={c} onClick={() => setSelectedClinic(c)}
-              style={{ padding:"4px 10px", borderRadius:14, border:"1.5px solid", flexShrink:0,
+              style={{ padding:"3px 9px", borderRadius:12, border:"1.5px solid",
                 borderColor:selectedClinic===c?"#d4a843":"#dde4ef",
                 background:selectedClinic===c?"#d4a843":"#fff",
                 color:selectedClinic===c?"#0f2744":"#4a5568",
-                fontWeight:selectedClinic===c?700:400, fontSize:11.5, cursor:"pointer" }}>
+                fontWeight:selectedClinic===c?700:400, fontSize:11, cursor:"pointer", whiteSpace:"nowrap" }}>
               {c === "all" ? "全て" : c}
             </button>
           ))}
         </div>
       </div>
 
-      {/* テーブル本体 */}
       {filtered.length === 0 && (
         <div style={{ textAlign:"center", padding:"40px", color:"#aaa" }}>該当する注文がありません</div>
       )}
 
-      <div style={{ border:"1.5px solid #e4eaf3", borderRadius:12, overflow:"hidden", boxShadow:"0 2px 8px rgba(10,30,53,0.05)" }}>
-        <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+      {/* テーブル：overflow:hidden で横スクロールなし */}
+      <div style={{ border:"1.5px solid #e4eaf3", borderRadius:10, overflow:"hidden", boxShadow:"0 2px 8px rgba(10,30,53,0.05)" }}>
+        <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11.5 }}>
+          <colgroup>
+            <col style={{ width:"13%" }} />
+            <col style={{ width:"14%" }} />
+            <col style={{ width:"24%" }} />
+            <col style={{ width:"7%" }} />
+            <col style={{ width:"25%" }} />
+            <col style={{ width:"8%" }} />
+            <col style={{ width:"9%" }} />
+          </colgroup>
           <thead>
             <tr style={{ background:"#0f2744" }}>
-              <th style={{ padding:"8px 10px", textAlign:"left",   color:"rgba(255,255,255,0.8)", fontWeight:700, width:"12%", whiteSpace:"nowrap" }}>受注番号</th>
-              <th style={{ padding:"8px 10px", textAlign:"left",   color:"rgba(255,255,255,0.8)", fontWeight:700, width:"14%", whiteSpace:"nowrap" }}>クリニック</th>
-              <th style={{ padding:"8px 10px", textAlign:"left",   color:"rgba(255,255,255,0.8)", fontWeight:700, whiteSpace:"nowrap" }}>商品名</th>
-              <th style={{ padding:"8px 8px",  textAlign:"center", color:"rgba(255,255,255,0.8)", fontWeight:700, width:"7%", whiteSpace:"nowrap" }}>受注数</th>
-              <th style={{ padding:"8px 10px", textAlign:"center", color:"rgba(255,255,255,0.8)", fontWeight:700, width:"26%", whiteSpace:"nowrap" }}>納品履歴（数量・日付）</th>
-              <th style={{ padding:"8px 8px",  textAlign:"center", color:"rgba(255,255,255,0.8)", fontWeight:700, width:"7%", whiteSpace:"nowrap" }}>未納数</th>
-              <th style={{ padding:"8px 8px",  textAlign:"center", color:"rgba(255,255,255,0.8)", fontWeight:700, width:"8%", whiteSpace:"nowrap" }}>状況</th>
+              {["受注番号","クリニック","商品名","受注数","納品履歴","未納数","状況"].map(h => (
+                <th key={h} style={{ padding:"7px 8px", textAlign: h==="受注数"||h==="未納数"||h==="状況" ? "center" : "left",
+                  color:"rgba(255,255,255,0.85)", fontWeight:700, whiteSpace:"nowrap", fontSize:11.5 }}>{h}</th>
+              ))}
             </tr>
           </thead>
           <tbody>
@@ -679,59 +681,61 @@ function StatusManager({ orders }) {
                 const totalQty  = p.totalQtyNum || 0;
                 const delivered = p.deliveredQtyNum || (p.status===6 ? totalQty : 0);
                 const remaining = Math.max(0, totalQty - delivered);
-                const isFirstRow = pi === 0;
-                const rowCount   = order.products.length;
+                const isFirst = pi === 0;
+                const rowCount = order.products.length;
                 const rowBg = oi % 2 === 0 ? "#fff" : "#f9fafc";
                 return (
                   <tr key={`${order.id}-${pi}`} style={{ borderBottom:"1px solid #edf0f6", background:rowBg }}>
-                    {/* 受注番号・クリニックは最初の行のみ表示 */}
-                    {isFirstRow && (
-                      <td rowSpan={rowCount} style={{ padding:"8px 10px", verticalAlign:"top", borderRight:"1px solid #edf0f6",
-                        color:"#0f2744", fontWeight:700, fontSize:11.5, lineHeight:1.5, background:rowBg }}>
+                    {isFirst && (
+                      <td rowSpan={rowCount} style={{ padding:"7px 8px", verticalAlign:"top",
+                        borderRight:"1px solid #edf0f6", background:rowBg }}>
                         <a href={`https://pitto.i15.bcart.jp/admin/order/list?order_code=${order.id}&sort=order_time-desc&limit=25`}
                           target="_blank" rel="noopener noreferrer"
-                          style={{ color:"#1a6abf", textDecoration:"underline", fontWeight:700, cursor:"pointer" }}>
+                          style={{ color:"#1a6abf", textDecoration:"underline", fontWeight:700, fontSize:11, display:"block" }}>
                           {order.id}
                         </a>
-                        <div style={{ fontSize:10, color:"#8a95a5", marginTop:2 }}>{order.date.replace("2026年","").replace("日","")}</div>
+                        <div style={{ fontSize:10, color:"#8a95a5", marginTop:1 }}>
+                          {(order.date||"").replace("2026年","").replace("日","")}
+                        </div>
                       </td>
                     )}
-                    {isFirstRow && (
-                      <td rowSpan={rowCount} style={{ padding:"8px 10px", verticalAlign:"top", borderRight:"1px solid #edf0f6",
-                        color:"#333", fontSize:11.5, lineHeight:1.4, background:rowBg }}>
+                    {isFirst && (
+                      <td rowSpan={rowCount} style={{ padding:"7px 8px", verticalAlign:"top",
+                        borderRight:"1px solid #edf0f6", color:"#333", lineHeight:1.4, background:rowBg,
+                        wordBreak:"break-all" }}>
                         {order.clinic}
                       </td>
                     )}
-                    {/* 商品名 */}
-                    <td style={{ padding:"7px 10px", color:"#1a2a3a", lineHeight:1.4, borderRight:"1px solid #edf0f6" }}>
+                    <td style={{ padding:"6px 8px", color:"#1a2a3a", lineHeight:1.4,
+                      borderRight:"1px solid #edf0f6", wordBreak:"break-all" }}>
                       {p.name}
                     </td>
-                    {/* 受注数 */}
-                    <td style={{ padding:"7px 8px", textAlign:"center", fontWeight:700, color:"#1a2a3a", borderRight:"1px solid #edf0f6" }}>
+                    <td style={{ padding:"6px 8px", textAlign:"center", fontWeight:700,
+                      color:"#1a2a3a", borderRight:"1px solid #edf0f6", whiteSpace:"nowrap" }}>
                       {p.qty}
                     </td>
-                    {/* 納品履歴 */}
-                    <td style={{ padding:"6px 10px", borderRight:"1px solid #edf0f6" }}>
-                      <div style={{ display:"flex", flexWrap:"wrap", gap:"3px 8px", justifyContent:"center" }}>
-                        {delivs.map((d, j) => (
-                          <span key={j} style={{ fontSize:11, whiteSpace:"nowrap",
-                            color: d.done ? "#1a7a50" : "#a0aab8",
-                            fontWeight: d.done ? 700 : 400 }}>
-                            {d.done ? "✅" : "📋"} {d.label} {d.date}
+                    <td style={{ padding:"5px 8px", borderRight:"1px solid #edf0f6" }}>
+                      {delivs.map((d, j) => (
+                        <div key={j} style={{ display:"flex", alignItems:"center", gap:4, lineHeight:1.6 }}>
+                          <span style={{ fontSize:10, fontWeight:700,
+                            color: d.done ? "#1a7a50" : "#a0aab8" }}>
+                            {d.done ? "✅" : "📋"} {d.label}
                           </span>
-                        ))}
-                      </div>
+                          <span style={{ fontSize:10, color: d.done ? "#1a7a50" : "#a0aab8" }}>
+                            {d.date}
+                          </span>
+                        </div>
+                      ))}
                     </td>
-                    {/* 未納数 */}
-                    <td style={{ padding:"7px 8px", textAlign:"center", borderRight:"1px solid #edf0f6" }}>
+                    <td style={{ padding:"6px 8px", textAlign:"center",
+                      borderRight:"1px solid #edf0f6", whiteSpace:"nowrap" }}>
                       {remaining > 0
-                        ? <span style={{ fontWeight:900, color:"#e05050", fontSize:13 }}>{remaining}{p.unit||""}</span>
+                        ? <span style={{ fontWeight:900, color:"#e05050", fontSize:12 }}>{remaining}{p.unit||""}</span>
                         : <span style={{ color:"#3aa876", fontWeight:700 }}>—</span>
                       }
                     </td>
-                    {/* 状況 */}
-                    <td style={{ padding:"7px 8px", textAlign:"center" }}>
-                      <span style={{ padding:"3px 8px", borderRadius:20, fontSize:11, fontWeight:700,
+                    <td style={{ padding:"6px 8px", textAlign:"center" }}>
+                      <span style={{ padding:"2px 7px", borderRadius:20, fontSize:10.5, fontWeight:700,
                         background:sc.bg, color:sc.color, whiteSpace:"nowrap" }}>
                         {sc.text}
                       </span>
@@ -744,12 +748,13 @@ function StatusManager({ orders }) {
         </table>
       </div>
 
-      <div style={{ fontSize:11, color:"#c0c8d4", marginTop:8, textAlign:"right" }}>
+      <div style={{ fontSize:11, color:"#c0c8d4", marginTop:6, textAlign:"right" }}>
         {filtered.length}注文 / {allP.length}商品
       </div>
     </div>
   );
 }
+
 
 // ── リクエスト管理 ────────────────────────────────────────────────────────
 function RequestManager(props) {
