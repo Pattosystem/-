@@ -9,7 +9,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-  import { getFirestore, collection, getDocs, doc, setDoc, deleteDoc, updateDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+  import { getFirestore, collection, getDocs, doc, setDoc, deleteDoc, updateDoc, writeBatch } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
   import { getAuth, sendPasswordResetEmail } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
   const firebaseConfig = {
@@ -34,9 +34,25 @@
       return list;
     },
     saveOrders: async (orders) => {
+      // ステップ1: 既存データを50件ずつバッチ削除
       const snap = await getDocs(collection(db, "orders"));
-      await Promise.all(snap.docs.map(d => deleteDoc(doc(db,"orders",d.id))));
-      await Promise.all(orders.map(o => setDoc(doc(db,"orders",o.id), o)));
+      const existingDocs = snap.docs;
+      for (let i = 0; i < existingDocs.length; i += 50) {
+        const batch = writeBatch(db);
+        existingDocs.slice(i, i+50).forEach(d => batch.delete(doc(db,"orders",d.id)));
+        await batch.commit();
+      }
+      // ステップ2: 新データを50件ずつバッチ保存
+      for (let i = 0; i < orders.length; i += 50) {
+        const batch = writeBatch(db);
+        orders.slice(i, i+50).forEach(o => batch.set(doc(db,"orders",o.id), o));
+        await batch.commit();
+      }
+      // ステップ3: 保存確認（件数チェック）
+      const verifySnap = await getDocs(collection(db, "orders"));
+      if (verifySnap.size !== orders.length) {
+        throw new Error(`保存件数が一致しません（期待: ${orders.length}, 実際: ${verifySnap.size}）`);
+      }
       return true;
     },
     // 新規クリニックアカウント作成（REST API経由）
@@ -1478,9 +1494,13 @@ function App() {
       await window._firebase.saveOrders(orders);
       setSaveStatus("saved");
       // 自動バックアップ
-      await downloadBackup(orders);
-    }catch(e){ setSaveStatus("error"); }
-    setTimeout(()=>setSaveStatus(""),3000);
+      try { await downloadBackup(orders); } catch(be){ console.error("バックアップエラー:", be); }
+    }catch(e){
+      console.error("保存エラー:", e);
+      setSaveStatus("error");
+      alert("⚠️ 保存に失敗しました。\n\n" + (e.message||"不明なエラー") + "\n\nもう一度「Firebaseに保存」を押してください。");
+    }
+    setTimeout(()=>setSaveStatus(""),4000);
   };
 
   const filtered=orders.filter(o=>!search||o.id.includes(search)||o.clinic.includes(search)||o.products.some(p=>p.name.includes(search)));
