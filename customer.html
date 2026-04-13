@@ -32,20 +32,14 @@
     resetPassword: (email) => sendPasswordResetEmail(auth, email),
     loadOrders: async () => {
       try {
-        const { getDocsFromServer } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
         const snap = await getDocsFromServer(collection(db, "orders"));
         const list = [];
         snap.forEach(d => list.push(d.data()));
-        console.log("📦 orders from server:", list.length);
+        console.log("📦 サーバーから取得:", list.length);
         return list;
       } catch(e) {
         console.error("loadOrders error:", e);
-        try {
-          const snap = await getDocs(collection(db, "orders"));
-          const list = [];
-          snap.forEach(d => list.push(d.data()));
-          return list;
-        } catch(e2) { return []; }
+        return [];
       }
     },
     loadBindings: async () => {
