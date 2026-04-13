@@ -32,11 +32,18 @@
     resetPassword: (email) => sendPasswordResetEmail(auth, email),
     loadOrders: async () => {
       try {
-        const d = await getDoc(doc(db, "appdata", "orders"));
-        if (d.exists()) return d.data().list || [];
-        // 旧形式からの移行
-        const snap = await getDocs(collection(db, "orders"));
-        const list = []; snap.forEach(d => list.push(d.data())); return list;
+        // 月別分割形式で読込
+        const indexDoc = await getDoc(doc(db, "appdata", "orders_index"));
+        if (indexDoc.exists()) {
+          const months = indexDoc.data().months || [];
+          const all = [];
+          for (const m of months) {
+            const d = await getDoc(doc(db, "appdata", "orders_" + m));
+            if (d.exists()) all.push(...(d.data().list || []));
+          }
+          return all;
+        }
+        return [];
       } catch(e) {
         console.error("loadOrders error:", e);
         return [];
