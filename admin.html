@@ -131,9 +131,14 @@
       } catch(e) { return {}; }
     },
     saveBindings: async (bindings) => {
+      console.log("💾 紐づけ保存開始:", JSON.stringify(bindings));
       await setDoc(doc(db, "appdata", "bindings"), {
         data: bindings, savedAt: new Date().toISOString()
       });
+      // 確認
+      const verify = await getDoc(doc(db, "appdata", "bindings"));
+      if (!verify.exists()) throw new Error("紐づけ保存確認失敗");
+      console.log("✅ 紐づけ保存確認:", JSON.stringify(verify.data().data));
       return true;
     },
     // リストア：注釈データのみ復元
@@ -530,9 +535,15 @@ function ClinicBindingManager({ orders }) {
 
   const handleSave = async () => {
     await waitFB();
-    await window._firebase.saveBindings(bindings);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+    try {
+      await window._firebase.saveBindings(bindings);
+      console.log("✅ 紐づけ保存完了:", JSON.stringify(bindings));
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch(e) {
+      console.error("❌ 紐づけ保存エラー:", e);
+      alert("保存に失敗しました: " + e.message);
+    }
   };
 
   const handleDelete = (email) => {
