@@ -829,6 +829,14 @@ function StatusManager({ orders, onUpdate }) {
                         onUpdate(order.id, "shipInstructions", updated);
                       };
 
+                      // 完了・配送中・通関中は出荷指示不要
+                      if (p.status === 6 || p.status === 5 || p.status === 4) {
+                        return (
+                          <td style={{ padding:"6px 8px", borderLeft:"1px solid #edf0f6", background:rowBg, textAlign:"center" }}>
+                            <span style={{ fontSize:10, color:"#c0c8d4" }}>—</span>
+                          </td>
+                        );
+                      }
                       return (
                         <td style={{ padding:"6px 8px", borderLeft:"1px solid #edf0f6", background:rowBg, verticalAlign:"top" }}>
                           {/* 指示履歴一覧 */}
