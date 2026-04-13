@@ -658,18 +658,19 @@ function StatusManager({ orders, onUpdate }) {
         <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11.5 }}>
           <colgroup>
             <col style={{ width:"11%" }} />
-            <col style={{ width:"11%" }} />
-            <col style={{ width:"19%" }} />
-            <col style={{ width:"6%" }} />
-            <col style={{ width:"20%" }} />
-            <col style={{ width:"6%" }} />
+            <col style={{ width:"10%" }} />
+            <col style={{ width:"17%" }} />
+            <col style={{ width:"5%" }} />
+            <col style={{ width:"18%" }} />
+            <col style={{ width:"5%" }} />
             <col style={{ width:"7%" }} />
-            <col style={{ width:"10%" }} />
-            <col style={{ width:"10%" }} />
+            <col style={{ width:"9%" }} />
+            <col style={{ width:"9%" }} />
+            <col style={{ width:"9%" }} />
           </colgroup>
           <thead>
             <tr style={{ background:"#0f2744" }}>
-              {["受注番号","クリニック","商品名","受注数","納品履歴","未納数","状況","入金状況","入金日"].map(h => (
+              {["受注番号","クリニック","商品名","受注数","納品履歴","未納数","状況","入金状況","入金日","出荷指示"].map(h => (
                 <th key={h} style={{ padding:"7px 8px", textAlign: h==="受注数"||h==="未納数"||h==="状況" ? "center" : "left",
                   color:"rgba(255,255,255,0.85)", fontWeight:700, whiteSpace:"nowrap", fontSize:11.5 }}>{h}</th>
               ))}
@@ -699,6 +700,21 @@ function StatusManager({ orders, onUpdate }) {
                         <div style={{ fontSize:10, color:"#8a95a5", marginTop:1 }}>
                           {(order.date||"").replace("2026年","").replace("日","")}
                         </div>
+                        <button
+                          onClick={() => {
+                            const now = new Date().toLocaleString("ja-JP",{month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"});
+                            const newInstructions = order.products.map(p => ({
+                              productName: p.name, instructedAt: now
+                            }));
+                            const merged = [...(order.shipInstructions||[]), ...newInstructions];
+                            onUpdate(order.id, "shipInstructions", merged);
+                          }}
+                          style={{ marginTop:6, width:"100%", padding:"4px 0", borderRadius:6,
+                            border:"1.5px solid #4a7cc7", background:"#f0f6ff",
+                            color:"#1a4a90", fontSize:10, fontWeight:700, cursor:"pointer",
+                            whiteSpace:"nowrap" }}>
+                          📦 一括指示
+                        </button>
                       </td>
                     )}
                     {isFirst && (
@@ -786,6 +802,54 @@ function StatusManager({ orders, onUpdate }) {
                         )}
                       </td>
                     )}
+                    {/* 出荷指示セル（商品単位） */}
+                    {(() => {
+                      const instructions = (order.shipInstructions||[]).filter(i => i.productName === p.name);
+                      const hasInstr = instructions.length > 0;
+                      const latest = hasInstr ? instructions[instructions.length-1] : null;
+                      return (
+                        <td style={{ padding:"6px 8px", borderLeft:"1px solid #edf0f6", background:rowBg }}>
+                          {hasInstr ? (
+                            <div>
+                              <div style={{ fontSize:10, fontWeight:700, color:"#1a7a50", marginBottom:3 }}>
+                                ✅ 指示済み
+                              </div>
+                              <div style={{ fontSize:9.5, color:"#8a95a5", lineHeight:1.5 }}>
+                                {latest.instructedAt}
+                              </div>
+                              {instructions.length > 1 && (
+                                <div style={{ fontSize:9, color:"#a0aab8", marginTop:2 }}>
+                                  計{instructions.length}回
+                                </div>
+                              )}
+                              <button
+                                onClick={() => {
+                                  const now = new Date().toLocaleString("ja-JP",{month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"});
+                                  const updated = [...(order.shipInstructions||[]), { productName: p.name, instructedAt: now }];
+                                  onUpdate(order.id, "shipInstructions", updated);
+                                }}
+                                style={{ marginTop:4, width:"100%", padding:"3px 0", borderRadius:5,
+                                  border:"1.5px solid #dde4ef", background:"#fff",
+                                  color:"#6a7a8a", fontSize:9.5, cursor:"pointer" }}>
+                                再指示
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() => {
+                                const now = new Date().toLocaleString("ja-JP",{month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"});
+                                const updated = [...(order.shipInstructions||[]), { productName: p.name, instructedAt: now }];
+                                onUpdate(order.id, "shipInstructions", updated);
+                              }}
+                              style={{ width:"100%", padding:"5px 0", borderRadius:6,
+                                border:"1.5px solid #e07d20", background:"#fff8f0",
+                                color:"#e07d20", fontSize:10.5, fontWeight:700, cursor:"pointer" }}>
+                              📤 出荷指示
+                            </button>
+                          )}
+                        </td>
+                      );
+                    })()}
                   </tr>
                 );
               })
