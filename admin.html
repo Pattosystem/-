@@ -578,6 +578,160 @@ function GroupSection({ title, orders, onUpdate, onDelete, defaultOpen }) {
 
 
 
+// ── 出荷指示書印刷 ───────────────────────────────────────────────────────────
+function PrintInstructModal({ orders, onClose }) {
+  const [selectedDate, setSelectedDate] = useState("");
+
+  // 出荷指示のある日付一覧を収集
+  const allDates = [...new Set(
+    orders.flatMap(o => (o.shipInstructions||[]).map(i => i.instructedAt?.slice(0,10) || ""))
+      .filter(Boolean)
+  )].sort((a,b) => b.localeCompare(a));
+
+  const currentDate = selectedDate || allDates[0] || "";
+
+  // 選択日付の指示を集計
+  const instrItems = [];
+  orders.forEach(order => {
+    (order.shipInstructions||[]).forEach(instr => {
+      const d = instr.instructedAt?.slice(0,10) || instr.instructedAt || "";
+      if (d === currentDate || instr.instructedAt === currentDate) {
+        instrItems.push({
+          clinic: order.clinic,
+          orderId: order.id,
+          productName: instr.productName,
+          qty: instr.qty,
+          unit: instr.unit || "",
+          instructedAt: instr.instructedAt,
+        });
+      }
+    });
+  });
+
+  // クリニック別にグループ化
+  const grouped = {};
+  instrItems.forEach(item => {
+    if (!grouped[item.clinic]) grouped[item.clinic] = [];
+    grouped[item.clinic].push(item);
+  });
+
+  const handlePrint = () => {
+    const win = window.open('', '_blank');
+    const rows = Object.entries(grouped).flatMap(([clinic, items]) =>
+      items.map((item, i) => `
+        <tr>
+          <td style="border:1px solid #ccc;padding:7px 10px;${i===0?'border-top:2px solid #888;':''}">${i===0?clinic:''}</td>
+          <td style="border:1px solid #ccc;padding:7px 10px;${i===0?'border-top:2px solid #888;':''}">${i===0?item.orderId:''}</td>
+          <td style="border:1px solid #ccc;padding:7px 10px;${i===0?'border-top:2px solid #888;':''}">${item.productName}</td>
+          <td style="border:1px solid #ccc;padding:7px 10px;text-align:center;font-weight:bold;${i===0?'border-top:2px solid #888;':''}">${item.qty}${item.unit}</td>
+          <td style="border:1px solid #ccc;padding:7px 10px;${i===0?'border-top:2px solid #888;':''}"></td>
+        </tr>`)
+    ).join('');
+
+    win.document.write(`<!DOCTYPE html>
+<html lang="ja"><head><meta charset="UTF-8">
+<title>出荷指示書 ${currentDate}</title>
+<style>
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { font-family:'Hiragino Sans','Yu Gothic',sans-serif; padding:20px; font-size:12px; }
+  h1 { font-size:18px; margin-bottom:4px; }
+  .meta { color:#666; margin-bottom:16px; font-size:11px; }
+  table { width:100%; border-collapse:collapse; }
+  th { background:#0f2744; color:#fff; padding:8px 10px; text-align:left; font-size:12px; }
+  th:last-child { width:120px; }
+  td:nth-child(4) { text-align:center; font-weight:bold; }
+  @media print {
+    body { padding:10mm; }
+    button { display:none; }
+  }
+</style>
+</head><body>
+<h1>📦 出荷指示書</h1>
+<div class="meta">指示日：${currentDate}　／　合計 ${instrItems.length} 件　／　発行：${new Date().toLocaleDateString('ja-JP')}</div>
+<table>
+  <thead>
+    <tr>
+      <th style="width:16%">クリニック</th>
+      <th style="width:13%">受注番号</th>
+      <th>商品名</th>
+      <th style="width:9%">数量</th>
+      <th style="width:18%">備考</th>
+    </tr>
+  </thead>
+  <tbody>${rows}</tbody>
+</table>
+<div style="margin-top:24px;font-size:11px;color:#999;text-align:right">
+  合計 ${instrItems.length} 商品 ／ ${Object.keys(grouped).length} クリニック
+</div>
+<script>window.onload=()=>window.print();<\/script>
+</body></html>`);
+    win.document.close();
+  };
+
+  return (
+    <div style={{ position:"fixed", inset:0, background:"rgba(10,20,40,0.6)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:300, padding:16 }}>
+      <div style={{ background:"#fff", borderRadius:16, padding:"24px 24px", width:"100%", maxWidth:520, boxShadow:"0 20px 60px rgba(0,0,0,0.3)" }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:20 }}>
+          <div style={{ fontSize:16, fontWeight:800, color:"#0f2744" }}>📄 出荷指示書を印刷</div>
+          <button onClick={onClose} style={{ background:"none", border:"none", fontSize:22, cursor:"pointer", color:"#8a95a5" }}>✕</button>
+        </div>
+
+        {/* 日付選択 */}
+        <div style={{ marginBottom:16 }}>
+          <div style={{ fontSize:12, color:"#8a95a5", marginBottom:8 }}>指示日を選択</div>
+          <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+            {allDates.length === 0 ? (
+              <div style={{ fontSize:13, color:"#aaa" }}>出荷指示の記録がありません</div>
+            ) : allDates.map(d => (
+              <button key={d} onClick={() => setSelectedDate(d)}
+                style={{ padding:"6px 12px", borderRadius:20, border:"1.5px solid",
+                  borderColor: currentDate===d ? "#0f2744" : "#dde4ef",
+                  background: currentDate===d ? "#0f2744" : "#fff",
+                  color: currentDate===d ? "#fff" : "#4a5568",
+                  fontWeight: currentDate===d ? 700 : 400, fontSize:12.5, cursor:"pointer" }}>
+                {d}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* プレビュー */}
+        {currentDate && instrItems.length > 0 && (
+          <div style={{ background:"#f8fafd", border:"1.5px solid #e4eaf3", borderRadius:10, padding:"12px 14px", marginBottom:16, maxHeight:240, overflowY:"auto" }}>
+            <div style={{ fontSize:11, color:"#8a95a5", marginBottom:8 }}>
+              {instrItems.length}件 ／ {Object.keys(grouped).length}クリニック
+            </div>
+            {Object.entries(grouped).map(([clinic, items]) => (
+              <div key={clinic} style={{ marginBottom:10 }}>
+                <div style={{ fontSize:12, fontWeight:700, color:"#0f2744", marginBottom:4 }}>{clinic}</div>
+                {items.map((item, i) => (
+                  <div key={i} style={{ display:"flex", gap:8, fontSize:12, color:"#4a5568", padding:"2px 0 2px 8px" }}>
+                    <span style={{ fontWeight:700, color:"#e07d20" }}>{item.qty}{item.unit}</span>
+                    <span style={{ flex:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{item.productName}</span>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        )}
+        {currentDate && instrItems.length === 0 && (
+          <div style={{ padding:"20px", textAlign:"center", color:"#aaa", fontSize:13, marginBottom:16 }}>
+            この日付の出荷指示はありません
+          </div>
+        )}
+
+        <div style={{ display:"flex", gap:8 }}>
+          <button onClick={onClose} style={{ flex:1, padding:12, borderRadius:10, border:"1.5px solid #dde4ef", background:"#fff", fontSize:14, cursor:"pointer", color:"#666" }}>閉じる</button>
+          <button onClick={handlePrint} disabled={instrItems.length === 0}
+            style={{ flex:2, padding:12, borderRadius:10, border:"none", background:"#0f2744", color:"#fff", fontWeight:800, fontSize:14, cursor:"pointer", opacity:instrItems.length===0?0.4:1 }}>
+            🖨️ 印刷する（{instrItems.length}件）
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── 出荷指示セルコンポーネント ──────────────────────────────────────────────
 function ShipInstructCell({ product: p, rowBg, instructions, onAdd, onCancel }) {
   const [showForm, setShowForm] = useState(false);
@@ -664,6 +818,7 @@ function ShipInstructCell({ product: p, rowBg, instructions, onAdd, onCancel }) 
 function StatusManager({ orders, onUpdate }) {
   const [selectedMonth, setSelectedMonth] = useState(null);
   const [selectedClinic, setSelectedClinic] = useState("all");
+  const [showPrint, setShowPrint] = useState(false);
 
   function toMonthKey(d) {
     const m = (d||"").match(/(\d{4}年\d{2}月)/);
@@ -707,8 +862,11 @@ function StatusManager({ orders, onUpdate }) {
   return (
     <div style={{ fontSize:12 }}>
 
-      {/* 月タブ */}
-      <div style={{ display:"flex", gap:4, marginBottom:10, flexWrap:"wrap" }}>
+      {showPrint && <PrintInstructModal orders={orders} onClose={() => setShowPrint(false)} />}
+
+      {/* 月タブ + 印刷ボタン */}
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10, gap:8, flexWrap:"wrap" }}>
+        <div style={{ display:"flex", gap:4, flexWrap:"wrap" }}>
         {months.map(m => (
           <button key={m} onClick={() => { setSelectedMonth(m); setSelectedClinic("all"); }}
             style={{ padding:"4px 11px", borderRadius:14, border:"1.5px solid", flexShrink:0,
@@ -719,6 +877,13 @@ function StatusManager({ orders, onUpdate }) {
             {m}
           </button>
         ))}
+        </div>
+        <button onClick={() => setShowPrint(true)}
+          style={{ padding:"6px 14px", borderRadius:8, border:"1.5px solid #0f2744",
+            background:"#0f2744", color:"#fff", fontWeight:700, fontSize:12.5, cursor:"pointer",
+            whiteSpace:"nowrap", flexShrink:0 }}>
+          🖨️ 出荷指示書を印刷
+        </button>
       </div>
 
       {/* サマリー + クリニック絞り込み */}
