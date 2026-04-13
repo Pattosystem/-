@@ -31,8 +31,16 @@
     onAuthStateChanged: (cb) => onAuthStateChanged(auth, cb),
     resetPassword: (email) => sendPasswordResetEmail(auth, email),
     loadOrders: async () => {
-      const snap = await getDocs(collection(db, "orders"));
-      const list = []; snap.forEach(d => list.push(d.data())); return list;
+      try {
+        const d = await getDoc(doc(db, "appdata", "orders"));
+        if (d.exists()) return d.data().list || [];
+        // 旧形式からの移行
+        const snap = await getDocs(collection(db, "orders"));
+        const list = []; snap.forEach(d => list.push(d.data())); return list;
+      } catch(e) {
+        console.error("loadOrders error:", e);
+        return [];
+      }
     },
     sendRequest: async (orderId, clinic, email, message) => {
       const id = `${orderId}_${Date.now()}`;
