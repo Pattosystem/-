@@ -1215,6 +1215,7 @@ function PrintInstructModal({ orders, onClose }) {
 function ShipInstructCell({ product: p, rowBg, instructions, onAdd, onCancel }) {
   const [showForm, setShowForm] = useState(false);
   const [inputQty, setInputQty] = useState("");
+  const [photoModal, setPhotoModal] = useState(null);
   const unit = p.unit || "";
 
   const handleConfirm = () => {
@@ -1246,7 +1247,7 @@ function ShipInstructCell({ product: p, rowBg, instructions, onAdd, onCancel }) 
                 <div style={{ fontSize:9.5, color:"#8a95a5" }}>{instr.instructedAt}</div>
               </div>
               {instr.photo && (
-                <img src={instr.photo} onClick={()=>window.open(instr.photo,'_blank')}
+                <img src={instr.photo} onClick={()=>setPhotoModal(instr.photo)}
                   style={{ width:36, height:36, objectFit:"cover", borderRadius:4, cursor:"pointer", border:"1px solid #b8e8cc", flexShrink:0 }}
                   title="クリックで拡大" />
               )}
@@ -1293,6 +1294,25 @@ function ShipInstructCell({ product: p, rowBg, instructions, onAdd, onCancel }) 
             color:"#e07d20", fontSize:10.5, fontWeight:700, cursor:"pointer" }}>
           {instructions.length > 0 ? "📤 再指示" : "📤 出荷指示"}
         </button>
+      )}
+      {/* 写真拡大モーダル */}
+      {photoModal && (
+        <div onClick={()=>setPhotoModal(null)}
+          style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.85)", zIndex:1000,
+            display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer", padding:20 }}>
+          <div onClick={e=>e.stopPropagation()} style={{ position:"relative" }}>
+            <img src={photoModal} style={{ maxWidth:"90vw", maxHeight:"85vh", borderRadius:10, objectFit:"contain", display:"block" }} />
+            <button onClick={()=>setPhotoModal(null)}
+              style={{ position:"absolute", top:-14, right:-14, width:32, height:32, borderRadius:"50%",
+                border:"none", background:"#fff", color:"#333", fontSize:16, cursor:"pointer", fontWeight:700,
+                boxShadow:"0 2px 8px rgba(0,0,0,0.4)", display:"flex", alignItems:"center", justifyContent:"center" }}>
+              ✕
+            </button>
+            <div style={{ textAlign:"center", color:"rgba(255,255,255,0.6)", fontSize:12, marginTop:8 }}>
+              タップで閉じる
+            </div>
+          </div>
+        </div>
       )}
     </td>
   );
