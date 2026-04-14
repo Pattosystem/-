@@ -1299,6 +1299,7 @@ function StatusManager({ orders, onUpdate }) {
   const [selectedClinic, setSelectedClinic] = useState("all");
   const [showPrint, setShowPrint] = useState(false);
   const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all"); // all/pending/partial/done
 
   function toMonthKey(d) {
     const m = (d||"").match(/(\d{4}年\d{2}月)/);
@@ -1310,18 +1311,28 @@ function StatusManager({ orders, onUpdate }) {
   const monthOrders = orders.filter(o => toMonthKey(o.date) === currentMonth);
   const clinics = ["all", ...new Set(monthOrders.map(o => o.clinic).filter(Boolean))];
   const baseOrders = selectedClinic === "all" ? monthOrders : monthOrders.filter(o => o.clinic === selectedClinic);
-  const filtered = !search.trim() ? baseOrders : baseOrders.filter(o =>
+  const searchFiltered = !search.trim() ? baseOrders : baseOrders.filter(o =>
     o.id.includes(search.trim()) ||
     (o.clinic||"").includes(search.trim()) ||
     o.products.some(p => (p.name||"").includes(search.trim()))
   );
+  // ステータス絞り込み（商品レベル）
+  const filtered = statusFilter === "all" ? searchFiltered : searchFiltered.filter(o =>
+    o.products.some(p => {
+      if (statusFilter === "pending") return p.status !== 6 && p.status !== 7;
+      if (statusFilter === "partial") return p.status === 7;
+      if (statusFilter === "done") return p.status === 6;
+      return true;
+    })
+  );
   const allP = filtered.flatMap(o => o.products);
-
+  // statsはフィルター前の全商品で計算（ボタンに正しい件数を表示）
+  const baseP = searchFiltered.flatMap(o => o.products);
   const stats = {
-    done:    allP.filter(p => p.status === 6).length,
-    partial: allP.filter(p => p.status === 7).length,
-    notship: allP.filter(p => p.status < 5 && p.status !== 7).length,
-    total:   allP.length,
+    done:    baseP.filter(p => p.status === 6).length,
+    partial: baseP.filter(p => p.status === 7).length,
+    notship: baseP.filter(p => p.status < 5 && p.status !== 7).length,
+    total:   baseP.length,
   };
 
   function statusLabel(p) {
@@ -1373,17 +1384,21 @@ function StatusManager({ orders, onUpdate }) {
 
       {/* サマリー + クリニック絞り込み */}
       <div style={{ display:"flex", gap:10, marginBottom:10, alignItems:"flex-start", flexWrap:"wrap" }}>
-        <div style={{ display:"flex", gap:5 }}>
+        <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
           {[
-            { l:"完了",    v:stats.done,    c:"#1a7a50", bg:"#e8f4ee" },
-            { l:"一部納品", v:stats.partial, c:"#e07d20", bg:"#fff8f0" },
-            { l:"未納",    v:stats.notship, c:"#e05050", bg:"#fff0f0" },
-            { l:"商品計",  v:stats.total,   c:"#0f2744", bg:"#f0f4f9" },
+            { key:"all",     l:"全商品",      v:stats.total,   c:"#4a7cc7", bg:"#f0f4ff" },
+            { key:"pending", l:"未納",        v:stats.notship, c:"#e05050", bg:"#fff0f0" },
+            { key:"partial", l:"一部発送済み", v:stats.partial, c:"#e07d20", bg:"#fff8f0" },
+            { key:"done",    l:"完了",        v:stats.done,    c:"#1a7a50", bg:"#e8f4ee" },
           ].map(s => (
-            <div key={s.l} style={{ background:s.bg, borderRadius:8, padding:"4px 10px", textAlign:"center", minWidth:50 }}>
-              <div style={{ fontSize:15, fontWeight:900, color:s.c, lineHeight:1 }}>{s.v}</div>
-              <div style={{ fontSize:9, color:s.c, opacity:0.8 }}>{s.l}</div>
-            </div>
+            <button key={s.key} onClick={() => setStatusFilter(s.key)}
+              style={{ padding:"5px 12px", borderRadius:20, cursor:"pointer", border:`1.5px solid ${s.c}`,
+                background: statusFilter===s.key ? s.c : s.bg,
+                color: statusFilter===s.key ? "#fff" : s.c,
+                fontWeight:700, fontSize:12.5,
+                boxShadow: statusFilter===s.key ? `0 2px 6px ${s.c}44` : "none" }}>
+              {s.l} {s.v}
+            </button>
           ))}
         </div>
         {/* 検索欄 */}
