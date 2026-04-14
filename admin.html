@@ -119,6 +119,13 @@
     markRequestRead: async (id) => {
       await updateDoc(doc(db, "requests", id), { status: "read" });
     },
+    // 出荷写真の読み込み
+    loadShipPhotos: async () => {
+      try {
+        const d = await getDoc(doc(db, "appdata", "ship_photos"));
+        return d.exists() ? (d.data().list || []) : [];
+      } catch(e) { return []; }
+    },
     // バックアップ：全データ取得
     loadAllData: async () => {
       const [ordersSnap, requestsSnap] = await Promise.all([
@@ -1199,6 +1206,13 @@ function PrintInstructModal({ orders, onClose }) {
           </div>
         )}
 
+        {/* 出荷写真確認リンク */}
+        <div style={{ padding:"10px 12px", background:"#f8fafd", borderRadius:9, border:"1px solid #e4eaf3", marginBottom:12, fontSize:12, color:"#4a7cc7", textAlign:"center" }}>
+          📷 スマホで撮影した写真は
+          <a href="https://pattosystem.github.io/-/admin_mobile.html" target="_blank"
+            style={{ color:"#4a7cc7", fontWeight:700, marginLeft:4 }}>出荷指示書アプリ</a>
+          で確認できます
+        </div>
         <div style={{ display:"flex", gap:8 }}>
           <button onClick={onClose} style={{ flex:1, padding:12, borderRadius:10, border:"1.5px solid #dde4ef", background:"#fff", fontSize:14, cursor:"pointer", color:"#666" }}>閉じる</button>
           <button onClick={handlePrint} disabled={instrItems.length === 0}
