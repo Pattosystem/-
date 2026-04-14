@@ -1760,16 +1760,26 @@ function App() {
     const load=async()=>{
       let t=0; while(!window._firebase&&t<30){await new Promise(r=>setTimeout(r,200));t++;}
       try{
-        // 注文データをFirebaseから読込
-        const orders = await window._firebase.loadOrders();
-        setOrders(orders || []);
-        // 注釈データもキャッシュ
-        const annotations = await window._firebase.loadAnnotations();
+        // 注文データとアノテーションを並行取得
+        const [orders, annotations, bindings] = await Promise.all([
+          window._firebase.loadOrders(),
+          window._firebase.loadAnnotations(),
+          window._firebase.loadBindings(),
+        ]);
+        // 注釈を注文データにマージ
+        const merged = (orders||[]).map(o => {
+          const ann = annotations[o.id] || {};
+          return {
+            ...o,
+            paymentStatus:    ann.paymentStatus    || o.paymentStatus    || "",
+            paymentDate:      ann.paymentDate      || o.paymentDate      || "",
+            shipInstructions: ann.shipInstructions || o.shipInstructions || [],
+          };
+        });
+        setOrders(merged);
         window._annotations = annotations;
-        // 紐づけデータをwindowにキャッシュ
-        const bindings = await window._firebase.loadBindings();
         window._bindings = bindings;
-        console.log("✅ 読込完了:", (orders||[]).length, "件 / 注釈:", Object.keys(annotations).length, "件 / 紐づけ:", Object.keys(bindings).length, "件");
+        console.log("✅ 読込完了:", merged.length, "件 / 注釈:", Object.keys(annotations).length, "件");
       }catch(e){ console.error("load error:", e); }
       setLoading(false);
     };
