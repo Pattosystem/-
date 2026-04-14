@@ -278,7 +278,7 @@ function MainScreen() {
 
   // 未納商品のある注文を絞り込む
   const pendingOrders = orders.filter(o => {
-    const inMonth = !month || (o.date||"").startsWith(month.replace("年","").replace("月",""));
+    const inMonth = !month || (o.date||"").startsWith(month);
     if (!inMonth) return false;
     const hasPending = o.products.some(p => p.status !== 6);
     if (!hasPending) return false;
