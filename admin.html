@@ -1241,10 +1241,15 @@ function ShipInstructCell({ product: p, rowBg, instructions, onAdd, onCancel }) 
             <div key={instr.id||idx} style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between",
               background:"#f0fdf6", border:"1px solid #b8e8cc", borderRadius:5,
               padding:"3px 5px", marginBottom:3, gap:4 }}>
-              <div>
+              <div style={{ flex:1 }}>
                 <div style={{ fontSize:10, fontWeight:700, color:"#1a7a50" }}>📤 {instr.qty}{instr.unit}</div>
                 <div style={{ fontSize:9.5, color:"#8a95a5" }}>{instr.instructedAt}</div>
               </div>
+              {instr.photo && (
+                <img src={instr.photo} onClick={()=>window.open(instr.photo,'_blank')}
+                  style={{ width:36, height:36, objectFit:"cover", borderRadius:4, cursor:"pointer", border:"1px solid #b8e8cc", flexShrink:0 }}
+                  title="クリックで拡大" />
+              )}
               <button onClick={() => onCancel(instr.id||idx)} title="取消"
                 style={{ border:"none", background:"none", color:"#e05050",
                   fontSize:12, cursor:"pointer", padding:"0 2px", lineHeight:1, flexShrink:0 }}>
