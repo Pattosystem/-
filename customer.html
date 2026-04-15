@@ -9,7 +9,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-  import { getFirestore, collection, getDocs, getDocsFromServer, doc, getDoc, setDoc, query, where } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+  import { getFirestore, collection, getDocs, getDocsFromServer, onSnapshot, doc, getDoc, setDoc, query, where } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
   import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged, sendPasswordResetEmail, reauthenticateWithCredential, EmailAuthProvider, updatePassword, verifyBeforeUpdateEmail } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
   const firebaseConfig = {
@@ -41,6 +41,22 @@
         console.error("loadOrders error:", e);
         return [];
       }
+    },
+    // リアルタイム購読 — 管理画面の更新が即座に反映される
+    subscribeOrders: (callback) => {
+      let debounceTimer = null;
+      return onSnapshot(collection(db, "orders"), { includeMetadataChanges: false }, (snap) => {
+        // バッチ書き込み中の連続発火をまとめるためdebounce
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+          const list = [];
+          snap.forEach(d => list.push(d.data()));
+          console.log("🔄 リアルタイム更新:", list.length, "件");
+          callback(list);
+        }, 800);
+      }, (error) => {
+        console.error("subscribeOrders error:", error);
+      });
     },
     loadBindings: async () => {
       try {
@@ -678,11 +694,14 @@ function MainScreen({ user }) {
   const [orders, setOrders] = useState([]);
   const [myRequests, setMyRequests] = useState([]);
   const [myOrders, setMyOrders] = useState([]);
+  const [clinicNames, setClinicNames] = useState([]);
   const [selectedMonth, setSelectedMonth] = useState(null);
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [loading, setLoading] = useState(true);
   const [showAccount, setShowAccount] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 900);
+  const [lastUpdated, setLastUpdated] = useState(null);
+  const [updating, setUpdating] = useState(false);
 
   useEffect(() => {
     const handler = () => setIsMobile(window.innerWidth < 900);
@@ -690,24 +709,61 @@ function MainScreen({ user }) {
     return () => window.removeEventListener('resize', handler);
   }, []);
 
-  const loadData = async () => {
-    const [orderData, requestData, bindings] = await Promise.all([
-      window._firebase.loadOrders(),
+  // クリニック紐づけとリクエストは初回のみ取得
+  const loadMeta = async () => {
+    const [requestData, bindings] = await Promise.all([
       window._firebase.loadMyRequests(user.email),
       window._firebase.loadBindings(),
     ]);
-    setOrders(orderData);
     setMyRequests(requestData);
     const clinicVal = bindings[user.email];
-    const clinicNames = clinicVal ? (Array.isArray(clinicVal) ? clinicVal : [clinicVal]).filter(Boolean) : [];
-    if (clinicNames.length > 0) {
-      const filtered = orderData.filter(o => clinicNames.includes(o.clinic));
+    const names = clinicVal ? (Array.isArray(clinicVal) ? clinicVal : [clinicVal]).filter(Boolean) : [];
+    setClinicNames(names);
+    return names;
+  };
+
+  // 注文データを処理してmyOrdersに反映
+  const processOrders = (orderData, names) => {
+    setOrders(orderData);
+    if (names.length > 0) {
+      const filtered = orderData.filter(o => names.includes(o.clinic));
       filtered.sort((a,b) => b.id.localeCompare(a.id));
       setMyOrders(filtered);
+      // 選択中の注文があれば最新データで更新
+      setSelectedOrder(prev => prev ? (filtered.find(o => o.id === prev.id) || null) : null);
     }
+    setLastUpdated(new Date());
     setLoading(false);
+    setUpdating(false);
   };
-  useEffect(() => { loadData(); }, []);
+
+  // リクエストを手動で再読み込み
+  const loadData = async () => {
+    const data = await window._firebase.loadMyRequests(user.email);
+    setMyRequests(data);
+  };
+
+  // 手動更新ボタン
+  const handleRefresh = async () => {
+    setUpdating(true);
+    const names = clinicNames.length > 0 ? clinicNames : await loadMeta();
+    const orderData = await window._firebase.loadOrders();
+    processOrders(orderData, names);
+  };
+
+  useEffect(() => {
+    let unsubscribe = null;
+    const init = async () => {
+      let t=0; while(!window._firebase&&t<30){await new Promise(r=>setTimeout(r,200));t++;}
+      const names = await loadMeta();
+      // リアルタイム購読開始
+      unsubscribe = window._firebase.subscribeOrders((orderData) => {
+        processOrders(orderData, names);
+      });
+    };
+    init();
+    return () => { if (unsubscribe) unsubscribe(); };
+  }, []);
 
   const months = [...new Set(myOrders.map(o => (o.date||"").slice(0,7)).filter(Boolean))].sort().reverse();
   const currentMonth = selectedMonth || months[0] || "";
@@ -718,7 +774,7 @@ function MainScreen({ user }) {
 
   // ── ヘッダー ──
   const Header = () => (
-    <div style={{ background:"linear-gradient(160deg,#0a1e35 0%,#0f2744 55%,#1a3d6e 100%)",padding:"18px 20px 20px",flexShrink:0 }}>
+    <div style={{ background:"linear-gradient(160deg,#0a1e35 0%,#0f2744 55%,#1a3d6e 100%)",padding:"16px 20px 18px",flexShrink:0 }}>
       <div style={{ display:"flex",justifyContent:"space-between",alignItems:"flex-start" }}>
         <div>
           <div style={{ fontSize:10,letterSpacing:"0.2em",color:"#d4a843",fontWeight:700,marginBottom:3,textTransform:"uppercase" }}>Import Status Tracking</div>
@@ -726,8 +782,22 @@ function MainScreen({ user }) {
           <div style={{ fontSize:11,color:"rgba(255,255,255,0.4)",marginTop:4 }}>ログイン中：{user.email}</div>
         </div>
         <div style={{ display:"flex",flexDirection:"column",gap:5,alignItems:"flex-end" }}>
-          <button onClick={()=>window._firebase.signOut()} style={{ padding:"6px 12px",borderRadius:8,border:"1px solid rgba(255,255,255,0.2)",background:"transparent",color:"rgba(255,255,255,0.6)",fontSize:11.5,cursor:"pointer" }}>ログアウト</button>
-          <button onClick={()=>setShowAccount(true)} style={{ padding:"6px 12px",borderRadius:8,border:"1px solid rgba(212,168,67,0.4)",background:"rgba(212,168,67,0.12)",color:"#d4a843",fontSize:11.5,cursor:"pointer",fontWeight:700 }}>⚙️ アカウント設定</button>
+          <div style={{ display:"flex",gap:6 }}>
+            <button onClick={()=>window._firebase.signOut()} style={{ padding:"6px 12px",borderRadius:8,border:"1px solid rgba(255,255,255,0.2)",background:"transparent",color:"rgba(255,255,255,0.6)",fontSize:11.5,cursor:"pointer" }}>ログアウト</button>
+            <button onClick={()=>setShowAccount(true)} style={{ padding:"6px 12px",borderRadius:8,border:"1px solid rgba(212,168,67,0.4)",background:"rgba(212,168,67,0.12)",color:"#d4a843",fontSize:11.5,cursor:"pointer",fontWeight:700 }}>⚙️ 設定</button>
+          </div>
+          {/* 最終更新時刻と手動更新ボタン */}
+          <div style={{ display:"flex",alignItems:"center",gap:8 }}>
+            {lastUpdated && (
+              <div style={{ fontSize:10.5,color:"rgba(255,255,255,0.4)" }}>
+                {updating ? "🔄 更新中..." : `🕐 ${lastUpdated.toLocaleTimeString("ja-JP",{hour:"2-digit",minute:"2-digit"})} 更新`}
+              </div>
+            )}
+            <button onClick={handleRefresh} disabled={updating}
+              style={{ padding:"5px 11px",borderRadius:8,border:"1px solid rgba(58,168,118,0.5)",background:"rgba(58,168,118,0.12)",color:"#7df0b0",fontSize:11,cursor:"pointer",fontWeight:700,opacity:updating?0.5:1 }}>
+              🔄 手動更新
+            </button>
+          </div>
         </div>
       </div>
     </div>
