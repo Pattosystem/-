@@ -447,16 +447,17 @@ function UrgentRequest({ order, user, myRequests, onSent }) {
 }
 
 // ── ダッシュボードパネル（右側デフォルト表示） ───────────────────────────
-function DashboardPanel({ orders }) {
-  const allProducts = orders.flatMap(o => o.products);
+// displayOrders: 現在の月タブでフィルタ済み、allOrders: 全件（リードタイム計算用）
+function DashboardPanel({ displayOrders, allOrders, currentMonth, onSelectOrder }) {
+  const allProducts = displayOrders.flatMap(o => o.products);
   const inProgress = allProducts.filter(p => p.status < 6).length;
   const completed = allProducts.filter(p => p.status === 6).length;
   const partial = allProducts.filter(p => p.status === 7).length;
   const soon = allProducts.filter(p => p.status >= 4 && p.status < 6).length;
 
-  // リードタイム計算（完了済み商品のみ）
+  // リードタイム計算は全件データから（サンプル数を稼ぐため）
   const leadTimes = [];
-  orders.forEach(order => {
+  allOrders.forEach(order => {
     const orderDate = parseJpDate(order.date);
     if (!orderDate) return;
     order.products.forEach(p => {
@@ -474,85 +475,94 @@ function DashboardPanel({ orders }) {
   const minLT = leadTimes.length > 0 ? Math.min(...leadTimes) : null;
   const maxLT = leadTimes.length > 0 ? Math.max(...leadTimes) : null;
 
-  // 対応中の注文まとめ
-  const pendingOrders = orders.filter(o => o.products.some(p => p.status < 6));
+  // 対応中注文（現在の月タブのもの）
+  const pendingOrders = displayOrders.filter(o => o.products.some(p => p.status < 6));
+  const doneOrders = displayOrders.filter(o => o.products.every(p => p.status === 6));
 
-  // ステータス別にまとめ
-  const byStatus = {};
-  allProducts.forEach(p => {
-    const key = p.status;
-    if (!byStatus[key]) byStatus[key] = 0;
-    byStatus[key]++;
-  });
+  const monthLabel = currentMonth ? currentMonth.replace("-","年").replace(/-(\d{2})$/, "$1月") : "";
 
   return (
     <div style={{ display:"flex",flexDirection:"column",gap:16,padding:"20px" }}>
-      {/* サマリーカード */}
-      <div>
-        <div style={{ fontSize:13,fontWeight:800,color:"#0f2744",marginBottom:10 }}>📊 注文サマリー</div>
-        <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:8 }}>
-          {[
-            { label:"対応中商品", value:inProgress, color:"#d4a843", bg:"#fffbef", icon:"📦" },
-            { label:"もうすぐ到着", value:soon, color:"#3aa876", bg:"#f0fdf6", icon:"🚚" },
-            { label:"一部発送済み", value:partial, color:"#e07d20", bg:"#fff8f0", icon:"🔶" },
-            { label:"納品完了", value:completed, color:"#6b8cba", bg:"#f4f6fb", icon:"✅" },
-          ].map(s => (
-            <div key={s.label} style={{ background:s.bg,borderRadius:12,padding:"14px 16px",border:`1.5px solid ${s.color}30` }}>
-              <div style={{ fontSize:10.5,color:s.color,fontWeight:700,marginBottom:4 }}>{s.icon} {s.label}</div>
-              <div style={{ fontSize:26,fontWeight:900,color:s.color }}>{s.value}<span style={{ fontSize:12,marginLeft:3 }}>件</span></div>
-            </div>
-          ))}
-        </div>
+      {/* 月ラベル */}
+      <div style={{ display:"flex",alignItems:"center",gap:8 }}>
+        <div style={{ fontSize:14,fontWeight:800,color:"#0f2744" }}>📊 {monthLabel} のサマリー</div>
+        <div style={{ fontSize:11.5,color:"#a0aab8" }}>{displayOrders.length}件</div>
       </div>
 
-      {/* リードタイム統計 */}
+      {/* サマリーカード */}
+      <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:8 }}>
+        {[
+          { label:"対応中商品", value:inProgress, color:"#d4a843", bg:"#fffbef", icon:"📦" },
+          { label:"もうすぐ到着", value:soon, color:"#3aa876", bg:"#f0fdf6", icon:"🚚" },
+          { label:"一部発送済み", value:partial, color:"#e07d20", bg:"#fff8f0", icon:"🔶" },
+          { label:"納品完了", value:completed, color:"#6b8cba", bg:"#f4f6fb", icon:"✅" },
+        ].map(s => (
+          <div key={s.label} style={{ background:s.bg,borderRadius:12,padding:"14px 16px",border:`1.5px solid ${s.color}30` }}>
+            <div style={{ fontSize:10.5,color:s.color,fontWeight:700,marginBottom:4 }}>{s.icon} {s.label}</div>
+            <div style={{ fontSize:26,fontWeight:900,color:s.color }}>{s.value}<span style={{ fontSize:12,marginLeft:3 }}>件</span></div>
+          </div>
+        ))}
+      </div>
+
+      {/* リードタイム統計（全期間） */}
       {leadTimes.length > 0 && (
         <div style={{ background:"#fff",borderRadius:14,border:"1.5px solid #e4eaf3",padding:"16px",boxShadow:"0 2px 8px rgba(10,30,53,0.05)" }}>
-          <div style={{ fontSize:13,fontWeight:800,color:"#0f2744",marginBottom:12 }}>⏱ 納品リードタイム実績</div>
-          <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:14 }}>
+          <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12 }}>
+            <div style={{ fontSize:13,fontWeight:800,color:"#0f2744" }}>⏱ 納品リードタイム実績</div>
+            <div style={{ fontSize:10.5,color:"#a0aab8" }}>全期間 {leadTimes.length}商品</div>
+          </div>
+          <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:8 }}>
             {[
-              { label:"平均", value:avgLeadTime, unit:"日" },
-              { label:"最短", value:minLT, unit:"日" },
-              { label:"最長", value:maxLT, unit:"日" },
+              { label:"平均", value:avgLeadTime },
+              { label:"最短", value:minLT },
+              { label:"最長", value:maxLT },
             ].map(s => (
               <div key={s.label} style={{ textAlign:"center",padding:"10px 8px",background:"#f8fafd",borderRadius:10,border:"1.5px solid #e4eaf3" }}>
                 <div style={{ fontSize:10,color:"#8a95a5",fontWeight:600,marginBottom:4 }}>{s.label}</div>
-                <div style={{ fontSize:22,fontWeight:900,color:"#0f2744" }}>{s.value}<span style={{ fontSize:11,color:"#8a95a5",marginLeft:2 }}>{s.unit}</span></div>
+                <div style={{ fontSize:22,fontWeight:900,color:"#0f2744" }}>{s.value}<span style={{ fontSize:11,color:"#8a95a5",marginLeft:2 }}>日</span></div>
               </div>
             ))}
           </div>
-          <div style={{ fontSize:11,color:"#a0aab8",textAlign:"center" }}>※ 納品完了済み {leadTimes.length} 商品の実績値</div>
         </div>
       )}
 
-      {/* 現在対応中の注文 */}
+      {/* 対応中注文（クリックで詳細表示） */}
       {pendingOrders.length > 0 && (
         <div>
-          <div style={{ fontSize:13,fontWeight:800,color:"#0f2744",marginBottom:10 }}>📋 現在の対応中注文</div>
-          {pendingOrders.slice(0,5).map(order => {
+          <div style={{ fontSize:13,fontWeight:800,color:"#0f2744",marginBottom:10 }}>
+            📋 {monthLabel} の対応中注文
+            <span style={{ fontSize:11.5,color:"#a0aab8",fontWeight:400,marginLeft:6 }}>{pendingOrders.length}件 — クリックで詳細表示</span>
+          </div>
+          {pendingOrders.map(order => {
             const pending = order.products.filter(p => p.status < 6);
             const orderDate = parseJpDate(order.date);
             const todayDays = orderDate ? daysBetween(orderDate, new Date()) : null;
             return (
-              <div key={order.id} style={{ background:"#fff",borderRadius:12,border:"1.5px solid #e4eaf3",padding:"12px 14px",marginBottom:8,boxShadow:"0 1px 4px rgba(10,30,53,0.04)" }}>
+              <div key={order.id} onClick={() => onSelectOrder(order)}
+                style={{ background:"#fff",borderRadius:12,border:"1.5px solid #e4eaf3",padding:"12px 14px",marginBottom:8,
+                  boxShadow:"0 1px 4px rgba(10,30,53,0.04)",cursor:"pointer",transition:"all 0.15s" }}
+                onMouseEnter={e=>e.currentTarget.style.borderColor="#4a7cc7"}
+                onMouseLeave={e=>e.currentTarget.style.borderColor="#e4eaf3"}>
                 <div style={{ display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8 }}>
                   <div>
                     <div style={{ fontSize:13,fontWeight:800,color:"#0f2744" }}>{order.id}</div>
                     <div style={{ fontSize:11,color:"#a0aab8",marginTop:1 }}>{order.date}</div>
                   </div>
-                  {todayDays !== null && (
-                    <div style={{ textAlign:"right" }}>
-                      <div style={{ fontSize:10,color:"#8a95a5" }}>注文から</div>
-                      <div style={{ fontSize:14,fontWeight:800,color:todayDays>60?"#e07d20":todayDays>30?"#d4a843":"#4a7cc7" }}>{todayDays}日<span style={{ fontSize:10,fontWeight:400 }}>経過</span></div>
-                    </div>
-                  )}
+                  <div style={{ textAlign:"right" }}>
+                    {todayDays !== null && (
+                      <div style={{ fontSize:13,fontWeight:800,color:todayDays>60?"#e07d20":todayDays>30?"#d4a843":"#4a7cc7" }}>
+                        {todayDays}日<span style={{ fontSize:10,fontWeight:400,color:"#a0aab8",marginLeft:2 }}>経過</span>
+                      </div>
+                    )}
+                    <div style={{ fontSize:10.5,color:"#4a7cc7",fontWeight:700,marginTop:2 }}>詳細を見る →</div>
+                  </div>
                 </div>
                 <div style={{ display:"flex",flexWrap:"wrap",gap:4 }}>
                   {pending.map((p,i) => {
                     const s = STATUS_STAGES[p.status];
                     return (
                       <span key={i} style={{ fontSize:10.5,padding:"2px 8px",borderRadius:20,background:s.color+"15",color:s.color,border:`1px solid ${s.color}30`,fontWeight:600 }}>
-                        {s.icon} {p.name.length>16?p.name.slice(0,16)+"…":p.name}
+                        {s.icon} {p.name.length>18?p.name.slice(0,18)+"…":p.name}
                       </span>
                     );
                   })}
@@ -560,24 +570,60 @@ function DashboardPanel({ orders }) {
               </div>
             );
           })}
-          {pendingOrders.length > 5 && <div style={{ fontSize:12,color:"#a0aab8",textAlign:"center",padding:"4px 0" }}>他 {pendingOrders.length-5} 件...</div>}
         </div>
       )}
 
-      {orders.length === 0 && (
+      {/* 完了済み注文（折りたたみ） */}
+      {doneOrders.length > 0 && (
+        <div>
+          <div style={{ fontSize:13,fontWeight:800,color:"#6b8cba",marginBottom:8 }}>
+            ✅ {monthLabel} の完了注文
+            <span style={{ fontSize:11.5,fontWeight:400,marginLeft:6 }}>{doneOrders.length}件 — クリックで詳細表示</span>
+          </div>
+          {doneOrders.map(order => {
+            const orderDate = parseJpDate(order.date);
+            // この注文の平均リードタイム
+            const lt = [];
+            order.products.forEach(p => {
+              const r = (p.deliveryRecords||[]).find(r => r.status==="発送済" && r.delivDate);
+              if (r && orderDate) {
+                const days = daysBetween(orderDate, parseJpDate(r.delivDate));
+                if (days > 0) lt.push(days);
+              }
+            });
+            const avgLt = lt.length > 0 ? Math.round(lt.reduce((a,b)=>a+b,0)/lt.length) : null;
+            const ltLabel = leadTimeLabel(avgLt);
+            return (
+              <div key={order.id} onClick={() => onSelectOrder(order)}
+                style={{ background:"#f8fafd",borderRadius:12,border:"1.5px solid #e4eaf3",padding:"10px 14px",marginBottom:6,
+                  cursor:"pointer",transition:"all 0.15s" }}
+                onMouseEnter={e=>e.currentTarget.style.borderColor="#3aa876"}
+                onMouseLeave={e=>e.currentTarget.style.borderColor="#e4eaf3"}>
+                <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center" }}>
+                  <div>
+                    <span style={{ fontSize:13,fontWeight:800,color:"#4a6080" }}>{order.id}</span>
+                    <span style={{ fontSize:11,color:"#a0aab8",marginLeft:8 }}>{order.date}</span>
+                  </div>
+                  <div style={{ display:"flex",gap:6,alignItems:"center" }}>
+                    {ltLabel && <span style={{ fontSize:11,fontWeight:700,padding:"2px 8px",borderRadius:20,background:ltLabel.bg,color:ltLabel.color }}>⏱ {ltLabel.text}</span>}
+                    <span style={{ fontSize:10.5,color:"#3aa876",fontWeight:700 }}>詳細 →</span>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {displayOrders.length === 0 && (
         <div style={{ textAlign:"center",padding:"60px 20px",color:"#a0aab8" }}>
           <div style={{ fontSize:40,marginBottom:12 }}>📭</div>
-          <div style={{ fontSize:14,fontWeight:700 }}>注文データがありません</div>
+          <div style={{ fontSize:14,fontWeight:700 }}>この月の注文データがありません</div>
         </div>
       )}
-
-      <div style={{ padding:"12px",background:"#f8fafd",borderRadius:10,border:"1px solid #e4eaf3",fontSize:11.5,color:"#8a95a5",lineHeight:1.7,textAlign:"center" }}>
-        左の注文一覧から注文を選択すると<br/>詳細情報を確認できます
-      </div>
     </div>
   );
 }
-
 // ── 注文詳細パネル（右側） ───────────────────────────────────────────────
 function OrderDetailPanel({ order, user, myRequests, onSent, onClose, isMobile }) {
   const orderDate = parseJpDate(order.date);
@@ -781,7 +827,12 @@ function MainScreen({ user }) {
               <OrderDetailPanel order={selectedOrder} user={user} myRequests={myRequests} onSent={loadData} onClose={()=>setSelectedOrder(null)} isMobile={false}/>
             ) : (
               <div style={{ height:"100%",overflowY:"auto" }}>
-                <DashboardPanel orders={myOrders}/>
+                <DashboardPanel
+                  displayOrders={displayOrders}
+                  allOrders={myOrders}
+                  currentMonth={currentMonth}
+                  onSelectOrder={(order) => setSelectedOrder(order)}
+                />
               </div>
             )}
           </div>
