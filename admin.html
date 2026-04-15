@@ -83,19 +83,38 @@
       }
       return true;
     },
-    createClinicAccount: async (email) => {
-      const tempPw = "Temp" + Math.random().toString(36).slice(2,10) + "!";
+    createClinicAccount: async (email, password) => {
       const res = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${API_KEY}`, {
         method:"POST",
         headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({ email, password: tempPw, returnSecureToken: false })
+        body: JSON.stringify({ email, password, returnSecureToken: false })
       });
       const data = await res.json();
       if (data.error) throw new Error(data.error.message);
-      await sendPasswordResetEmail(auth, email);
       return true;
     },
     sendPasswordReset: (email) => sendPasswordResetEmail(auth, email),
+    changeUserPassword: async (email, currentPassword, newPassword) => {
+      const signInRes = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${API_KEY}`, {
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ email, password: currentPassword, returnSecureToken: true })
+      });
+      const signInData = await signInRes.json();
+      if (signInData.error) {
+        const msg = signInData.error.message || "";
+        if (msg.includes("INVALID_PASSWORD") || msg.includes("INVALID_LOGIN_CREDENTIALS")) throw new Error("WRONG_PASSWORD");
+        throw new Error(msg);
+      }
+      const updateRes = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:update?key=${API_KEY}`, {
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ idToken: signInData.idToken, password: newPassword, returnSecureToken: false })
+      });
+      const updateData = await updateRes.json();
+      if (updateData.error) throw new Error(updateData.error.message);
+      return true;
+    },
     loadRequests: async () => {
       const snap = await getDocs(collection(db, "requests"));
       const list = [];
@@ -152,13 +171,14 @@
           return raw.list.map(item => ({
             email: item.email || "",
             name: item.name || "",
+            clinicName: item.clinicName || "",
             clinics: Array.isArray(item.clinics) ? item.clinics : (item.clinics ? [item.clinics] : []),
+            password: item.password || "",
             registeredAt: item.registeredAt || "",
           }));
         }
-        // 旧形式マップからの変換
         return Object.entries(raw.data || {}).map(([email, clinics]) => ({
-          email, name: "", clinics: Array.isArray(clinics) ? clinics : [clinics], registeredAt: ""
+          email, name: "", clinicName: "", clinics: Array.isArray(clinics) ? clinics : [clinics], password: "", registeredAt: ""
         }));
       } catch(e) { console.error("loadBindingsFull error:", e); return []; }
     },
@@ -426,7 +446,7 @@ function BackupManager({ orders, downloadBackup }) {
 
 // ── クリニック管理（統合版）────────────────────────────────────────────────
 function ClinicManager({ orders }) {
-  // rows: [{email, name, clinics:[], registeredAt}]
+  // rows: [{email, name, clinicName, clinics:[], password, registeredAt}]
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -434,11 +454,16 @@ function ClinicManager({ orders }) {
   // 新規登録フォーム
   const [addEmail, setAddEmail] = useState("");
   const [addName, setAddName] = useState("");
+  const [addClinicName, setAddClinicName] = useState("");
+  const [addPassword, setAddPassword] = useState("");
+  const [addShowPw, setAddShowPw] = useState(false);
   const [addClinics, setAddClinics] = useState([]);
   const [creating, setCreating] = useState(false);
   const [createMsg, setCreateMsg] = useState("");
   // パスワードリセット
-  const [resetStatus, setResetStatus] = useState({}); // {email: "sending"|"sent"|"error"}
+  const [resetStatus, setResetStatus] = useState({});
+  // パスワード変更（行ごと）
+  const [pwEdit, setPwEdit] = useState({}); // {email: {open, newPw, showPw, status}}
 
   const clinicNames = [...new Set(orders.map(o => o.clinic).filter(Boolean))].sort();
   const waitFB = async () => { let t=0; while(!window._firebase&&t<30){await new Promise(r=>setTimeout(r,200));t++;} };
@@ -463,8 +488,7 @@ function ClinicManager({ orders }) {
       setSaveMsg("saved");
       setTimeout(() => setSaveMsg(""), 3000);
     } catch(e) {
-      console.error(e);
-      setSaveMsg("error");
+      console.error(e); setSaveMsg("error");
       alert("保存エラー: " + e.message);
     }
     setSaving(false);
@@ -474,9 +498,9 @@ function ClinicManager({ orders }) {
   const removeRow = (email) => setRows(prev => prev.filter(r => r.email !== email));
   const removeClinic = (email, clinic) => setRows(prev => prev.map(r => r.email === email ? {...r, clinics: r.clinics.filter(c => c !== clinic)} : r));
   const addClinicToRow = (email, clinic) => { if (!clinic) return; setRows(prev => prev.map(r => r.email === email && !r.clinics.includes(clinic) ? {...r, clinics: [...r.clinics, clinic]} : r)); };
-  const updateName = (email, name) => setRows(prev => prev.map(r => r.email === email ? {...r, name} : r));
+  const updateField = (email, field, value) => setRows(prev => prev.map(r => r.email === email ? {...r, [field]: value} : r));
 
-  // パスワードリセット
+  // パスワードリセットメール
   const handleReset = async (email) => {
     setResetStatus(p => ({...p, [email]: "sending"}));
     await waitFB();
@@ -484,26 +508,59 @@ function ClinicManager({ orders }) {
       await window._firebase.sendPasswordReset(email);
       setResetStatus(p => ({...p, [email]: "sent"}));
       setTimeout(() => setResetStatus(p => ({...p, [email]: ""})), 4000);
+    } catch(e) { setResetStatus(p => ({...p, [email]: "error"})); }
+  };
+
+  // パスワード直接変更
+  const handleChangePw = async (email) => {
+    const state = pwEdit[email] || {};
+    const newPw = state.newPw || "";
+    if (!newPw || newPw.length < 6) {
+      setPwEdit(p => ({...p, [email]: {...(p[email]||{}), status:"short"}}));
+      return;
+    }
+    const row = rows.find(r => r.email === email);
+    const currentPw = row?.password || "";
+    setPwEdit(p => ({...p, [email]: {...(p[email]||{}), status:"changing"}}));
+    await waitFB();
+    try {
+      if (!currentPw) {
+        // 現行パスワード未設定の場合はリセットメールしか手段がない
+        setPwEdit(p => ({...p, [email]: {...(p[email]||{}), status:"no_current_pw"}}));
+        return;
+      }
+      await window._firebase.changeUserPassword(email, currentPw, newPw);
+      // Firestoreのパスワードも更新
+      const newRows = rows.map(r => r.email === email ? {...r, password: newPw} : r);
+      setRows(newRows);
+      await window._firebase.saveBindingsFull(newRows);
+      setPwEdit(p => ({...p, [email]: {open:false, newPw:"", showPw:false, status:"done"}}));
+      setTimeout(() => setPwEdit(p => ({...p, [email]: {}})), 3000);
     } catch(e) {
-      setResetStatus(p => ({...p, [email]: "error"}));
+      const msg = e.message || "";
+      if (msg === "WRONG_PASSWORD") {
+        setPwEdit(p => ({...p, [email]: {...(p[email]||{}), status:"wrong_pw"}}));
+      } else {
+        setPwEdit(p => ({...p, [email]: {...(p[email]||{}), status:"error"}}));
+      }
     }
   };
 
   // 新規アカウント作成
   const handleCreate = async () => {
-    if (!addEmail.trim()) return;
+    if (!addEmail.trim() || !addPassword.trim()) return;
+    if (addPassword.length < 6) { setCreateMsg("pw_short"); return; }
     setCreating(true); setCreateMsg("");
     await waitFB();
     try {
-      await window._firebase.createClinicAccount(addEmail.trim());
-      // bindingsに追加
+      await window._firebase.createClinicAccount(addEmail.trim(), addPassword.trim());
       const today = new Date().toLocaleDateString("ja-JP",{year:"numeric",month:"2-digit",day:"2-digit"});
-      const newRow = { email: addEmail.trim(), name: addName.trim(), clinics: addClinics, registeredAt: today };
+      const newRow = { email: addEmail.trim(), name: addName.trim(), clinicName: addClinicName.trim(), clinics: addClinics, password: addPassword.trim(), registeredAt: today };
       const newRows = [...rows.filter(r => r.email !== addEmail.trim()), newRow];
       setRows(newRows);
       await window._firebase.saveBindingsFull(newRows);
       setCreateMsg("success");
-      setAddEmail(""); setAddName(""); setAddClinics([]);
+      setAddEmail(""); setAddName(""); setAddClinicName(""); setAddPassword(""); setAddClinics([]);
     } catch(e) {
       if (e.message.includes("EMAIL_EXISTS")) setCreateMsg("exists");
       else { setCreateMsg("error"); console.error(e); }
@@ -511,7 +568,7 @@ function ClinicManager({ orders }) {
     setCreating(false);
   };
 
-  const inp = { width:"100%", padding:"9px 11px", borderRadius:8, border:"1.5px solid #dde4ef", fontSize:13, outline:"none", color:"#1a2a3a" };
+  const inp = { width:"100%", padding:"8px 10px", borderRadius:8, border:"1.5px solid #dde4ef", fontSize:12.5, outline:"none", color:"#1a2a3a", background:"#fff" };
 
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
@@ -519,77 +576,119 @@ function ClinicManager({ orders }) {
       {/* ── アカウント一覧 ── */}
       <div style={{ background:"#fff", borderRadius:14, border:"1.5px solid #e4eaf3", padding:"20px", boxShadow:"0 2px 10px rgba(10,30,53,0.05)" }}>
         <div style={{ fontSize:14, fontWeight:800, color:"#0f2744", marginBottom:4 }}>👥 登録済みアカウント一覧</div>
-        <div style={{ fontSize:12, color:"#8a95a5", marginBottom:16, lineHeight:1.6 }}>担当者名・紐づけクリニックの編集、パスワードリセット送信ができます。</div>
+        <div style={{ fontSize:12, color:"#8a95a5", marginBottom:16, lineHeight:1.6 }}>クリニック名・担当者名・パスワードの編集、紐づけ設定ができます。</div>
 
         {loading ? (
           <div style={{ textAlign:"center", padding:"20px", color:"#8a95a5" }}>読込中...</div>
         ) : rows.length === 0 ? (
           <div style={{ textAlign:"center", padding:"20px", color:"#a0aab8", fontSize:13 }}>まだ登録されていません</div>
         ) : (
-          <div style={{ border:"1.5px solid #e4eaf3", borderRadius:10, overflow:"hidden", marginBottom:14 }}>
-            {/* テーブルヘッダー */}
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr auto", background:"#0f2744", padding:"8px 14px", fontSize:11.5, fontWeight:700, color:"rgba(255,255,255,0.85)", gap:8 }}>
-              <span>メールアドレス</span><span>担当者名</span><span>紐づいたクリニック</span><span>操作</span>
-            </div>
-            {rows.map(row => (
-              <div key={row.email} style={{ borderBottom:"1px solid #f0f4f9", padding:"12px 14px" }}>
-                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr auto", gap:8, alignItems:"start" }}>
-                  {/* メール + 登録日 */}
-                  <div>
-                    <div style={{ fontSize:13, fontWeight:600, color:"#1a2a3a" }}>{row.email}</div>
-                    {row.registeredAt && <div style={{ fontSize:10.5, color:"#a0aab8", marginTop:2 }}>登録：{row.registeredAt}</div>}
+          <div style={{ display:"flex", flexDirection:"column", gap:10, marginBottom:14 }}>
+            {rows.map(row => {
+              const pw = pwEdit[row.email] || {};
+              const rs = resetStatus[row.email] || "";
+              return (
+                <div key={row.email} style={{ border:"1.5px solid #e4eaf3", borderRadius:10, padding:"14px", background:"#fafbfd" }}>
+                  {/* 基本情報グリッド */}
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8, marginBottom:10 }}>
+                    <div>
+                      <div style={{ fontSize:10.5, color:"#8a95a5", marginBottom:3, fontWeight:600 }}>メールアドレス</div>
+                      <div style={{ fontSize:12.5, fontWeight:700, color:"#1a2a3a" }}>{row.email}</div>
+                      {row.registeredAt && <div style={{ fontSize:10, color:"#a0aab8", marginTop:2 }}>登録：{row.registeredAt}</div>}
+                    </div>
+                    <div>
+                      <div style={{ fontSize:10.5, color:"#8a95a5", marginBottom:3, fontWeight:600 }}>クリニック名</div>
+                      <input value={row.clinicName} onChange={e => updateField(row.email, "clinicName", e.target.value)} placeholder="クリニック名を入力" style={inp} />
+                    </div>
+                    <div>
+                      <div style={{ fontSize:10.5, color:"#8a95a5", marginBottom:3, fontWeight:600 }}>担当者名</div>
+                      <input value={row.name} onChange={e => updateField(row.email, "name", e.target.value)} placeholder="担当者名を入力" style={inp} />
+                    </div>
                   </div>
-                  {/* 担当者名（インライン編集） */}
-                  <div>
-                    <input
-                      value={row.name}
-                      onChange={e => updateName(row.email, e.target.value)}
-                      placeholder="担当者名"
-                      style={{ ...inp, padding:"6px 9px", fontSize:12.5 }}
-                    />
+                  {/* 紐づけクリニック */}
+                  <div style={{ marginBottom:10 }}>
+                    <div style={{ fontSize:10.5, color:"#8a95a5", marginBottom:5, fontWeight:600 }}>紐づいたクリニック（注文データ）</div>
+                    <div style={{ display:"flex", gap:5, flexWrap:"wrap", alignItems:"center" }}>
+                      {row.clinics.length === 0 && <span style={{ fontSize:11, color:"#e05050", fontWeight:700, padding:"2px 7px", borderRadius:20, background:"#fff0f0", border:"1px solid #e0c0c0" }}>⚠ 未設定</span>}
+                      {row.clinics.map(c => (
+                        <div key={c} style={{ display:"flex", alignItems:"center", gap:3, padding:"3px 9px", borderRadius:20, background:"#e8f0ff", border:"1.5px solid #4a7cc7" }}>
+                          <span style={{ fontSize:11.5, color:"#0f2744", fontWeight:700 }}>{c}</span>
+                          <button onClick={() => removeClinic(row.email, c)} style={{ border:"none", background:"none", color:"#e05050", fontWeight:900, fontSize:13, cursor:"pointer", padding:0 }}>×</button>
+                        </div>
+                      ))}
+                      {clinicNames.filter(n => !row.clinics.includes(n)).length > 0 && (
+                        <select onChange={e => { if(e.target.value) addClinicToRow(row.email, e.target.value); e.target.value=""; }}
+                          style={{ padding:"3px 8px", borderRadius:20, border:"1.5px dashed #4a7cc7", fontSize:11, color:"#4a7cc7", background:"#fff", cursor:"pointer", outline:"none" }}>
+                          <option value="">＋ 追加</option>
+                          {clinicNames.filter(n => !row.clinics.includes(n)).map(n => <option key={n} value={n}>{n}</option>)}
+                        </select>
+                      )}
+                    </div>
                   </div>
-                  {/* クリニック */}
-                  <div style={{ display:"flex", gap:4, flexWrap:"wrap", alignItems:"center" }}>
-                    {row.clinics.length === 0 && (
-                      <span style={{ fontSize:11, color:"#e05050", fontWeight:700, padding:"2px 7px", borderRadius:20, background:"#fff0f0", border:"1px solid #e0c0c0" }}>⚠ 未設定</span>
-                    )}
-                    {row.clinics.map(c => (
-                      <div key={c} style={{ display:"flex", alignItems:"center", gap:3, padding:"3px 8px", borderRadius:20, background:"#e8f0ff", border:"1.5px solid #4a7cc7" }}>
-                        <span style={{ fontSize:11.5, color:"#0f2744", fontWeight:700 }}>{c}</span>
-                        <button onClick={() => removeClinic(row.email, c)} style={{ border:"none", background:"none", color:"#e05050", fontWeight:900, fontSize:13, cursor:"pointer", padding:0 }}>×</button>
+                  {/* パスワード管理 */}
+                  <div style={{ background:"#f0f4f9", borderRadius:8, padding:"10px 12px", marginBottom:8 }}>
+                    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom: pw.open ? 10 : 0 }}>
+                      <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                        <span style={{ fontSize:10.5, color:"#8a95a5", fontWeight:600 }}>パスワード</span>
+                        <span style={{ fontSize:12, color: row.password ? "#1a2a3a" : "#a0aab8", fontFamily:"monospace", letterSpacing:"0.1em" }}>
+                          {row.password ? "●".repeat(Math.min(row.password.length, 10)) : "（未設定）"}
+                        </span>
                       </div>
-                    ))}
-                    {clinicNames.filter(n => !row.clinics.includes(n)).length > 0 && (
-                      <select onChange={e => { if(e.target.value) addClinicToRow(row.email, e.target.value); e.target.value=""; }}
-                        style={{ padding:"3px 7px", borderRadius:20, border:"1.5px dashed #4a7cc7", fontSize:11, color:"#4a7cc7", background:"#fff", cursor:"pointer", outline:"none" }}>
-                        <option value="">＋ 追加</option>
-                        {clinicNames.filter(n => !row.clinics.includes(n)).map(n => <option key={n} value={n}>{n}</option>)}
-                      </select>
+                      <div style={{ display:"flex", gap:6 }}>
+                        <button onClick={() => setPwEdit(p => ({...p, [row.email]: {...(p[row.email]||{}), open: !pw.open, status:""}}))}
+                          style={{ padding:"4px 10px", borderRadius:6, border:"1.5px solid #4a7cc7", background: pw.open?"#4a7cc7":"#f0f6ff", color: pw.open?"#fff":"#1a4a90", fontSize:11, cursor:"pointer", fontWeight:700 }}>
+                          {pw.open ? "✕ 閉じる" : "🔑 変更"}
+                        </button>
+                        {rs === "sent" ? (
+                          <span style={{ fontSize:11, color:"#1a7a50", fontWeight:700, padding:"4px 8px", background:"#f0fdf6", borderRadius:6 }}>✅ メール送信済み</span>
+                        ) : (
+                          <button onClick={() => handleReset(row.email)} disabled={rs==="sending"}
+                            style={{ padding:"4px 10px", borderRadius:6, border:"1.5px solid #8a9ab5", background:"#f4f6fb", fontSize:11, cursor:"pointer", color:"#4a5a6a", fontWeight:700, opacity:rs==="sending"?0.6:1 }}>
+                            {rs==="sending" ? "送信中..." : "📧 リセットメール"}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    {pw.open && (
+                      <div>
+                        <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+                          <div style={{ flex:1, position:"relative" }}>
+                            <input
+                              type={pw.showPw ? "text" : "password"}
+                              value={pw.newPw || ""}
+                              onChange={e => setPwEdit(p => ({...p, [row.email]: {...(p[row.email]||{}), newPw: e.target.value, status:""}}))}
+                              placeholder="新しいパスワード（6文字以上）"
+                              style={{ ...inp, paddingRight:36 }}
+                            />
+                            <button onClick={() => setPwEdit(p => ({...p, [row.email]: {...(p[row.email]||{}), showPw: !pw.showPw}}))}
+                              style={{ position:"absolute", right:8, top:"50%", transform:"translateY(-50%)", border:"none", background:"none", cursor:"pointer", fontSize:13, color:"#8a95a5" }}>
+                              {pw.showPw ? "🙈" : "👁"}
+                            </button>
+                          </div>
+                          <button onClick={() => handleChangePw(row.email)} disabled={pw.status==="changing"}
+                            style={{ padding:"8px 14px", borderRadius:8, border:"none", background:"#0f2744", color:"#fff", fontWeight:700, fontSize:12.5, cursor:"pointer", whiteSpace:"nowrap", opacity:pw.status==="changing"?0.6:1 }}>
+                            {pw.status==="changing" ? "変更中..." : "変更する"}
+                          </button>
+                        </div>
+                        {pw.status === "done" && <div style={{ marginTop:6, fontSize:12, color:"#1a7a50", fontWeight:700 }}>✅ パスワードを変更しました</div>}
+                        {pw.status === "short" && <div style={{ marginTop:6, fontSize:12, color:"#e05050" }}>⚠ パスワードは6文字以上で入力してください</div>}
+                        {pw.status === "wrong_pw" && <div style={{ marginTop:6, fontSize:12, color:"#e05050" }}>❌ 現在の保存済みパスワードと一致しません。パスワードリセットメールを使用してください</div>}
+                        {pw.status === "no_current_pw" && <div style={{ marginTop:6, fontSize:12, color:"#e07d20" }}>⚠ 現在のパスワードが未保存のため変更できません。📧 リセットメールを送信してください</div>}
+                        {pw.status === "error" && <div style={{ marginTop:6, fontSize:12, color:"#e05050" }}>❌ 変更に失敗しました</div>}
+                      </div>
                     )}
+                    {pw.status === "done" && !pw.open && <div style={{ marginTop:4, fontSize:12, color:"#1a7a50", fontWeight:700 }}>✅ パスワードを変更しました</div>}
                   </div>
-                  {/* 操作 */}
-                  <div style={{ display:"flex", flexDirection:"column", gap:4, alignItems:"flex-end" }}>
-                    {/* パスワードリセット */}
-                    {resetStatus[row.email] === "sent" ? (
-                      <span style={{ fontSize:11, color:"#1a7a50", fontWeight:700, padding:"4px 8px", background:"#f0fdf6", borderRadius:6, whiteSpace:"nowrap" }}>✅ 送信済み</span>
-                    ) : resetStatus[row.email] === "error" ? (
-                      <span style={{ fontSize:11, color:"#e05050", fontWeight:700 }}>❌ エラー</span>
-                    ) : (
-                      <button
-                        onClick={() => handleReset(row.email)}
-                        disabled={resetStatus[row.email] === "sending"}
-                        style={{ padding:"4px 9px", borderRadius:6, border:"1.5px solid #6b8cba", background:"#f4f6fb", fontSize:11, cursor:"pointer", color:"#1a3a6a", fontWeight:700, whiteSpace:"nowrap", opacity:resetStatus[row.email]==="sending"?0.6:1 }}>
-                        {resetStatus[row.email] === "sending" ? "送信中..." : "🔑 PW\nリセット"}
-                      </button>
-                    )}
+                  {/* 削除ボタン */}
+                  <div style={{ textAlign:"right" }}>
                     <button onClick={() => removeRow(row.email)}
-                      style={{ padding:"3px 8px", borderRadius:6, border:"1.5px solid #e0c0c0", background:"#fff8f8", fontSize:11, cursor:"pointer", color:"#e05050", fontWeight:700 }}>
-                      削除
+                      style={{ padding:"4px 10px", borderRadius:6, border:"1.5px solid #e0c0c0", background:"#fff8f8", fontSize:11, cursor:"pointer", color:"#e05050", fontWeight:700 }}>
+                      アカウント削除
                     </button>
                   </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
 
@@ -602,34 +701,51 @@ function ClinicManager({ orders }) {
             {saving?"保存中...":saveMsg==="saved"?"✅ 保存しました！":saveMsg==="error"?"❌ エラー":"💾 変更を保存する"}
           </button>
         )}
-        {saveMsg==="saved" && <div style={{ marginTop:8, padding:"8px 12px", background:"#f0fdf6", border:"1px solid #3aa876", borderRadius:8, fontSize:12, color:"#1a7a50", textAlign:"center" }}>Firebaseに保存しました。お客様画面に反映されます。</div>}
+        {saveMsg==="saved" && <div style={{ marginTop:8, padding:"8px 12px", background:"#f0fdf6", border:"1px solid #3aa876", borderRadius:8, fontSize:12, color:"#1a7a50", textAlign:"center" }}>Firebaseに保存しました。</div>}
       </div>
 
       {/* ── 新規アカウント登録 ── */}
       <div style={{ background:"#fff", borderRadius:14, border:"1.5px solid #e4eaf3", padding:"20px", boxShadow:"0 2px 10px rgba(10,30,53,0.05)" }}>
         <div style={{ fontSize:14, fontWeight:800, color:"#0f2744", marginBottom:4 }}>➕ 新規クリニックアカウントを登録</div>
-        <div style={{ fontSize:12, color:"#8a95a5", marginBottom:16, lineHeight:1.6 }}>
-          メールアドレスを登録すると、クリニック担当者にパスワード設定メールが自動送信されます。登録後、紐づけ一覧に自動追加されます。
-        </div>
+        <div style={{ fontSize:12, color:"#8a95a5", marginBottom:16, lineHeight:1.6 }}>メールアドレスとパスワードを設定してアカウントを作成します。登録後、紐づけ一覧に自動追加されます。</div>
 
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:10 }}>
           <div>
             <div style={{ fontSize:11.5, color:"#8a95a5", marginBottom:4 }}>メールアドレス <span style={{ color:"#e05050" }}>*</span></div>
-            <input value={addEmail} onChange={e=>{setAddEmail(e.target.value);setCreateMsg("");}} placeholder="clinic@example.com" type="email" style={inp} />
+            <input value={addEmail} onChange={e=>{setAddEmail(e.target.value);setCreateMsg("");}} placeholder="clinic@example.com" type="email"
+              style={{ width:"100%", padding:"9px 11px", borderRadius:8, border:"1.5px solid #dde4ef", fontSize:13, outline:"none", color:"#1a2a3a" }} />
+          </div>
+          <div>
+            <div style={{ fontSize:11.5, color:"#8a95a5", marginBottom:4 }}>パスワード <span style={{ color:"#e05050" }}>*</span></div>
+            <div style={{ position:"relative" }}>
+              <input value={addPassword} onChange={e=>{setAddPassword(e.target.value);setCreateMsg("");}} placeholder="6文字以上" type={addShowPw?"text":"password"}
+                style={{ width:"100%", padding:"9px 36px 9px 11px", borderRadius:8, border:"1.5px solid #dde4ef", fontSize:13, outline:"none", color:"#1a2a3a" }} />
+              <button onClick={()=>setAddShowPw(p=>!p)} style={{ position:"absolute", right:8, top:"50%", transform:"translateY(-50%)", border:"none", background:"none", cursor:"pointer", fontSize:14, color:"#8a95a5" }}>
+                {addShowPw ? "🙈" : "👁"}
+              </button>
+            </div>
+          </div>
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:10 }}>
+          <div>
+            <div style={{ fontSize:11.5, color:"#8a95a5", marginBottom:4 }}>クリニック名</div>
+            <input value={addClinicName} onChange={e=>setAddClinicName(e.target.value)} placeholder="例：〇〇クリニック"
+              style={{ width:"100%", padding:"9px 11px", borderRadius:8, border:"1.5px solid #dde4ef", fontSize:13, outline:"none", color:"#1a2a3a" }} />
           </div>
           <div>
             <div style={{ fontSize:11.5, color:"#8a95a5", marginBottom:4 }}>担当者名</div>
-            <input value={addName} onChange={e=>setAddName(e.target.value)} placeholder="例：山田 太郎" style={inp} />
+            <input value={addName} onChange={e=>setAddName(e.target.value)} placeholder="例：山田 太郎"
+              style={{ width:"100%", padding:"9px 11px", borderRadius:8, border:"1.5px solid #dde4ef", fontSize:13, outline:"none", color:"#1a2a3a" }} />
           </div>
         </div>
         <div style={{ marginBottom:12 }}>
-          <div style={{ fontSize:11.5, color:"#8a95a5", marginBottom:4 }}>紐づけるクリニック</div>
+          <div style={{ fontSize:11.5, color:"#8a95a5", marginBottom:4 }}>紐づけるクリニック（注文データ）</div>
           {clinicNames.length === 0 ? (
             <div style={{ padding:"10px", background:"#fff8e8", borderRadius:8, fontSize:12, color:"#7a6020", border:"1px solid #e8c95a" }}>⚠ 先にCSVを取込んで「Firebaseに保存」してください</div>
           ) : (
             <select onChange={e => { const v=e.target.value; if(v && !addClinics.includes(v)) setAddClinics(p=>[...p,v]); e.target.value=""; }}
               style={{ width:"100%", padding:"9px 11px", borderRadius:8, border:"1.5px solid #dde4ef", fontSize:13, outline:"none", background:"#fff" }}>
-              <option value="">-- クリニックを選択 --</option>
+              <option value="">-- クリニックを選択（複数可） --</option>
               {clinicNames.map(n => <option key={n} value={n}>{n}</option>)}
             </select>
           )}
@@ -645,19 +761,19 @@ function ClinicManager({ orders }) {
           )}
         </div>
 
-        {createMsg === "success" && <div style={{ padding:"10px 14px", background:"#f0fdf6", border:"1px solid #a0d8b8", borderRadius:9, fontSize:13, color:"#1a7a50", fontWeight:600, marginBottom:12 }}>✅ アカウントを作成し、パスワード設定メールを送信しました。</div>}
+        {createMsg === "success" && <div style={{ padding:"10px 14px", background:"#f0fdf6", border:"1px solid #a0d8b8", borderRadius:9, fontSize:13, color:"#1a7a50", fontWeight:600, marginBottom:12 }}>✅ アカウントを作成しました。</div>}
         {createMsg === "exists" && <div style={{ padding:"10px 14px", background:"#fffbef", border:"1px solid #e8c95a", borderRadius:9, fontSize:13, color:"#7a6020", marginBottom:12 }}>⚠ このメールアドレスはすでに登録されています。</div>}
+        {createMsg === "pw_short" && <div style={{ padding:"10px 14px", background:"#fff0f0", border:"1px solid #e0c0c0", borderRadius:9, fontSize:13, color:"#c05050", marginBottom:12 }}>⚠ パスワードは6文字以上で設定してください。</div>}
         {createMsg === "error" && <div style={{ padding:"10px 14px", background:"#fff0f0", border:"1px solid #e0c0c0", borderRadius:9, fontSize:13, color:"#c05050", marginBottom:12 }}>❌ 登録に失敗しました。</div>}
 
-        <button onClick={handleCreate} disabled={creating || !addEmail.trim()}
-          style={{ width:"100%", padding:"12px", borderRadius:10, border:"none", background:"linear-gradient(135deg,#0f2744,#1a3d6e)", color:"#fff", fontWeight:800, fontSize:14, cursor:"pointer", opacity:(creating||!addEmail.trim())?0.6:1 }}>
-          {creating ? "登録中..." : "アカウントを作成してメール送信"}
+        <button onClick={handleCreate} disabled={creating || !addEmail.trim() || !addPassword.trim()}
+          style={{ width:"100%", padding:"12px", borderRadius:10, border:"none", background:"linear-gradient(135deg,#0f2744,#1a3d6e)", color:"#fff", fontWeight:800, fontSize:14, cursor:"pointer", opacity:(creating||!addEmail.trim()||!addPassword.trim())?0.5:1 }}>
+          {creating ? "登録中..." : "アカウントを作成する"}
         </button>
       </div>
     </div>
   );
 }
-
 // ── CSV インポート ────────────────────────────────────────────────────────
 function CsvImportModal({ onImport, onClose }) {
   const [drag,setDrag]=useState(false); const [preview,setPreview]=useState(null); const [error,setError]=useState(""); const [encoding,setEncoding]=useState("shift_jis");
