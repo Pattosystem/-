@@ -119,11 +119,13 @@
     markRequestRead: async (id) => {
       await updateDoc(doc(db, "requests", id), { status: "read" });
     },
-    // 出荷写真の読み込み
+    // 出荷写真の読み込み（個別ドキュメント方式）
     loadShipPhotos: async () => {
       try {
-        const d = await getDoc(doc(db, "appdata", "ship_photos"));
-        return d.exists() ? (d.data().list || []) : [];
+        const snap = await getDocs(collection(db, "ship_photos"));
+        const list = [];
+        snap.forEach(d => list.push(d.data()));
+        return list.sort((a,b) => a.id - b.id);
       } catch(e) { return []; }
     },
     // バックアップ：全データ取得
