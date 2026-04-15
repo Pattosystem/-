@@ -47,7 +47,6 @@
         const d = await getDoc(doc(db, "appdata", "bindings"));
         if (!d.exists()) return {};
         const raw = d.data();
-        // 配列形式 [{email, clinics}] → {email: clinics} に変換
         if (Array.isArray(raw.list)) {
           const obj = {};
           raw.list.forEach(item => { if(item.email) obj[item.email] = item.clinics || []; });
@@ -183,9 +182,9 @@ function LoginScreen() {
   );
 }
 
-// ── 商品行 ────────────────────────────────────────────────────────────────
+// ── 商品行（デフォルト全開） ──────────────────────────────────────────────
 function ProductRow({ product, index }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(true);  // ← true に変更
   const s = STATUS_STAGES[product.status];
   return (
     <div style={{ borderBottom:"1px solid #f0f4f9" }}>
@@ -237,9 +236,9 @@ function ProductRow({ product, index }) {
   );
 }
 
-// ── グループ別商品リスト ──────────────────────────────────────────────────
+// ── グループ別商品リスト（デフォルト全グループ開） ────────────────────────
 function GroupedProductList({ products }) {
-  const [openGroups, setOpenGroups] = useState({0:true,1:true,2:true,3:false});
+  const [openGroups, setOpenGroups] = useState({0:true,1:true,2:true,3:true,4:true});  // ← 全部 true に変更
   const done=products.filter(p=>p.status===6).length;
   const partial=products.filter(p=>p.status===7).length;
   const soon=products.filter(p=>p.status>=4&&p.status<6).length;
@@ -255,7 +254,7 @@ function GroupedProductList({ products }) {
       {GROUP_DEFS.map((g,gi)=>{
         const items=products.filter(p=>g.ids.includes(p.status));
         if(!items.length) return null;
-        const isOpen=openGroups[gi];
+        const isOpen=openGroups[gi]!==false;  // ← undefinedもtrueとして扱う
         return (
           <div key={gi}>
             <div onClick={()=>setOpenGroups(s=>({...s,[gi]:!s[gi]}))} style={{ display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 14px",cursor:"pointer",background:g.bg,borderTop:"1.5px solid #edf0f6" }}>
@@ -279,7 +278,6 @@ function UrgentRequest({ order, user, myRequests, onSent }) {
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
 
-  // この注文のリクエスト履歴
   const orderRequests = myRequests.filter(r => r.orderId === order.id);
 
   const handleSend = async () => {
@@ -300,7 +298,6 @@ function UrgentRequest({ order, user, myRequests, onSent }) {
 
   return (
     <div>
-      {/* リクエスト履歴（返信あり） */}
       {orderRequests.map((r,i) => (
         <div key={i} style={{ background:"#fff",borderRadius:14,border:"1.5px solid #e4eaf3",padding:"16px 18px",boxShadow:"0 2px 10px rgba(10,30,53,0.05)" }}>
           <div style={{ display:"flex",alignItems:"center",gap:8,marginBottom:10 }}>
@@ -326,7 +323,6 @@ function UrgentRequest({ order, user, myRequests, onSent }) {
         </div>
       ))}
 
-      {/* 送信ボタン */}
       {!sent && orderRequests.length === 0 && (
         <div>
           {!open ? (
@@ -385,7 +381,6 @@ function MainScreen({ user }) {
     console.log("🔗 紐づけデータ:", JSON.stringify(bindings));
     setOrders(orderData);
     setMyRequests(requestData);
-    // 複数クリニック対応
     const clinicVal = bindings[user.email];
     console.log("👤 ログイン中:", user.email, "→ クリニック値:", clinicVal);
     const clinicNames = clinicVal
@@ -440,15 +435,12 @@ function MainScreen({ user }) {
 
       <div style={{ maxWidth:520,margin:"0 auto",padding:"20px 14px 48px" }}>
 
-        {/* 紐づけされた自分の注文を自動表示 */}
         {!searched && myOrders.length > 0 && (() => {
-          // 月一覧を抽出
           const months = [...new Set(myOrders.map(o => (o.date||"").slice(0,7)).filter(Boolean))].sort().reverse();
           const currentMonth = selectedMonth || months[0] || "";
           const displayOrders = myOrders.filter(o => (o.date||"").startsWith(currentMonth));
           return (
           <div style={{ marginBottom:20 }}>
-            {/* 月タブ */}
             <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:14 }}>
               {months.map(m => (
                 <button key={m} onClick={() => setSelectedMonth(m)}
@@ -470,7 +462,6 @@ function MainScreen({ user }) {
             {displayOrders.map(order => (
               <div key={order.id}
                 style={{ background:"#fff",borderRadius:14,border:"1.5px solid #e4eaf3",marginBottom:10,overflow:"hidden",boxShadow:"0 1px 6px rgba(10,30,53,0.05)" }}>
-                {/* 注文ヘッダー */}
                 <div onClick={() => setModalOrder(order)}
                   style={{ padding:"12px 16px",cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",borderBottom:"1px solid #f0f4f9" }}>
                   <div>
@@ -479,7 +470,6 @@ function MainScreen({ user }) {
                   </div>
                   <span style={{ fontSize:12,color:"#4a7cc7",fontWeight:700 }}>詳細 ›</span>
                 </div>
-                {/* 商品一覧 */}
                 <div style={{ padding:"8px 0" }}>
                   {order.products.map((p, i) => {
                     const s = STATUS_STAGES[p.status] || STATUS_STAGES[0];
@@ -506,13 +496,10 @@ function MainScreen({ user }) {
         {/* 詳細モーダル（スライドイン） */}
         {modalOrder && (
           <div style={{ position:"fixed", inset:0, zIndex:100, display:"flex" }}>
-            {/* 背景オーバーレイ */}
             <div onClick={() => setModalOrder(null)}
               style={{ flex:1, background:"rgba(0,0,0,0.4)" }} />
-            {/* スライドインパネル */}
             <div style={{ width:"min(520px, 100vw)", background:"#f0f4f9", overflowY:"auto",
               boxShadow:"-8px 0 32px rgba(0,0,0,0.2)", display:"flex", flexDirection:"column" }}>
-              {/* パネルヘッダー */}
               <div style={{ background:"linear-gradient(160deg,#0a1e35,#0f2744)", padding:"20px 20px 24px", flexShrink:0 }}>
                 <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
                   <div style={{ fontSize:11, color:"#d4a843", fontWeight:700, letterSpacing:"0.1em" }}>ORDER DETAIL</div>
@@ -523,7 +510,6 @@ function MainScreen({ user }) {
                 <div style={{ fontSize:22, fontWeight:900, color:"#fff", marginBottom:4 }}>{modalOrder.id}</div>
                 <div style={{ fontSize:12, color:"rgba(255,255,255,0.5)" }}>{modalOrder.clinic}　{modalOrder.date}</div>
               </div>
-              {/* パネルコンテンツ */}
               <div style={{ padding:"16px 16px 48px", flex:1 }}>
                 <GroupedProductList products={modalOrder.products} />
                 <div style={{ marginTop:14 }}>
@@ -567,8 +553,6 @@ function MainScreen({ user }) {
             </div>
 
             <GroupedProductList products={found.products}/>
-
-            {/* 急ぎリクエスト */}
             <UrgentRequest order={found} user={user} myRequests={myRequests} onSent={loadData}/>
 
             <div style={{ fontSize:12,color:"#a0aab8",textAlign:"center",lineHeight:1.7,padding:"4px 0 8px" }}>
