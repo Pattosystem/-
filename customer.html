@@ -446,23 +446,34 @@ function MainScreen({ user }) {
               <span style={{ fontSize:11,color:"#8a95a5",fontWeight:400 }}>全{myOrders.length}件</span>
             </div>
             {myOrders.map(order => (
-              <div key={order.id} onClick={() => { setFound(order); setSearched(true); }}
-                style={{ background:"#fff",borderRadius:12,border:"1.5px solid #e4eaf3",padding:"14px 16px",marginBottom:8,cursor:"pointer",boxShadow:"0 1px 6px rgba(10,30,53,0.05)" }}>
-                <div style={{ display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:6 }}>
-                  <span style={{ fontSize:15,fontWeight:900,color:"#0f2744" }}>{order.id}</span>
-                  <span style={{ fontSize:11,color:"#a0aab8" }}>{order.date}</span>
+              <div key={order.id}
+                style={{ background:"#fff",borderRadius:14,border:"1.5px solid #e4eaf3",marginBottom:10,overflow:"hidden",boxShadow:"0 1px 6px rgba(10,30,53,0.05)" }}>
+                {/* 注文ヘッダー */}
+                <div onClick={() => { setFound(order); setSearched(true); }}
+                  style={{ padding:"12px 16px",cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",borderBottom:"1px solid #f0f4f9" }}>
+                  <div>
+                    <span style={{ fontSize:15,fontWeight:900,color:"#0f2744" }}>{order.id}</span>
+                    <span style={{ fontSize:11,color:"#a0aab8",marginLeft:10 }}>{order.date}</span>
+                  </div>
+                  <span style={{ fontSize:12,color:"#4a7cc7",fontWeight:700 }}>詳細 ›</span>
                 </div>
-                <div style={{ display:"flex",gap:6,flexWrap:"wrap" }}>
-                  {(() => {
-                    const done = order.products.filter(p=>p.status===6).length;
-                    const partial = order.products.filter(p=>p.status===7).length;
-                    const pending = order.products.filter(p=>p.status<6&&p.status!==7).length;
-                    return (<>
-                      {pending>0&&<span style={{ padding:"3px 8px",borderRadius:20,fontSize:11,fontWeight:700,background:"#fff8e8",color:"#8a6010" }}>📦 未着 {pending}件</span>}
-                      {partial>0&&<span style={{ padding:"3px 8px",borderRadius:20,fontSize:11,fontWeight:700,background:"#fff8f0",color:"#a04010" }}>🔶 一部 {partial}件</span>}
-                      {done>0&&<span style={{ padding:"3px 8px",borderRadius:20,fontSize:11,fontWeight:700,background:"#e8f4ee",color:"#1a7a50" }}>✅ 完了 {done}件</span>}
-                    </>);
-                  })()}
+                {/* 商品一覧 */}
+                <div style={{ padding:"8px 0" }}>
+                  {order.products.map((p, i) => {
+                    const s = STATUS_STAGES[p.status] || STATUS_STAGES[0];
+                    return (
+                      <div key={i} style={{ display:"flex",alignItems:"center",gap:10,padding:"7px 16px",borderBottom:i<order.products.length-1?"1px solid #f8fafd":"none" }}>
+                        <div style={{ flex:1,minWidth:0 }}>
+                          <div style={{ fontSize:12.5,fontWeight:600,color:"#1a2a3a",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{p.name}</div>
+                          <div style={{ fontSize:11,color:"#8a95a5",marginTop:2 }}>{p.qty}</div>
+                        </div>
+                        <div style={{ flexShrink:0,padding:"3px 9px",borderRadius:20,fontSize:11,fontWeight:700,
+                          background:s.color+"18",color:s.color,border:`1px solid ${s.color}35`,whiteSpace:"nowrap" }}>
+                          {s.icon} {s.short}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             ))}
