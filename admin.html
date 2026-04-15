@@ -27,7 +27,6 @@
   const API_KEY = "AIzaSyDNg5KsLABnwJbN5EpvWjpLnkstFzXA1HE";
 
   window._firebase = {
-    // ── 注釈データ（入金状況・入金日・出荷指示）────────────────────
     loadAnnotations: async () => {
       try {
         const d = await getDoc(doc(db, "appdata", "annotations"));
@@ -50,15 +49,13 @@
       });
       return true;
     },
-    // ── 注文データ：50件ずつバッチ書き込み（確実保存）──────────────
     loadOrders: async () => {
       try {
-        // 常にサーバーから取得（キャッシュ無効）
         const snap = await getDocsFromServer(collection(db, "orders"));
         const list = [];
         snap.forEach(d => list.push(d.data()));
         list.sort((a, b) => String(b.id) > String(a.id) ? -1 : 1);
-        list.reverse(); // 降順（新しい順）
+        list.reverse();
         console.log("📦 サーバーから取得:", list.length, "件 / 先頭:", list[0]?.id);
         return list;
       } catch(e) {
@@ -67,22 +64,18 @@
       }
     },
     saveOrders: async (orders) => {
-      // ステップ1: 既存を50件ずつ削除
       const snap = await getDocs(collection(db, "orders"));
       for (let i = 0; i < snap.docs.length; i += 50) {
         const batch = writeBatch(db);
         snap.docs.slice(i, i+50).forEach(d => batch.delete(d.ref));
         await batch.commit();
       }
-      // ステップ2: 新データを50件ずつ書き込み
       for (let i = 0; i < orders.length; i += 50) {
         const batch = writeBatch(db);
         orders.slice(i, i+50).forEach(o => batch.set(doc(db, "orders", String(o.id)), o));
         await batch.commit();
       }
-      // ステップ3: 注釈も同時保存
       await window._firebase.saveAnnotations(orders);
-      // ステップ4: 確認
       const verify = await getDocs(collection(db, "orders"));
       console.log("✅ 保存完了:", verify.size, "/", orders.length, "件");
       if (verify.size !== orders.length) {
@@ -90,7 +83,6 @@
       }
       return true;
     },
-    // 新規クリニックアカウント作成（REST API経由）
     createClinicAccount: async (email) => {
       const tempPw = "Temp" + Math.random().toString(36).slice(2,10) + "!";
       const res = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${API_KEY}`, {
@@ -100,7 +92,6 @@
       });
       const data = await res.json();
       if (data.error) throw new Error(data.error.message);
-      // パスワード設定メールを送信
       await sendPasswordResetEmail(auth, email);
       return true;
     },
@@ -119,7 +110,6 @@
     markRequestRead: async (id) => {
       await updateDoc(doc(db, "requests", id), { status: "read" });
     },
-    // 出荷写真の読み込み（個別ドキュメント方式）
     loadShipPhotos: async () => {
       try {
         const snap = await getDocs(collection(db, "ship_photos"));
@@ -128,7 +118,6 @@
         return list.sort((a,b) => a.id - b.id);
       } catch(e) { return []; }
     },
-    // バックアップ：全データ取得
     loadAllData: async () => {
       const [ordersSnap, requestsSnap] = await Promise.all([
         getDocs(collection(db, "orders")),
@@ -139,41 +128,56 @@
       requestsSnap.forEach(d => requests.push(d.data()));
       return { orders, requests };
     },
-    // クリニック紐づけ
+    // 旧互換用（customer.htmlから利用）
     loadBindings: async () => {
       try {
         const d = await getDoc(doc(db, "appdata", "bindings"));
         if (!d.exists()) return {};
         const raw = d.data();
-        // 配列形式 [{email, clinics}] → {email: clinics} に変換
         if (Array.isArray(raw.list)) {
           const obj = {};
           raw.list.forEach(item => { if(item.email) obj[item.email] = item.clinics || []; });
-          console.log("📂 loadBindings(array):", JSON.stringify(obj));
           return obj;
         }
-        // 旧形式マップ
         return raw.data || {};
       } catch(e) { console.error("loadBindings error:", e); return {}; }
     },
-    saveBindings: async (bindings) => {
-      // {email: clinics} → [{email, clinics}] 配列形式で保存（@などの特殊文字問題を回避）
-      const list = Object.entries(bindings).map(([email, clinics]) => ({ email, clinics }));
-      console.log("💾 saveBindings:", JSON.stringify(list));
+    // 管理画面用：name・registeredAt含む完全なリストを返す
+    loadBindingsFull: async () => {
+      try {
+        const d = await getDoc(doc(db, "appdata", "bindings"));
+        if (!d.exists()) return [];
+        const raw = d.data();
+        if (Array.isArray(raw.list)) {
+          return raw.list.map(item => ({
+            email: item.email || "",
+            name: item.name || "",
+            clinics: Array.isArray(item.clinics) ? item.clinics : (item.clinics ? [item.clinics] : []),
+            registeredAt: item.registeredAt || "",
+          }));
+        }
+        // 旧形式マップからの変換
+        return Object.entries(raw.data || {}).map(([email, clinics]) => ({
+          email, name: "", clinics: Array.isArray(clinics) ? clinics : [clinics], registeredAt: ""
+        }));
+      } catch(e) { console.error("loadBindingsFull error:", e); return []; }
+    },
+    // name・registeredAt含む完全な形式で保存
+    saveBindingsFull: async (list) => {
+      console.log("💾 saveBindingsFull:", JSON.stringify(list));
       await setDoc(doc(db, "appdata", "bindings"), {
         list, savedAt: new Date().toISOString(), count: list.length
       });
-      window._bindings = bindings;
-      // 確認
+      // 旧互換用キャッシュも更新
+      const obj = {};
+      list.forEach(item => { if(item.email) obj[item.email] = item.clinics; });
+      window._bindings = obj;
       const verify = await getDoc(doc(db, "appdata", "bindings"));
       const savedList = verify.data().list || [];
-      console.log("✅ 保存確認 list:", JSON.stringify(savedList));
       if (savedList.length !== list.length) throw new Error(`件数不一致: ${savedList.length}/${list.length}`);
       return true;
     },
-    // リストア：注釈データのみ復元
     restoreAllData: async (data) => {
-      // 注釈データを復元
       if (data.annotations) {
         await setDoc(doc(db, "appdata", "annotations"), {
           data: data.annotations,
@@ -181,10 +185,8 @@
           restoredFrom: data.exportedAt || ""
         });
       } else if (data.orders) {
-        // 旧バックアップ形式からの移行
         await window._firebase.saveAnnotations(data.orders);
       }
-      // requestsを復元
       if (data.requests && data.requests.length > 0) {
         const reqSnap = await getDocs(collection(db, "requests"));
         for (let i = 0; i < reqSnap.docs.length; i += 50) {
@@ -233,7 +235,6 @@ function toMonthKey(d){ const m=(d||"").match(/(\d{4}年\d{2}月)/); return m?m[
 function groupBy(arr,fn){ return arr.reduce((a,o)=>{ const k=fn(o); if(!a[k])a[k]=[]; a[k].push(o); return a; },{}); }
 
 function parseBcartCSV(text) {
-  // 引用符内の改行を正しく処理するCSVパーサー
   function parseCSV(text) {
     const rows = [];
     let row = [], cur = "", inQ = false;
@@ -262,10 +263,7 @@ function parseBcartCSV(text) {
   const allRows = parseCSV(text);
   if (allRows.length < 2) return [];
   const headers = allRows[0];
-
-  // 物流CSVか受注CSVかを自動判定
   const isLogistics = headers[0]==="Bカート発送ID";
-
   const idx={
     orderNo:    headers.indexOf("受注番号"),
     company:    headers.indexOf("会社名"),
@@ -279,43 +277,32 @@ function parseBcartCSV(text) {
     delivDate:  headers.indexOf("納品日"),
     category:   headers.indexOf("明細区分"),
   };
-
   const orderMap={};
-
   for(let i=1;i<allRows.length;i++){
     const row=allRows[i];
     const orderNo=row[idx.orderNo]||""; if(!orderNo) continue;
-
-    // 受注CSVの場合は明細区分チェック
     if(!isLogistics){
       const cat=row[idx.category]||"";
       if(cat&&cat!=="商品") continue;
     }
-
     const itemName=(row[idx.itemName]||"").replace(/\n/g," ").trim();
     if(!itemName||itemName==="送料"||itemName==="決済手数料") continue;
-
-    // 注文情報を初期化
     if(!orderMap[orderNo]){
       const rawDate=row[idx.dateTime]||"";
       const d=rawDate?new Date(rawDate):null;
       const dateStr=d?`${d.getFullYear()}年${String(d.getMonth()+1).padStart(2,"0")}月${String(d.getDate()).padStart(2,"0")}日`:"";
       orderMap[orderNo]={ id:orderNo, date:dateStr, clinic:(row[idx.company]||"").trim(), updatedAt:nowStr(), products:[] };
     }
-
     const qtyNum=parseInt(row[idx.qty]||"0",10)||0;
     const unit=row[idx.unit]||"";
     const rawSpec=(row[idx.spec]||"").replace(/\n/g," ").trim();
-    // HTMLタグが含まれている場合は規格表示を除去
     const spec = rawSpec.includes("<") ? "" : rawSpec;
     const displayName=spec?`${itemName}（${spec}）`:itemName;
     const shipStatus=row[idx.shipStatus]||"";
     const delivDate=row[idx.delivDate]||"";
     const shipDate=row[idx.shipDate]||"";
     const isDelivered=shipStatus==="発送済"&&delivDate;
-
     if(isLogistics){
-      // ── 物流CSV：同一商品を累積して分納管理 ──────────────────
       const existing=orderMap[orderNo].products.find(p=>p.name===displayName);
       const record={ qty:qtyNum, unit, status:shipStatus, delivDate, shipDate };
       if(existing){
@@ -332,7 +319,6 @@ function parseBcartCSV(text) {
         });
       }
     } else {
-      // ── 受注CSV：1行1商品（シンプル）──────────────────────────
       let autoStatus=0;
       if(shipStatus==="発送済"&&delivDate) autoStatus=6;
       else if(shipStatus==="発送済") autoStatus=5;
@@ -343,23 +329,15 @@ function parseBcartCSV(text) {
       });
     }
   }
-
-  // 物流CSV：数量・ステータスを確定
   if(isLogistics){
     Object.values(orderMap).forEach(order=>{
       order.products.forEach(p=>{
         const total=p.totalQtyNum||0;
         const delivered=p.deliveredQtyNum||0;
         p.qty=`${total}${p.unit}`;
-        if(delivered>=total&&total>0){
-          p.status=6; p.eta="—"; p.deliveryInfo="";
-        } else if(delivered>0){
-          p.status=7; p.eta="—";
-          p.deliveryInfo=`${total}${p.unit}中 ${delivered}${p.unit}納品済み`;
-        } else {
-          p.status=0; p.eta="約30日"; p.deliveryInfo="";
-        }
-        // deliveryRecordsを日付でソート（納品済み→未発送の順）
+        if(delivered>=total&&total>0){ p.status=6; p.eta="—"; p.deliveryInfo=""; }
+        else if(delivered>0){ p.status=7; p.eta="—"; p.deliveryInfo=`${total}${p.unit}中 ${delivered}${p.unit}納品済み`; }
+        else { p.status=0; p.eta="約30日"; p.deliveryInfo=""; }
         p.deliveryRecords.sort((a,b)=>{
           if(a.status==="発送済"&&b.status!=="発送済") return -1;
           if(a.status!=="発送済"&&b.status==="発送済") return 1;
@@ -368,7 +346,6 @@ function parseBcartCSV(text) {
       });
     });
   }
-
   return Object.values(orderMap);
 }
 
@@ -399,15 +376,8 @@ function BackupManager({ orders, downloadBackup }) {
   const [restorePreview, setRestorePreview] = useState(null);
   const [pendingData, setPendingData] = useState(null);
   const fileRef = React.useRef();
-
   const waitFB = async () => { let t=0; while(!window._firebase&&t<30){await new Promise(r=>setTimeout(r,200));t++;} };
-
-  // 手動バックアップ
-  const handleManualBackup = async () => {
-    await downloadBackup(orders);
-  };
-
-  // リストアファイル読み込み
+  const handleManualBackup = async () => { await downloadBackup(orders); };
   const handleFileRead = (file) => {
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -415,21 +385,12 @@ function BackupManager({ orders, downloadBackup }) {
         const data = JSON.parse(e.target.result);
         if (!data.orders) { setRestoreStatus("error"); return; }
         setPendingData(data);
-        setRestorePreview({
-          exportedAt: data.exportedAt || "不明",
-          orderCount: data.orders.length,
-          requestCount: (data.requests||[]).length,
-          version: data.version || 1,
-        });
+        setRestorePreview({ exportedAt: data.exportedAt || "不明", orderCount: data.orders.length, requestCount: (data.requests||[]).length, version: data.version || 1 });
         setRestoreStatus("preview");
-      } catch(e) {
-        setRestoreStatus("parse_error");
-      }
+      } catch(e) { setRestoreStatus("parse_error"); }
     };
     reader.readAsText(file);
   };
-
-  // リストア実行
   const handleRestore = async () => {
     if (!pendingData) return;
     setRestoreStatus("restoring");
@@ -437,386 +398,260 @@ function BackupManager({ orders, downloadBackup }) {
     try {
       await window._firebase.restoreAllData(pendingData);
       setRestoreStatus("success");
-      setPendingData(null);
-      setRestorePreview(null);
+      setPendingData(null); setRestorePreview(null);
       setTimeout(() => { setRestoreStatus(""); window.location.reload(); }, 2000);
-    } catch(e) {
-      setRestoreStatus("restore_error");
-    }
+    } catch(e) { setRestoreStatus("restore_error"); }
   };
-
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
-
-      {/* 手動バックアップ */}
       <div style={{ background:"#fff", borderRadius:14, border:"1.5px solid #e4eaf3", padding:"20px", boxShadow:"0 2px 10px rgba(10,30,53,0.05)" }}>
         <div style={{ fontSize:14, fontWeight:800, color:"#0f2744", marginBottom:4 }}>💾 手動バックアップ</div>
-        <div style={{ fontSize:12, color:"#8a95a5", marginBottom:16, lineHeight:1.6 }}>
-          現在のFirebaseデータ（注文・リクエスト・入金状況・出荷指示など全て）をJSONファイルとしてダウンロードします。
-        </div>
-        <div style={{ padding:"10px 14px", background:"#f0f6ff", borderRadius:9, border:"1px solid #c0d8f0", fontSize:12.5, color:"#1a4a90", marginBottom:14 }}>
-          💡 「Firebaseに保存」を押すたびに自動でもバックアップされます。
-        </div>
-        <button onClick={handleManualBackup}
-          style={{ width:"100%", padding:"12px", borderRadius:10, border:"none", background:"linear-gradient(135deg,#0f2744,#1a3d6e)", color:"#fff", fontWeight:800, fontSize:14, cursor:"pointer" }}>
-          📥 今すぐバックアップをダウンロード
-        </button>
+        <div style={{ fontSize:12, color:"#8a95a5", marginBottom:16, lineHeight:1.6 }}>現在のFirebaseデータ（注文・リクエスト・入金状況・出荷指示など全て）をJSONファイルとしてダウンロードします。</div>
+        <div style={{ padding:"10px 14px", background:"#f0f6ff", borderRadius:9, border:"1px solid #c0d8f0", fontSize:12.5, color:"#1a4a90", marginBottom:14 }}>💡 「Firebaseに保存」を押すたびに自動でもバックアップされます。</div>
+        <button onClick={handleManualBackup} style={{ width:"100%", padding:"12px", borderRadius:10, border:"none", background:"linear-gradient(135deg,#0f2744,#1a3d6e)", color:"#fff", fontWeight:800, fontSize:14, cursor:"pointer" }}>📥 今すぐバックアップをダウンロード</button>
       </div>
-
-      {/* リストア */}
       <div style={{ background:"#fff", borderRadius:14, border:"1.5px solid #e4eaf3", padding:"20px", boxShadow:"0 2px 10px rgba(10,30,53,0.05)" }}>
         <div style={{ fontSize:14, fontWeight:800, color:"#0f2744", marginBottom:4 }}>🔄 バックアップから復元</div>
-        <div style={{ fontSize:12, color:"#8a95a5", marginBottom:16, lineHeight:1.6 }}>
-          以前ダウンロードしたJSONファイルを選択すると、Firebaseのデータを復元できます。<br/>
-          <strong style={{ color:"#e05050" }}>※ 現在のデータは上書きされます。必ず事前にバックアップを取ってください。</strong>
-        </div>
-
-        {restoreStatus === "" && (
-          <>
-            <input ref={fileRef} type="file" accept=".json" onChange={e => { if(e.target.files[0]) handleFileRead(e.target.files[0]); }} style={{ display:"none" }}/>
-            <button onClick={() => fileRef.current.click()}
-              style={{ width:"100%", padding:"12px", borderRadius:10, border:"1.5px solid #6b8cba", background:"#f4f6fb", color:"#0f2744", fontWeight:700, fontSize:14, cursor:"pointer" }}>
-              📂 バックアップファイルを選択
-            </button>
-          </>
-        )}
-
-        {restoreStatus === "parse_error" && (
-          <div style={{ padding:"12px", background:"#fff0f0", borderRadius:9, color:"#e05050", fontSize:13 }}>
-            ❌ ファイルの読み込みに失敗しました。正しいバックアップファイルか確認してください。
-            <button onClick={() => setRestoreStatus("")} style={{ display:"block", marginTop:8, padding:"6px 12px", borderRadius:7, border:"1.5px solid #dde4ef", background:"#fff", cursor:"pointer", fontSize:12 }}>やり直す</button>
-          </div>
-        )}
-
-        {restoreStatus === "preview" && restorePreview && (
-          <div>
-            <div style={{ padding:"12px 14px", background:"#fffbef", border:"1.5px solid #e8c95a", borderRadius:10, marginBottom:12 }}>
-              <div style={{ fontSize:13, fontWeight:800, color:"#7a6020", marginBottom:8 }}>⚠️ 復元内容の確認</div>
-              <div style={{ fontSize:12, color:"#5a4010", lineHeight:1.8 }}>
-                <div>バックアップ日時：<strong>{restorePreview.exportedAt.replace("T"," ").slice(0,16)}</strong></div>
-                <div>注文データ：<strong>{restorePreview.orderCount}件</strong></div>
-                <div>リクエスト：<strong>{restorePreview.requestCount}件</strong></div>
-              </div>
-            </div>
-            <div style={{ display:"flex", gap:8 }}>
-              <button onClick={() => { setRestoreStatus(""); setPendingData(null); setRestorePreview(null); }}
-                style={{ flex:1, padding:"11px", borderRadius:9, border:"1.5px solid #dde4ef", background:"#fff", fontSize:13, cursor:"pointer", color:"#666" }}>
-                キャンセル
-              </button>
-              <button onClick={handleRestore}
-                style={{ flex:2, padding:"11px", borderRadius:9, border:"none", background:"#e05050", color:"#fff", fontWeight:800, fontSize:13, cursor:"pointer" }}>
-                ✅ この内容で復元する
-              </button>
-            </div>
-          </div>
-        )}
-
-        {restoreStatus === "restoring" && (
-          <div style={{ padding:"16px", textAlign:"center", color:"#4a7cc7", fontSize:13, fontWeight:700 }}>
-            🔄 復元中... しばらくお待ちください
-          </div>
-        )}
-
-        {restoreStatus === "success" && (
-          <div style={{ padding:"12px", background:"#f0fdf6", borderRadius:9, color:"#1a7a50", fontSize:13, fontWeight:700, textAlign:"center" }}>
-            ✅ 復元完了！画面を再読み込みします...
-          </div>
-        )}
-
-        {restoreStatus === "restore_error" && (
-          <div style={{ padding:"12px", background:"#fff0f0", borderRadius:9, color:"#e05050", fontSize:13 }}>
-            ❌ 復元に失敗しました。もう一度お試しください。
-          </div>
-        )}
+        <div style={{ fontSize:12, color:"#8a95a5", marginBottom:16, lineHeight:1.6 }}>以前ダウンロードしたJSONファイルを選択すると、Firebaseのデータを復元できます。<br/><strong style={{ color:"#e05050" }}>※ 現在のデータは上書きされます。必ず事前にバックアップを取ってください。</strong></div>
+        {restoreStatus === "" && (<><input ref={fileRef} type="file" accept=".json" onChange={e => { if(e.target.files[0]) handleFileRead(e.target.files[0]); }} style={{ display:"none" }}/><button onClick={() => fileRef.current.click()} style={{ width:"100%", padding:"12px", borderRadius:10, border:"1.5px solid #6b8cba", background:"#f4f6fb", color:"#0f2744", fontWeight:700, fontSize:14, cursor:"pointer" }}>📂 バックアップファイルを選択</button></>)}
+        {restoreStatus === "parse_error" && (<div style={{ padding:"12px", background:"#fff0f0", borderRadius:9, color:"#e05050", fontSize:13 }}>❌ ファイルの読み込みに失敗しました。<button onClick={() => setRestoreStatus("")} style={{ display:"block", marginTop:8, padding:"6px 12px", borderRadius:7, border:"1.5px solid #dde4ef", background:"#fff", cursor:"pointer", fontSize:12 }}>やり直す</button></div>)}
+        {restoreStatus === "preview" && restorePreview && (<div><div style={{ padding:"12px 14px", background:"#fffbef", border:"1.5px solid #e8c95a", borderRadius:10, marginBottom:12 }}><div style={{ fontSize:13, fontWeight:800, color:"#7a6020", marginBottom:8 }}>⚠️ 復元内容の確認</div><div style={{ fontSize:12, color:"#5a4010", lineHeight:1.8 }}><div>バックアップ日時：<strong>{restorePreview.exportedAt.replace("T"," ").slice(0,16)}</strong></div><div>注文データ：<strong>{restorePreview.orderCount}件</strong></div><div>リクエスト：<strong>{restorePreview.requestCount}件</strong></div></div></div><div style={{ display:"flex", gap:8 }}><button onClick={() => { setRestoreStatus(""); setPendingData(null); setRestorePreview(null); }} style={{ flex:1, padding:"11px", borderRadius:9, border:"1.5px solid #dde4ef", background:"#fff", fontSize:13, cursor:"pointer", color:"#666" }}>キャンセル</button><button onClick={handleRestore} style={{ flex:2, padding:"11px", borderRadius:9, border:"none", background:"#e05050", color:"#fff", fontWeight:800, fontSize:13, cursor:"pointer" }}>✅ この内容で復元する</button></div></div>)}
+        {restoreStatus === "restoring" && (<div style={{ padding:"16px", textAlign:"center", color:"#4a7cc7", fontSize:13, fontWeight:700 }}>🔄 復元中...</div>)}
+        {restoreStatus === "success" && (<div style={{ padding:"12px", background:"#f0fdf6", borderRadius:9, color:"#1a7a50", fontSize:13, fontWeight:700, textAlign:"center" }}>✅ 復元完了！画面を再読み込みします...</div>)}
+        {restoreStatus === "restore_error" && (<div style={{ padding:"12px", background:"#fff0f0", borderRadius:9, color:"#e05050", fontSize:13 }}>❌ 復元に失敗しました。</div>)}
       </div>
     </div>
   );
 }
 
-// ── クリニック紐づけ管理（シンプル確実版）────────────────────────────────
-function ClinicBindingManager({ orders }) {
-  const [rows, setRows] = useState([]); // [{email, clinics:[]}]
+// ── クリニック管理（統合版）────────────────────────────────────────────────
+function ClinicManager({ orders }) {
+  // rows: [{email, name, clinics:[], registeredAt}]
+  const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [msg, setMsg] = useState("");
+  const [saveMsg, setSaveMsg] = useState("");
+  // 新規登録フォーム
   const [addEmail, setAddEmail] = useState("");
+  const [addName, setAddName] = useState("");
   const [addClinics, setAddClinics] = useState([]);
+  const [creating, setCreating] = useState(false);
+  const [createMsg, setCreateMsg] = useState("");
+  // パスワードリセット
+  const [resetStatus, setResetStatus] = useState({}); // {email: "sending"|"sent"|"error"}
 
   const clinicNames = [...new Set(orders.map(o => o.clinic).filter(Boolean))].sort();
+  const waitFB = async () => { let t=0; while(!window._firebase&&t<30){await new Promise(r=>setTimeout(r,200));t++;} };
 
-  // Firebase から読み込み
   const load = async () => {
     setLoading(true);
-    let t = 0;
-    while (!window._firebase && t++ < 30) await new Promise(r => setTimeout(r, 200));
+    await waitFB();
     try {
-      const data = await window._firebase.loadBindings();
-      // {email: clinics} → [{email, clinics}] に変換
-      const arr = Object.entries(data).map(([email, clinics]) => ({
-        email,
-        clinics: Array.isArray(clinics) ? clinics : (clinics ? [clinics] : [])
-      }));
-      setRows(arr);
+      const list = await window._firebase.loadBindingsFull();
+      setRows(list);
     } catch(e) { console.error(e); }
     setLoading(false);
   };
-
   useEffect(() => { load(); }, []);
 
-  // 保存
+  // 紐づけ保存
   const handleSave = async () => {
-    setSaving(true); setMsg("");
+    setSaving(true); setSaveMsg("");
     try {
-      // rows → {email: clinics} オブジェクトに変換してから配列形式で保存
-      const bindings = {};
-      rows.forEach(r => { if (r.email) bindings[r.email] = r.clinics; });
-      console.log("💾 保存するbindings:", JSON.stringify(bindings));
-      // Firestoreに直接保存
-      let t = 0;
-      while (!window._firebase && t++ < 30) await new Promise(r => setTimeout(r, 200));
-      await window._firebase.saveBindings(bindings);
-      window._bindings = bindings;
-      setMsg("saved");
-      setTimeout(() => setMsg(""), 3000);
+      await waitFB();
+      await window._firebase.saveBindingsFull(rows);
+      setSaveMsg("saved");
+      setTimeout(() => setSaveMsg(""), 3000);
     } catch(e) {
       console.error(e);
-      setMsg("error");
+      setSaveMsg("error");
       alert("保存エラー: " + e.message);
     }
     setSaving(false);
   };
 
+  // 行操作
   const removeRow = (email) => setRows(prev => prev.filter(r => r.email !== email));
-  const removeClinic = (email, clinic) => setRows(prev => prev.map(r =>
-    r.email === email ? {...r, clinics: r.clinics.filter(c => c !== clinic)} : r
-  ));
-  const addClinicToRow = (email, clinic) => {
-    if (!clinic) return;
-    setRows(prev => prev.map(r =>
-      r.email === email && !r.clinics.includes(clinic)
-        ? {...r, clinics: [...r.clinics, clinic]}
-        : r
-    ));
+  const removeClinic = (email, clinic) => setRows(prev => prev.map(r => r.email === email ? {...r, clinics: r.clinics.filter(c => c !== clinic)} : r));
+  const addClinicToRow = (email, clinic) => { if (!clinic) return; setRows(prev => prev.map(r => r.email === email && !r.clinics.includes(clinic) ? {...r, clinics: [...r.clinics, clinic]} : r)); };
+  const updateName = (email, name) => setRows(prev => prev.map(r => r.email === email ? {...r, name} : r));
+
+  // パスワードリセット
+  const handleReset = async (email) => {
+    setResetStatus(p => ({...p, [email]: "sending"}));
+    await waitFB();
+    try {
+      await window._firebase.sendPasswordReset(email);
+      setResetStatus(p => ({...p, [email]: "sent"}));
+      setTimeout(() => setResetStatus(p => ({...p, [email]: ""})), 4000);
+    } catch(e) {
+      setResetStatus(p => ({...p, [email]: "error"}));
+    }
   };
 
-  const handleAdd = () => {
-    const email = addEmail.trim();
-    if (!email || addClinics.length === 0) return;
-    setRows(prev => {
-      const existing = prev.find(r => r.email === email);
-      if (existing) {
-        return prev.map(r => r.email === email
-          ? {...r, clinics: [...new Set([...r.clinics, ...addClinics])]}
-          : r
-        );
-      }
-      return [...prev, {email, clinics: addClinics}];
-    });
-    setAddEmail(""); setAddClinics([]);
+  // 新規アカウント作成
+  const handleCreate = async () => {
+    if (!addEmail.trim()) return;
+    setCreating(true); setCreateMsg("");
+    await waitFB();
+    try {
+      await window._firebase.createClinicAccount(addEmail.trim());
+      // bindingsに追加
+      const today = new Date().toLocaleDateString("ja-JP",{year:"numeric",month:"2-digit",day:"2-digit"});
+      const newRow = { email: addEmail.trim(), name: addName.trim(), clinics: addClinics, registeredAt: today };
+      const newRows = [...rows.filter(r => r.email !== addEmail.trim()), newRow];
+      setRows(newRows);
+      await window._firebase.saveBindingsFull(newRows);
+      setCreateMsg("success");
+      setAddEmail(""); setAddName(""); setAddClinics([]);
+    } catch(e) {
+      if (e.message.includes("EMAIL_EXISTS")) setCreateMsg("exists");
+      else { setCreateMsg("error"); console.error(e); }
+    }
+    setCreating(false);
   };
+
+  const inp = { width:"100%", padding:"9px 11px", borderRadius:8, border:"1.5px solid #dde4ef", fontSize:13, outline:"none", color:"#1a2a3a" };
 
   return (
-    <div style={{background:"#fff",borderRadius:14,border:"1.5px solid #e4eaf3",padding:"20px",boxShadow:"0 2px 10px rgba(10,30,53,0.05)"}}>
-      <div style={{fontSize:14,fontWeight:800,color:"#0f2744",marginBottom:4}}>🔗 クリニック紐づけ設定</div>
-      <div style={{fontSize:12,color:"#8a95a5",marginBottom:16,lineHeight:1.6}}>
-        メールアドレスとクリニック名を紐づけると、ログイン時に自分の注文が自動表示されます。
-      </div>
+    <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
 
-      {loading ? (
-        <div style={{textAlign:"center",padding:"20px",color:"#8a95a5"}}>読込中...</div>
-      ) : (<>
+      {/* ── アカウント一覧 ── */}
+      <div style={{ background:"#fff", borderRadius:14, border:"1.5px solid #e4eaf3", padding:"20px", boxShadow:"0 2px 10px rgba(10,30,53,0.05)" }}>
+        <div style={{ fontSize:14, fontWeight:800, color:"#0f2744", marginBottom:4 }}>👥 登録済みアカウント一覧</div>
+        <div style={{ fontSize:12, color:"#8a95a5", marginBottom:16, lineHeight:1.6 }}>担当者名・紐づけクリニックの編集、パスワードリセット送信ができます。</div>
 
-        {/* 紐づけ一覧テーブル */}
-        <div style={{border:"1.5px solid #e4eaf3",borderRadius:10,overflow:"hidden",marginBottom:14}}>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr auto",background:"#0f2744",padding:"8px 14px",fontSize:12,fontWeight:700,color:"rgba(255,255,255,0.85)",gap:8}}>
-            <span>メールアドレス</span><span>紐づいたクリニック</span><span>操作</span>
-          </div>
-          {rows.length === 0 && (
-            <div style={{padding:"20px",textAlign:"center",color:"#a0aab8",fontSize:13}}>まだ紐づけがありません</div>
-          )}
-          {rows.map(row => (
-            <div key={row.email} style={{borderBottom:"1px solid #f0f4f9",padding:"10px 14px"}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:6}}>
-                <span style={{fontSize:13,fontWeight:600,color:"#1a2a3a"}}>{row.email}</span>
-                <button onClick={() => removeRow(row.email)}
-                  style={{padding:"3px 8px",borderRadius:6,border:"1.5px solid #e0c0c0",background:"#fff8f8",fontSize:11,cursor:"pointer",color:"#e05050",fontWeight:700}}>
-                  削除
-                </button>
-              </div>
-              <div style={{display:"flex",gap:5,flexWrap:"wrap",alignItems:"center"}}>
-                {row.clinics.length === 0 && (
-                  <span style={{fontSize:12,color:"#e05050",fontWeight:700,padding:"3px 8px",borderRadius:20,background:"#fff0f0",border:"1px solid #e0c0c0"}}>⚠ 未設定</span>
-                )}
-                {row.clinics.map(c => (
-                  <div key={c} style={{display:"flex",alignItems:"center",gap:4,padding:"4px 10px",borderRadius:20,background:"#e8f0ff",border:"1.5px solid #4a7cc7"}}>
-                    <span style={{fontSize:12.5,color:"#0f2744",fontWeight:700}}>{c}</span>
-                    <button onClick={() => removeClinic(row.email, c)}
-                      style={{border:"none",background:"none",color:"#e05050",fontWeight:900,fontSize:14,cursor:"pointer",padding:0,lineHeight:1}}>×</button>
-                  </div>
-                ))}
-                {clinicNames.filter(n => !row.clinics.includes(n)).length > 0 && (
-                  <select onChange={e => { if(e.target.value) addClinicToRow(row.email, e.target.value); e.target.value=""; }}
-                    style={{padding:"4px 8px",borderRadius:20,border:"1.5px dashed #4a7cc7",fontSize:12,color:"#4a7cc7",background:"#fff",cursor:"pointer",outline:"none"}}>
-                    <option value="">＋ 追加</option>
-                    {clinicNames.filter(n => !row.clinics.includes(n)).map(n => <option key={n} value={n}>{n}</option>)}
-                  </select>
-                )}
-              </div>
+        {loading ? (
+          <div style={{ textAlign:"center", padding:"20px", color:"#8a95a5" }}>読込中...</div>
+        ) : rows.length === 0 ? (
+          <div style={{ textAlign:"center", padding:"20px", color:"#a0aab8", fontSize:13 }}>まだ登録されていません</div>
+        ) : (
+          <div style={{ border:"1.5px solid #e4eaf3", borderRadius:10, overflow:"hidden", marginBottom:14 }}>
+            {/* テーブルヘッダー */}
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr auto", background:"#0f2744", padding:"8px 14px", fontSize:11.5, fontWeight:700, color:"rgba(255,255,255,0.85)", gap:8 }}>
+              <span>メールアドレス</span><span>担当者名</span><span>紐づいたクリニック</span><span>操作</span>
             </div>
-          ))}
-        </div>
-
-        {/* 新規追加フォーム */}
-        <div style={{background:"#f8fafd",borderRadius:10,border:"1.5px solid #e4eaf3",padding:"14px",marginBottom:14}}>
-          <div style={{fontSize:12,fontWeight:700,color:"#0f2744",marginBottom:10}}>新規追加</div>
-          <div style={{marginBottom:8}}>
-            <div style={{fontSize:11,color:"#8a95a5",marginBottom:4}}>メールアドレス</div>
-            <input value={addEmail} onChange={e => setAddEmail(e.target.value)} placeholder="clinic@example.com" type="email"
-              style={{width:"100%",padding:"8px 10px",borderRadius:8,border:"1.5px solid #dde4ef",fontSize:12.5,outline:"none",boxSizing:"border-box"}} />
-          </div>
-          <div style={{marginBottom:10}}>
-            <div style={{fontSize:11,color:"#8a95a5",marginBottom:4}}>紐づけるクリニック</div>
-            {clinicNames.length === 0 ? (
-              <div style={{padding:"10px",background:"#fff8e8",borderRadius:8,fontSize:12,color:"#7a6020",border:"1px solid #e8c95a"}}>⚠ 先にCSVを取込んで「Firebaseに保存」してください</div>
-            ) : (
-              <select onChange={e => { const v=e.target.value; if(v && !addClinics.includes(v)) setAddClinics(p=>[...p,v]); e.target.value=""; }}
-                style={{width:"100%",padding:"8px 10px",borderRadius:8,border:"1.5px solid #dde4ef",fontSize:12.5,outline:"none",background:"#fff",boxSizing:"border-box"}}>
-                <option value="">-- クリニックを選択 --</option>
-                {clinicNames.map(n => <option key={n} value={n}>{n}</option>)}
-              </select>
-            )}
-            {addClinics.length > 0 && (
-              <div style={{display:"flex",gap:5,flexWrap:"wrap",marginTop:8}}>
-                {addClinics.map(c => (
-                  <div key={c} style={{display:"flex",alignItems:"center",gap:4,padding:"5px 10px",borderRadius:20,background:"#e8f0ff",border:"1.5px solid #4a7cc7"}}>
-                    <span style={{fontSize:12.5,color:"#0f2744",fontWeight:700}}>{c}</span>
-                    <button onClick={() => setAddClinics(p=>p.filter(x=>x!==c))}
-                      style={{border:"none",background:"none",color:"#e05050",fontWeight:900,fontSize:14,cursor:"pointer",padding:0}}>×</button>
+            {rows.map(row => (
+              <div key={row.email} style={{ borderBottom:"1px solid #f0f4f9", padding:"12px 14px" }}>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr auto", gap:8, alignItems:"start" }}>
+                  {/* メール + 登録日 */}
+                  <div>
+                    <div style={{ fontSize:13, fontWeight:600, color:"#1a2a3a" }}>{row.email}</div>
+                    {row.registeredAt && <div style={{ fontSize:10.5, color:"#a0aab8", marginTop:2 }}>登録：{row.registeredAt}</div>}
                   </div>
-                ))}
+                  {/* 担当者名（インライン編集） */}
+                  <div>
+                    <input
+                      value={row.name}
+                      onChange={e => updateName(row.email, e.target.value)}
+                      placeholder="担当者名"
+                      style={{ ...inp, padding:"6px 9px", fontSize:12.5 }}
+                    />
+                  </div>
+                  {/* クリニック */}
+                  <div style={{ display:"flex", gap:4, flexWrap:"wrap", alignItems:"center" }}>
+                    {row.clinics.length === 0 && (
+                      <span style={{ fontSize:11, color:"#e05050", fontWeight:700, padding:"2px 7px", borderRadius:20, background:"#fff0f0", border:"1px solid #e0c0c0" }}>⚠ 未設定</span>
+                    )}
+                    {row.clinics.map(c => (
+                      <div key={c} style={{ display:"flex", alignItems:"center", gap:3, padding:"3px 8px", borderRadius:20, background:"#e8f0ff", border:"1.5px solid #4a7cc7" }}>
+                        <span style={{ fontSize:11.5, color:"#0f2744", fontWeight:700 }}>{c}</span>
+                        <button onClick={() => removeClinic(row.email, c)} style={{ border:"none", background:"none", color:"#e05050", fontWeight:900, fontSize:13, cursor:"pointer", padding:0 }}>×</button>
+                      </div>
+                    ))}
+                    {clinicNames.filter(n => !row.clinics.includes(n)).length > 0 && (
+                      <select onChange={e => { if(e.target.value) addClinicToRow(row.email, e.target.value); e.target.value=""; }}
+                        style={{ padding:"3px 7px", borderRadius:20, border:"1.5px dashed #4a7cc7", fontSize:11, color:"#4a7cc7", background:"#fff", cursor:"pointer", outline:"none" }}>
+                        <option value="">＋ 追加</option>
+                        {clinicNames.filter(n => !row.clinics.includes(n)).map(n => <option key={n} value={n}>{n}</option>)}
+                      </select>
+                    )}
+                  </div>
+                  {/* 操作 */}
+                  <div style={{ display:"flex", flexDirection:"column", gap:4, alignItems:"flex-end" }}>
+                    {/* パスワードリセット */}
+                    {resetStatus[row.email] === "sent" ? (
+                      <span style={{ fontSize:11, color:"#1a7a50", fontWeight:700, padding:"4px 8px", background:"#f0fdf6", borderRadius:6, whiteSpace:"nowrap" }}>✅ 送信済み</span>
+                    ) : resetStatus[row.email] === "error" ? (
+                      <span style={{ fontSize:11, color:"#e05050", fontWeight:700 }}>❌ エラー</span>
+                    ) : (
+                      <button
+                        onClick={() => handleReset(row.email)}
+                        disabled={resetStatus[row.email] === "sending"}
+                        style={{ padding:"4px 9px", borderRadius:6, border:"1.5px solid #6b8cba", background:"#f4f6fb", fontSize:11, cursor:"pointer", color:"#1a3a6a", fontWeight:700, whiteSpace:"nowrap", opacity:resetStatus[row.email]==="sending"?0.6:1 }}>
+                        {resetStatus[row.email] === "sending" ? "送信中..." : "🔑 PW\nリセット"}
+                      </button>
+                    )}
+                    <button onClick={() => removeRow(row.email)}
+                      style={{ padding:"3px 8px", borderRadius:6, border:"1.5px solid #e0c0c0", background:"#fff8f8", fontSize:11, cursor:"pointer", color:"#e05050", fontWeight:700 }}>
+                      削除
+                    </button>
+                  </div>
+                </div>
               </div>
-            )}
+            ))}
           </div>
-          <button onClick={handleAdd} disabled={!addEmail.trim() || addClinics.length===0}
-            style={{width:"100%",padding:"9px",borderRadius:9,border:"none",background:"#0f2744",color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer",opacity:(!addEmail.trim()||addClinics.length===0)?0.4:1}}>
-            追加する
-          </button>
-        </div>
+        )}
 
         {/* 保存ボタン */}
-        <button onClick={handleSave} disabled={saving}
-          style={{width:"100%",padding:"13px",borderRadius:10,border:"none",
-            background: msg==="saved"?"#3aa876":msg==="error"?"#e05050":"linear-gradient(135deg,#0f2744,#1a3d6e)",
-            color:"#fff",fontWeight:800,fontSize:14,cursor:"pointer",opacity:saving?0.7:1}}>
-          {saving?"保存中...":msg==="saved"?"✅ 保存しました！":msg==="error"?"❌ エラー":"💾 紐づけを保存する"}
-        </button>
-        {msg==="saved"&&<div style={{marginTop:8,padding:"8px 12px",background:"#f0fdf6",border:"1px solid #3aa876",borderRadius:8,fontSize:12,color:"#1a7a50",textAlign:"center"}}>Firebaseに保存しました。お客様画面に反映されます。</div>}
-
-      </>)}
-    </div>
-  );
-}
-
-function ClinicAccountManager() {
-  const [email, setEmail] = useState("");
-  const [status, setStatus] = useState(""); // "" | "loading" | "success" | "exists" | "error"
-  const [resetEmail, setResetEmail] = useState("");
-  const [resetStatus, setResetStatus] = useState("");
-
-  const waitFirebase = async () => {
-    let t=0; while(!window._firebase&&t<30){await new Promise(r=>setTimeout(r,200));t++;}
-  };
-
-  const handleCreate = async () => {
-    if (!email.trim()) return;
-    setStatus("loading");
-    await waitFirebase();
-    try {
-      await window._firebase.createClinicAccount(email.trim());
-      setStatus("success");
-      setEmail("");
-    } catch(e) {
-      if (e.message.includes("EMAIL_EXISTS")) { setStatus("exists"); }
-      else { setStatus("error"); console.error(e); }
-    }
-  };
-
-  const handleReset = async () => {
-    if (!resetEmail.trim()) return;
-    setResetStatus("loading");
-    await waitFirebase();
-    try {
-      await window._firebase.sendPasswordReset(resetEmail.trim());
-      setResetStatus("success");
-    } catch(e) {
-      setResetStatus("error");
-    }
-  };
-
-  const inp = { width:"100%",padding:"10px 12px",borderRadius:9,border:"1.5px solid #dde4ef",fontSize:14,outline:"none",color:"#1a2a3a" };
-
-  return (
-    <div style={{ display:"flex",flexDirection:"column",gap:16 }}>
-
-      {/* 新規クリニック登録 */}
-      <div style={{ background:"#fff",borderRadius:14,border:"1.5px solid #e4eaf3",padding:"20px",boxShadow:"0 2px 10px rgba(10,30,53,0.05)" }}>
-        <div style={{ fontSize:14,fontWeight:800,color:"#0f2744",marginBottom:4 }}>新規クリニックアカウントを登録</div>
-        <div style={{ fontSize:12,color:"#8a95a5",marginBottom:16,lineHeight:1.6 }}>
-          メールアドレスを登録すると、クリニック担当者にパスワード設定メールが自動送信されます。
-        </div>
-
-        <div style={{ marginBottom:12 }}>
-          <div style={{ fontSize:11.5,color:"#8a95a5",marginBottom:4 }}>クリニックのメールアドレス</div>
-          <input value={email} onChange={e=>{setEmail(e.target.value);setStatus("");}}
-            onKeyDown={e=>e.key==="Enter"&&handleCreate()}
-            placeholder="clinic@example.com" type="email" style={inp} />
-        </div>
-
-        {status==="success" && (
-          <div style={{ padding:"10px 14px",background:"#f0fdf6",border:"1px solid #a0d8b8",borderRadius:9,fontSize:13,color:"#1a7a50",fontWeight:600,marginBottom:12 }}>
-            ✅ アカウントを作成しました。パスワード設定メールを送信しました。
-          </div>
+        {!loading && (
+          <button onClick={handleSave} disabled={saving}
+            style={{ width:"100%", padding:"13px", borderRadius:10, border:"none",
+              background: saveMsg==="saved"?"#3aa876":saveMsg==="error"?"#e05050":"linear-gradient(135deg,#0f2744,#1a3d6e)",
+              color:"#fff", fontWeight:800, fontSize:14, cursor:"pointer", opacity:saving?0.7:1 }}>
+            {saving?"保存中...":saveMsg==="saved"?"✅ 保存しました！":saveMsg==="error"?"❌ エラー":"💾 変更を保存する"}
+          </button>
         )}
-        {status==="exists" && (
-          <div style={{ padding:"10px 14px",background:"#fffbef",border:"1px solid #e8c95a",borderRadius:9,fontSize:13,color:"#7a6020",marginBottom:12 }}>
-            ⚠ このメールアドレスはすでに登録されています。
-          </div>
-        )}
-        {status==="error" && (
-          <div style={{ padding:"10px 14px",background:"#fff0f0",border:"1px solid #e0c0c0",borderRadius:9,fontSize:13,color:"#c05050",marginBottom:12 }}>
-            ❌ 登録に失敗しました。メールアドレスを確認してください。
-          </div>
-        )}
-
-        <button onClick={handleCreate} disabled={status==="loading"} style={{ width:"100%",padding:"12px",borderRadius:10,border:"none",background:"linear-gradient(135deg,#0f2744,#1a3d6e)",color:"#fff",fontWeight:800,fontSize:14,cursor:"pointer",opacity:status==="loading"?0.7:1 }}>
-          {status==="loading" ? "登録中..." : "アカウントを作成してメール送信"}
-        </button>
+        {saveMsg==="saved" && <div style={{ marginTop:8, padding:"8px 12px", background:"#f0fdf6", border:"1px solid #3aa876", borderRadius:8, fontSize:12, color:"#1a7a50", textAlign:"center" }}>Firebaseに保存しました。お客様画面に反映されます。</div>}
       </div>
 
-      {/* パスワードリセット */}
-      <div style={{ background:"#fff",borderRadius:14,border:"1.5px solid #e4eaf3",padding:"20px",boxShadow:"0 2px 10px rgba(10,30,53,0.05)" }}>
-        <div style={{ fontSize:14,fontWeight:800,color:"#0f2744",marginBottom:4 }}>パスワードリセットメールを再送</div>
-        <div style={{ fontSize:12,color:"#8a95a5",marginBottom:16,lineHeight:1.6 }}>
-          パスワードを忘れたクリニックにリセットメールを再送します。
+      {/* ── 新規アカウント登録 ── */}
+      <div style={{ background:"#fff", borderRadius:14, border:"1.5px solid #e4eaf3", padding:"20px", boxShadow:"0 2px 10px rgba(10,30,53,0.05)" }}>
+        <div style={{ fontSize:14, fontWeight:800, color:"#0f2744", marginBottom:4 }}>➕ 新規クリニックアカウントを登録</div>
+        <div style={{ fontSize:12, color:"#8a95a5", marginBottom:16, lineHeight:1.6 }}>
+          メールアドレスを登録すると、クリニック担当者にパスワード設定メールが自動送信されます。登録後、紐づけ一覧に自動追加されます。
+        </div>
+
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:10 }}>
+          <div>
+            <div style={{ fontSize:11.5, color:"#8a95a5", marginBottom:4 }}>メールアドレス <span style={{ color:"#e05050" }}>*</span></div>
+            <input value={addEmail} onChange={e=>{setAddEmail(e.target.value);setCreateMsg("");}} placeholder="clinic@example.com" type="email" style={inp} />
+          </div>
+          <div>
+            <div style={{ fontSize:11.5, color:"#8a95a5", marginBottom:4 }}>担当者名</div>
+            <input value={addName} onChange={e=>setAddName(e.target.value)} placeholder="例：山田 太郎" style={inp} />
+          </div>
         </div>
         <div style={{ marginBottom:12 }}>
-          <div style={{ fontSize:11.5,color:"#8a95a5",marginBottom:4 }}>クリニックのメールアドレス</div>
-          <input value={resetEmail} onChange={e=>{setResetEmail(e.target.value);setResetStatus("");}}
-            onKeyDown={e=>e.key==="Enter"&&handleReset()}
-            placeholder="clinic@example.com" type="email" style={inp} />
+          <div style={{ fontSize:11.5, color:"#8a95a5", marginBottom:4 }}>紐づけるクリニック</div>
+          {clinicNames.length === 0 ? (
+            <div style={{ padding:"10px", background:"#fff8e8", borderRadius:8, fontSize:12, color:"#7a6020", border:"1px solid #e8c95a" }}>⚠ 先にCSVを取込んで「Firebaseに保存」してください</div>
+          ) : (
+            <select onChange={e => { const v=e.target.value; if(v && !addClinics.includes(v)) setAddClinics(p=>[...p,v]); e.target.value=""; }}
+              style={{ width:"100%", padding:"9px 11px", borderRadius:8, border:"1.5px solid #dde4ef", fontSize:13, outline:"none", background:"#fff" }}>
+              <option value="">-- クリニックを選択 --</option>
+              {clinicNames.map(n => <option key={n} value={n}>{n}</option>)}
+            </select>
+          )}
+          {addClinics.length > 0 && (
+            <div style={{ display:"flex", gap:5, flexWrap:"wrap", marginTop:8 }}>
+              {addClinics.map(c => (
+                <div key={c} style={{ display:"flex", alignItems:"center", gap:4, padding:"4px 10px", borderRadius:20, background:"#e8f0ff", border:"1.5px solid #4a7cc7" }}>
+                  <span style={{ fontSize:12, color:"#0f2744", fontWeight:700 }}>{c}</span>
+                  <button onClick={() => setAddClinics(p=>p.filter(x=>x!==c))} style={{ border:"none", background:"none", color:"#e05050", fontWeight:900, fontSize:13, cursor:"pointer", padding:0 }}>×</button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
-        {resetStatus==="success" && (
-          <div style={{ padding:"10px 14px",background:"#f0fdf6",border:"1px solid #a0d8b8",borderRadius:9,fontSize:13,color:"#1a7a50",fontWeight:600,marginBottom:12 }}>
-            ✅ パスワードリセットメールを送信しました。
-          </div>
-        )}
-        {resetStatus==="error" && (
-          <div style={{ padding:"10px 14px",background:"#fff0f0",border:"1px solid #e0c0c0",borderRadius:9,fontSize:13,color:"#c05050",marginBottom:12 }}>
-            ❌ 送信に失敗しました。メールアドレスを確認してください。
-          </div>
-        )}
-        <button onClick={handleReset} disabled={resetStatus==="loading"} style={{ width:"100%",padding:"12px",borderRadius:10,border:"none",background:"#6b8cba",color:"#fff",fontWeight:800,fontSize:14,cursor:"pointer",opacity:resetStatus==="loading"?0.7:1 }}>
-          {resetStatus==="loading" ? "送信中..." : "リセットメールを送信"}
+
+        {createMsg === "success" && <div style={{ padding:"10px 14px", background:"#f0fdf6", border:"1px solid #a0d8b8", borderRadius:9, fontSize:13, color:"#1a7a50", fontWeight:600, marginBottom:12 }}>✅ アカウントを作成し、パスワード設定メールを送信しました。</div>}
+        {createMsg === "exists" && <div style={{ padding:"10px 14px", background:"#fffbef", border:"1px solid #e8c95a", borderRadius:9, fontSize:13, color:"#7a6020", marginBottom:12 }}>⚠ このメールアドレスはすでに登録されています。</div>}
+        {createMsg === "error" && <div style={{ padding:"10px 14px", background:"#fff0f0", border:"1px solid #e0c0c0", borderRadius:9, fontSize:13, color:"#c05050", marginBottom:12 }}>❌ 登録に失敗しました。</div>}
+
+        <button onClick={handleCreate} disabled={creating || !addEmail.trim()}
+          style={{ width:"100%", padding:"12px", borderRadius:10, border:"none", background:"linear-gradient(135deg,#0f2744,#1a3d6e)", color:"#fff", fontWeight:800, fontSize:14, cursor:"pointer", opacity:(creating||!addEmail.trim())?0.6:1 }}>
+          {creating ? "登録中..." : "アカウントを作成してメール送信"}
         </button>
       </div>
     </div>
@@ -871,9 +706,7 @@ function CsvImportModal({ onImport, onClose }) {
         {error&&<div style={{ padding:"10px 14px",background:"#fff0f0",border:"1px solid #e0c0c0",borderRadius:10,color:"#c05050",fontSize:13,marginTop:12 }}>⚠ {error}</div>}
         {preview&&(
           <div>
-            <div style={{ padding:"10px 14px",background:"#f0fdf6",border:"1px solid #a0d8b8",borderRadius:10,marginBottom:14,fontSize:13,color:"#1a7a50",fontWeight:600 }}>
-              ✅ {preview.length}件の注文、合計{preview.reduce((s,o)=>s+o.products.length,0)}商品を読み込みました
-            </div>
+            <div style={{ padding:"10px 14px",background:"#f0fdf6",border:"1px solid #a0d8b8",borderRadius:10,marginBottom:14,fontSize:13,color:"#1a7a50",fontWeight:600 }}>✅ {preview.length}件の注文、合計{preview.reduce((s,o)=>s+o.products.length,0)}商品を読み込みました</div>
             <div style={{ maxHeight:240,overflowY:"auto",border:"1.5px solid #e4eaf3",borderRadius:12,marginBottom:14 }}>
               {preview.map((o,i)=>(
                 <div key={i} style={{ padding:"10px 14px",borderBottom:"1px solid #f0f4f9" }}>
@@ -888,9 +721,7 @@ function CsvImportModal({ onImport, onClose }) {
                 </div>
               ))}
             </div>
-            <div style={{ background:"#fffbef",border:"1px solid #e8c95a",borderRadius:10,padding:"10px 14px",fontSize:12.5,color:"#7a6020",marginBottom:14 }}>
-              💡 全商品「注文受付済み」で取り込まれます。取り込み後にステータスを更新してください。
-            </div>
+            <div style={{ background:"#fffbef",border:"1px solid #e8c95a",borderRadius:10,padding:"10px 14px",fontSize:12.5,color:"#7a6020",marginBottom:14 }}>💡 全商品「注文受付済み」で取り込まれます。取り込み後にステータスを更新してください。</div>
             <div style={{ display:"flex",gap:8 }}>
               <button onClick={()=>setPreview(null)} style={{ flex:1,padding:12,borderRadius:10,border:"1.5px solid #dde4ef",background:"#fff",fontSize:14,cursor:"pointer",color:"#666" }}>やり直す</button>
               <button onClick={()=>{ onImport(preview); onClose(); }} style={{ flex:2,padding:12,borderRadius:10,border:"none",background:"linear-gradient(135deg,#0f2744,#1a3d6e)",color:"#fff",fontWeight:800,fontSize:14,cursor:"pointer" }}>{preview.length}件をインポートする</button>
@@ -928,9 +759,7 @@ function ProductEditor({ product, index, onChange, onDelete }) {
               <div style={{ fontSize:11,color:"#a04010",fontWeight:700,marginBottom:8 }}>🔶 分納履歴</div>
               {product.deliveryRecords.map((r,i)=>(
                 <div key={i} style={{ display:"flex",alignItems:"center",gap:8,marginBottom:4,fontSize:12 }}>
-                  <span style={{ padding:"2px 7px",borderRadius:5,background:r.status==="発送済"?"#e8f4ee":"#f4f6fb",color:r.status==="発送済"?"#1a7a50":"#6a7a8a",fontWeight:700,fontSize:11,flexShrink:0 }}>
-                    {r.status==="発送済"?"✅ 発送済":"📋 未発送"}
-                  </span>
+                  <span style={{ padding:"2px 7px",borderRadius:5,background:r.status==="発送済"?"#e8f4ee":"#f4f6fb",color:r.status==="発送済"?"#1a7a50":"#6a7a8a",fontWeight:700,fontSize:11,flexShrink:0 }}>{r.status==="発送済"?"✅ 発送済":"📋 未発送"}</span>
                   <span style={{ color:"#1a2a3a",fontWeight:600 }}>{r.qty}{r.unit}</span>
                   {r.delivDate&&<span style={{ color:"#8a95a5" }}>納品日：{r.delivDate}</span>}
                   {r.shipDate&&!r.delivDate&&<span style={{ color:"#8a95a5" }}>発送日：{r.shipDate}</span>}
@@ -952,9 +781,7 @@ function ProductEditor({ product, index, onChange, onDelete }) {
             <div style={{ fontSize:11,color:"#8a95a5",marginBottom:6 }}>ステータス</div>
             <div style={{ display:"flex",flexWrap:"wrap",gap:5 }}>
               {STATUS_STAGES.map(st=>(
-                <button key={st.id} onClick={()=>onChange("status",st.id)} style={{ padding:"5px 9px",borderRadius:8,border:"1.5px solid",borderColor:product.status===st.id?st.color:"#dde4ef",background:product.status===st.id?st.color:"#fff",color:product.status===st.id?"#fff":"#4a5568",fontSize:11,fontWeight:product.status===st.id?700:400,cursor:"pointer",whiteSpace:"nowrap" }}>
-                  {st.icon} {st.label}
-                </button>
+                <button key={st.id} onClick={()=>onChange("status",st.id)} style={{ padding:"5px 9px",borderRadius:8,border:"1.5px solid",borderColor:product.status===st.id?st.color:"#dde4ef",background:product.status===st.id?st.color:"#fff",color:product.status===st.id?"#fff":"#4a5568",fontSize:11,fontWeight:product.status===st.id?700:400,cursor:"pointer",whiteSpace:"nowrap" }}>{st.icon} {st.label}</button>
               ))}
             </div>
           </div>
@@ -1012,7 +839,6 @@ function OrderCard({ order, onUpdate, onDelete }) {
   );
 }
 
-// ── グループセクション ────────────────────────────────────────────────────
 function GroupSection({ title, orders, onUpdate, onDelete, defaultOpen }) {
   const [open,setOpen]=useState(defaultOpen??true);
   const activeCount=orders.filter(o=>o.products.some(p=>p.status<6)).length;
@@ -1031,98 +857,30 @@ function GroupSection({ title, orders, onUpdate, onDelete, defaultOpen }) {
   );
 }
 
-
-
 // ── 出荷指示書印刷 ───────────────────────────────────────────────────────────
 function PrintInstructModal({ orders, onClose }) {
   const [selectedDate, setSelectedDate] = useState("");
-
-  // 出荷指示のある日付一覧を収集
-  const allDates = [...new Set(
-    orders.flatMap(o => (o.shipInstructions||[]).map(i => i.instructedAt?.slice(0,10) || ""))
-      .filter(Boolean)
-  )].sort((a,b) => b.localeCompare(a));
-
+  const allDates = [...new Set(orders.flatMap(o => (o.shipInstructions||[]).map(i => i.instructedAt?.slice(0,10) || "")).filter(Boolean))].sort((a,b) => b.localeCompare(a));
   const currentDate = selectedDate || allDates[0] || "";
-
-  // 選択日付の指示を集計
   const instrItems = [];
   orders.forEach(order => {
     (order.shipInstructions||[]).forEach(instr => {
       const d = instr.instructedAt?.slice(0,10) || instr.instructedAt || "";
       if (d === currentDate || instr.instructedAt === currentDate) {
-        instrItems.push({
-          clinic: order.clinic,
-          orderId: order.id,
-          productName: instr.productName,
-          qty: instr.qty,
-          unit: instr.unit || "",
-          instructedAt: instr.instructedAt,
-        });
+        instrItems.push({ clinic: order.clinic, orderId: order.id, productName: instr.productName, qty: instr.qty, unit: instr.unit || "", instructedAt: instr.instructedAt });
       }
     });
   });
-
-  // クリニック別にグループ化
   const grouped = {};
-  instrItems.forEach(item => {
-    if (!grouped[item.clinic]) grouped[item.clinic] = [];
-    grouped[item.clinic].push(item);
-  });
-
+  instrItems.forEach(item => { if (!grouped[item.clinic]) grouped[item.clinic] = []; grouped[item.clinic].push(item); });
   const handlePrint = () => {
     const win = window.open('', '_blank');
     const rows = Object.entries(grouped).flatMap(([clinic, items]) =>
-      items.map((item, i) => `
-        <tr>
-          <td style="border:1px solid #ccc;padding:7px 10px;${i===0?'border-top:2px solid #888;':''}">${i===0?clinic:''}</td>
-          <td style="border:1px solid #ccc;padding:7px 10px;${i===0?'border-top:2px solid #888;':''}">${i===0?item.orderId:''}</td>
-          <td style="border:1px solid #ccc;padding:7px 10px;${i===0?'border-top:2px solid #888;':''}">${item.productName}</td>
-          <td style="border:1px solid #ccc;padding:7px 10px;text-align:center;font-weight:bold;${i===0?'border-top:2px solid #888;':''}">${item.qty}${item.unit}</td>
-          <td style="border:1px solid #ccc;padding:7px 10px;${i===0?'border-top:2px solid #888;':''}"></td>
-        </tr>`)
+      items.map((item, i) => `<tr><td style="border:1px solid #ccc;padding:7px 10px;${i===0?'border-top:2px solid #888;':''}">${i===0?clinic:''}</td><td style="border:1px solid #ccc;padding:7px 10px;${i===0?'border-top:2px solid #888;':''}">${i===0?item.orderId:''}</td><td style="border:1px solid #ccc;padding:7px 10px;${i===0?'border-top:2px solid #888;':''}">${item.productName}</td><td style="border:1px solid #ccc;padding:7px 10px;text-align:center;font-weight:bold;${i===0?'border-top:2px solid #888;':''}">${item.qty}${item.unit}</td><td style="border:1px solid #ccc;padding:7px 10px;${i===0?'border-top:2px solid #888;':''}"></td></tr>`)
     ).join('');
-
-    win.document.write(`<!DOCTYPE html>
-<html lang="ja"><head><meta charset="UTF-8">
-<title>出荷指示書 ${currentDate}</title>
-<style>
-  * { box-sizing:border-box; margin:0; padding:0; }
-  body { font-family:'Hiragino Sans','Yu Gothic',sans-serif; padding:20px; font-size:12px; }
-  h1 { font-size:18px; margin-bottom:4px; }
-  .meta { color:#666; margin-bottom:16px; font-size:11px; }
-  table { width:100%; border-collapse:collapse; }
-  th { background:#0f2744; color:#fff; padding:8px 10px; text-align:left; font-size:12px; }
-  th:last-child { width:120px; }
-  td:nth-child(4) { text-align:center; font-weight:bold; }
-  @media print {
-    body { padding:10mm; }
-    button { display:none; }
-  }
-</style>
-</head><body>
-<h1>📦 出荷指示書</h1>
-<div class="meta">指示日：${currentDate}　／　合計 ${instrItems.length} 件　／　発行：${new Date().toLocaleDateString('ja-JP')}</div>
-<table>
-  <thead>
-    <tr>
-      <th style="width:16%">クリニック</th>
-      <th style="width:13%">受注番号</th>
-      <th>商品名</th>
-      <th style="width:9%">数量</th>
-      <th style="width:18%">備考</th>
-    </tr>
-  </thead>
-  <tbody>${rows}</tbody>
-</table>
-<div style="margin-top:24px;font-size:11px;color:#999;text-align:right">
-  合計 ${instrItems.length} 商品 ／ ${Object.keys(grouped).length} クリニック
-</div>
-<script>window.onload=()=>window.print();<\/script>
-</body></html>`);
+    win.document.write(`<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><title>出荷指示書 ${currentDate}</title><style>*{box-sizing:border-box;margin:0;padding:0;}body{font-family:'Hiragino Sans','Yu Gothic',sans-serif;padding:20px;font-size:12px;}h1{font-size:18px;margin-bottom:4px;}.meta{color:#666;margin-bottom:16px;font-size:11px;}table{width:100%;border-collapse:collapse;}th{background:#0f2744;color:#fff;padding:8px 10px;text-align:left;font-size:12px;}th:last-child{width:120px;}td:nth-child(4){text-align:center;font-weight:bold;}@media print{body{padding:10mm;}button{display:none;}}</style></head><body><h1>📦 出荷指示書</h1><div class="meta">指示日：${currentDate}　／　合計 ${instrItems.length} 件　／　発行：${new Date().toLocaleDateString('ja-JP')}</div><table><thead><tr><th style="width:16%">クリニック</th><th style="width:13%">受注番号</th><th>商品名</th><th style="width:9%">数量</th><th style="width:18%">備考</th></tr></thead><tbody>${rows}</tbody></table><div style="margin-top:24px;font-size:11px;color:#999;text-align:right">合計 ${instrItems.length} 商品 ／ ${Object.keys(grouped).length} クリニック</div><script>window.onload=()=>window.print();<\/script></body></html>`);
     win.document.close();
   };
-
   return (
     <div style={{ position:"fixed", inset:0, background:"rgba(10,20,40,0.6)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:300, padding:16 }}>
       <div style={{ background:"#fff", borderRadius:16, padding:"24px 24px", width:"100%", maxWidth:520, boxShadow:"0 20px 60px rgba(0,0,0,0.3)" }}>
@@ -1130,170 +888,83 @@ function PrintInstructModal({ orders, onClose }) {
           <div style={{ fontSize:16, fontWeight:800, color:"#0f2744" }}>📄 出荷指示書を印刷</div>
           <button onClick={onClose} style={{ background:"none", border:"none", fontSize:22, cursor:"pointer", color:"#8a95a5" }}>✕</button>
         </div>
-
-        {/* 日付選択 */}
         <div style={{ marginBottom:16 }}>
           <div style={{ fontSize:12, color:"#8a95a5", marginBottom:8 }}>指示日を選択</div>
           <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
-            {allDates.length === 0 ? (
-              <div style={{ fontSize:13, color:"#aaa" }}>出荷指示の記録がありません</div>
-            ) : allDates.map(d => (
-              <button key={d} onClick={() => setSelectedDate(d)}
-                style={{ padding:"6px 12px", borderRadius:20, border:"1.5px solid",
-                  borderColor: currentDate===d ? "#0f2744" : "#dde4ef",
-                  background: currentDate===d ? "#0f2744" : "#fff",
-                  color: currentDate===d ? "#fff" : "#4a5568",
-                  fontWeight: currentDate===d ? 700 : 400, fontSize:12.5, cursor:"pointer" }}>
-                {d}
-              </button>
-            ))}
+            {allDates.length === 0 ? (<div style={{ fontSize:13, color:"#aaa" }}>出荷指示の記録がありません</div>)
+            : allDates.map(d => (<button key={d} onClick={() => setSelectedDate(d)} style={{ padding:"6px 12px", borderRadius:20, border:"1.5px solid", borderColor:currentDate===d?"#0f2744":"#dde4ef", background:currentDate===d?"#0f2744":"#fff", color:currentDate===d?"#fff":"#4a5568", fontWeight:currentDate===d?700:400, fontSize:12.5, cursor:"pointer" }}>{d}</button>))}
           </div>
         </div>
-
-        {/* プレビュー */}
         {currentDate && instrItems.length > 0 && (
           <div style={{ background:"#f8fafd", border:"1.5px solid #e4eaf3", borderRadius:10, padding:"12px 14px", marginBottom:16, maxHeight:240, overflowY:"auto" }}>
-            <div style={{ fontSize:11, color:"#8a95a5", marginBottom:8 }}>
-              {instrItems.length}件 ／ {Object.keys(grouped).length}クリニック
-            </div>
+            <div style={{ fontSize:11, color:"#8a95a5", marginBottom:8 }}>{instrItems.length}件 ／ {Object.keys(grouped).length}クリニック</div>
             {Object.entries(grouped).map(([clinic, items]) => (
               <div key={clinic} style={{ marginBottom:10 }}>
                 <div style={{ fontSize:12, fontWeight:700, color:"#0f2744", marginBottom:4 }}>{clinic}</div>
-                {items.map((item, i) => (
-                  <div key={i} style={{ display:"flex", gap:8, fontSize:12, color:"#4a5568", padding:"2px 0 2px 8px" }}>
-                    <span style={{ fontWeight:700, color:"#e07d20" }}>{item.qty}{item.unit}</span>
-                    <span style={{ flex:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{item.productName}</span>
-                  </div>
-                ))}
+                {items.map((item, i) => (<div key={i} style={{ display:"flex", gap:8, fontSize:12, color:"#4a5568", padding:"2px 0 2px 8px" }}><span style={{ fontWeight:700, color:"#e07d20" }}>{item.qty}{item.unit}</span><span style={{ flex:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{item.productName}</span></div>))}
               </div>
             ))}
           </div>
         )}
-        {currentDate && instrItems.length === 0 && (
-          <div style={{ padding:"20px", textAlign:"center", color:"#aaa", fontSize:13, marginBottom:16 }}>
-            この日付の出荷指示はありません
-          </div>
-        )}
-
-        {/* 出荷写真確認リンク */}
-        <div style={{ padding:"10px 12px", background:"#f8fafd", borderRadius:9, border:"1px solid #e4eaf3", marginBottom:12, fontSize:12, color:"#4a7cc7", textAlign:"center" }}>
-          📷 スマホで撮影した写真は
-          <a href="https://pattosystem.github.io/-/admin_mobile.html" target="_blank"
-            style={{ color:"#4a7cc7", fontWeight:700, marginLeft:4 }}>出荷指示書アプリ</a>
-          で確認できます
-        </div>
+        {currentDate && instrItems.length === 0 && (<div style={{ padding:"20px", textAlign:"center", color:"#aaa", fontSize:13, marginBottom:16 }}>この日付の出荷指示はありません</div>)}
+        <div style={{ padding:"10px 12px", background:"#f8fafd", borderRadius:9, border:"1px solid #e4eaf3", marginBottom:12, fontSize:12, color:"#4a7cc7", textAlign:"center" }}>📷 スマホで撮影した写真は<a href="https://pattosystem.github.io/-/admin_mobile.html" target="_blank" style={{ color:"#4a7cc7", fontWeight:700, marginLeft:4 }}>出荷指示書アプリ</a>で確認できます</div>
         <div style={{ display:"flex", gap:8 }}>
           <button onClick={onClose} style={{ flex:1, padding:12, borderRadius:10, border:"1.5px solid #dde4ef", background:"#fff", fontSize:14, cursor:"pointer", color:"#666" }}>閉じる</button>
-          <button onClick={handlePrint} disabled={instrItems.length === 0}
-            style={{ flex:2, padding:12, borderRadius:10, border:"none", background:"#0f2744", color:"#fff", fontWeight:800, fontSize:14, cursor:"pointer", opacity:instrItems.length===0?0.4:1 }}>
-            🖨️ 印刷する（{instrItems.length}件）
-          </button>
+          <button onClick={handlePrint} disabled={instrItems.length === 0} style={{ flex:2, padding:12, borderRadius:10, border:"none", background:"#0f2744", color:"#fff", fontWeight:800, fontSize:14, cursor:"pointer", opacity:instrItems.length===0?0.4:1 }}>🖨️ 印刷する（{instrItems.length}件）</button>
         </div>
       </div>
     </div>
   );
 }
 
-// ── 出荷指示セルコンポーネント ──────────────────────────────────────────────
+// ── 出荷指示セル ──────────────────────────────────────────────────────────
 function ShipInstructCell({ product: p, rowBg, instructions, onAdd, onCancel }) {
   const [showForm, setShowForm] = useState(false);
   const [inputQty, setInputQty] = useState("");
   const [photoModal, setPhotoModal] = useState(null);
   const unit = p.unit || "";
-
-  const handleConfirm = () => {
-    if (!inputQty.trim()) return;
-    onAdd(inputQty);
-    setInputQty(""); setShowForm(false);
-  };
-
-  // 完了・配送中・通関中は不要
+  const handleConfirm = () => { if (!inputQty.trim()) return; onAdd(inputQty); setInputQty(""); setShowForm(false); };
   if (p.status === 6 || p.status === 5 || p.status === 4) {
-    return (
-      <td style={{ padding:"6px 8px", borderLeft:"1px solid #edf0f6", background:rowBg, textAlign:"center" }}>
-        <span style={{ fontSize:10, color:"#c0c8d4" }}>—</span>
-      </td>
-    );
+    return (<td style={{ padding:"6px 8px", borderLeft:"1px solid #edf0f6", background:rowBg, textAlign:"center" }}><span style={{ fontSize:10, color:"#c0c8d4" }}>—</span></td>);
   }
-
   return (
     <td style={{ padding:"6px 8px", borderLeft:"1px solid #edf0f6", background:rowBg, verticalAlign:"top" }}>
-      {/* 履歴一覧 */}
       {instructions.length > 0 && (
         <div style={{ marginBottom:4 }}>
           {instructions.map((instr, idx) => (
-            <div key={instr.id||idx} style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between",
-              background:"#f0fdf6", border:"1px solid #b8e8cc", borderRadius:5,
-              padding:"3px 5px", marginBottom:3, gap:4 }}>
+            <div key={instr.id||idx} style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", background:"#f0fdf6", border:"1px solid #b8e8cc", borderRadius:5, padding:"3px 5px", marginBottom:3, gap:4 }}>
               <div style={{ flex:1 }}>
                 <div style={{ fontSize:10, fontWeight:700, color:"#1a7a50" }}>📤 {instr.qty}{instr.unit}</div>
                 <div style={{ fontSize:9.5, color:"#8a95a5" }}>{instr.instructedAt}</div>
               </div>
-              {instr.photo && (
-                <img src={instr.photo} onClick={()=>setPhotoModal(instr.photo)}
-                  style={{ width:36, height:36, objectFit:"cover", borderRadius:4, cursor:"pointer", border:"1px solid #b8e8cc", flexShrink:0 }}
-                  title="クリックで拡大" />
-              )}
-              <button onClick={() => onCancel(instr.id||idx)} title="取消"
-                style={{ border:"none", background:"none", color:"#e05050",
-                  fontSize:12, cursor:"pointer", padding:"0 2px", lineHeight:1, flexShrink:0 }}>
-                ✕
-              </button>
+              {instr.photo && (<img src={instr.photo} onClick={()=>setPhotoModal(instr.photo)} style={{ width:36, height:36, objectFit:"cover", borderRadius:4, cursor:"pointer", border:"1px solid #b8e8cc", flexShrink:0 }} title="クリックで拡大" />)}
+              <button onClick={() => onCancel(instr.id||idx)} title="取消" style={{ border:"none", background:"none", color:"#e05050", fontSize:12, cursor:"pointer", padding:"0 2px", lineHeight:1, flexShrink:0 }}>✕</button>
             </div>
           ))}
         </div>
       )}
-      {/* 入力フォーム */}
       {showForm ? (
         <div style={{ background:"#fffbef", border:"1px solid #e8c95a", borderRadius:6, padding:"5px" }}>
           <div style={{ fontSize:10, color:"#7a6020", marginBottom:3, fontWeight:700 }}>出荷数量</div>
           <div style={{ display:"flex", gap:3, alignItems:"center", marginBottom:4 }}>
-            <input type="number" min="1" value={inputQty}
-              onChange={e => setInputQty(e.target.value)}
-              onKeyDown={e => e.key==="Enter" && handleConfirm()}
-              placeholder="数量" autoFocus
-              style={{ width:"55px", padding:"3px 5px", borderRadius:5,
-                border:"1.5px solid #e8c95a", fontSize:11, outline:"none" }}
-            />
+            <input type="number" min="1" value={inputQty} onChange={e => setInputQty(e.target.value)} onKeyDown={e => e.key==="Enter" && handleConfirm()} placeholder="数量" autoFocus style={{ width:"55px", padding:"3px 5px", borderRadius:5, border:"1.5px solid #e8c95a", fontSize:11, outline:"none" }} />
             <span style={{ fontSize:10, color:"#7a6020" }}>{unit}</span>
           </div>
           <div style={{ display:"flex", gap:3 }}>
-            <button onClick={handleConfirm}
-              style={{ flex:2, padding:"4px 0", borderRadius:5, border:"none",
-                background:"#e07d20", color:"#fff", fontSize:10, fontWeight:700, cursor:"pointer" }}>
-              確定
-            </button>
-            <button onClick={() => { setShowForm(false); setInputQty(""); }}
-              style={{ flex:1, padding:"4px 0", borderRadius:5,
-                border:"1.5px solid #dde4ef", background:"#fff", color:"#888", fontSize:10, cursor:"pointer" }}>
-              戻る
-            </button>
+            <button onClick={handleConfirm} style={{ flex:2, padding:"4px 0", borderRadius:5, border:"none", background:"#e07d20", color:"#fff", fontSize:10, fontWeight:700, cursor:"pointer" }}>確定</button>
+            <button onClick={() => { setShowForm(false); setInputQty(""); }} style={{ flex:1, padding:"4px 0", borderRadius:5, border:"1.5px solid #dde4ef", background:"#fff", color:"#888", fontSize:10, cursor:"pointer" }}>戻る</button>
           </div>
         </div>
       ) : (
-        <button onClick={() => setShowForm(true)}
-          style={{ width:"100%", padding:"4px 0", borderRadius:6,
-            border:"1.5px solid #e07d20", background:"#fff8f0",
-            color:"#e07d20", fontSize:10.5, fontWeight:700, cursor:"pointer" }}>
+        <button onClick={() => setShowForm(true)} style={{ width:"100%", padding:"4px 0", borderRadius:6, border:"1.5px solid #e07d20", background:"#fff8f0", color:"#e07d20", fontSize:10.5, fontWeight:700, cursor:"pointer" }}>
           {instructions.length > 0 ? "📤 再指示" : "📤 出荷指示"}
         </button>
       )}
-      {/* 写真拡大モーダル */}
       {photoModal && (
-        <div onClick={()=>setPhotoModal(null)}
-          style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.85)", zIndex:1000,
-            display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer", padding:20 }}>
+        <div onClick={()=>setPhotoModal(null)} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.85)", zIndex:1000, display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer", padding:20 }}>
           <div onClick={e=>e.stopPropagation()} style={{ position:"relative" }}>
             <img src={photoModal} style={{ maxWidth:"90vw", maxHeight:"85vh", borderRadius:10, objectFit:"contain", display:"block" }} />
-            <button onClick={()=>setPhotoModal(null)}
-              style={{ position:"absolute", top:-14, right:-14, width:32, height:32, borderRadius:"50%",
-                border:"none", background:"#fff", color:"#333", fontSize:16, cursor:"pointer", fontWeight:700,
-                boxShadow:"0 2px 8px rgba(0,0,0,0.4)", display:"flex", alignItems:"center", justifyContent:"center" }}>
-              ✕
-            </button>
-            <div style={{ textAlign:"center", color:"rgba(255,255,255,0.6)", fontSize:12, marginTop:8 }}>
-              タップで閉じる
-            </div>
+            <button onClick={()=>setPhotoModal(null)} style={{ position:"absolute", top:-14, right:-14, width:32, height:32, borderRadius:"50%", border:"none", background:"#fff", color:"#333", fontSize:16, cursor:"pointer", fontWeight:700, boxShadow:"0 2px 8px rgba(0,0,0,0.4)", display:"flex", alignItems:"center", justifyContent:"center" }}>✕</button>
           </div>
         </div>
       )}
@@ -1307,320 +978,100 @@ function StatusManager({ orders, onUpdate }) {
   const [selectedClinic, setSelectedClinic] = useState("all");
   const [showPrint, setShowPrint] = useState(false);
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all"); // all/pending/partial/done
-
-  function toMonthKey(d) {
-    const m = (d||"").match(/(\d{4}年\d{2}月)/);
-    return m ? m[1] : "不明";
-  }
-
+  const [statusFilter, setStatusFilter] = useState("all");
+  function toMonthKey(d) { const m = (d||"").match(/(\d{4}年\d{2}月)/); return m ? m[1] : "不明"; }
   const months = [...new Set(orders.map(o => toMonthKey(o.date)))].sort((a,b) => b.localeCompare(a));
   const currentMonth = selectedMonth || months[0] || "";
   const monthOrders = orders.filter(o => toMonthKey(o.date) === currentMonth);
   const clinics = ["all", ...new Set(monthOrders.map(o => o.clinic).filter(Boolean))];
   const baseOrders = selectedClinic === "all" ? monthOrders : monthOrders.filter(o => o.clinic === selectedClinic);
-  const searchFiltered = !search.trim() ? baseOrders : baseOrders.filter(o =>
-    o.id.includes(search.trim()) ||
-    (o.clinic||"").includes(search.trim()) ||
-    o.products.some(p => (p.name||"").includes(search.trim()))
-  );
-  // ステータス絞り込み（商品レベル）
-  const filtered = statusFilter === "all" ? searchFiltered : searchFiltered.filter(o =>
-    o.products.some(p => {
-      if (statusFilter === "pending") return p.status !== 6 && p.status !== 7;
-      if (statusFilter === "partial") return p.status === 7;
-      if (statusFilter === "done") return p.status === 6;
-      return true;
-    })
-  );
+  const searchFiltered = !search.trim() ? baseOrders : baseOrders.filter(o => o.id.includes(search.trim()) || (o.clinic||"").includes(search.trim()) || o.products.some(p => (p.name||"").includes(search.trim())));
+  const filtered = statusFilter === "all" ? searchFiltered : searchFiltered.filter(o => o.products.some(p => { if (statusFilter === "pending") return p.status !== 6 && p.status !== 7; if (statusFilter === "partial") return p.status === 7; if (statusFilter === "done") return p.status === 6; return true; }));
   const allP = filtered.flatMap(o => o.products);
-  // statsはフィルター前の全商品で計算（ボタンに正しい件数を表示）
   const baseP = searchFiltered.flatMap(o => o.products);
-  const stats = {
-    done:    baseP.filter(p => p.status === 6).length,
-    partial: baseP.filter(p => p.status === 7).length,
-    notship: baseP.filter(p => p.status < 5 && p.status !== 7).length,
-    total:   baseP.length,
-  };
-
+  const stats = { done: baseP.filter(p => p.status === 6).length, partial: baseP.filter(p => p.status === 7).length, notship: baseP.filter(p => p.status < 5 && p.status !== 7).length, total: baseP.length };
   function statusLabel(p) {
-    if (p.status === 6) return { text:"完了",    bg:"#e8f4ee", color:"#1a7a50" };
+    if (p.status === 6) return { text:"完了", bg:"#e8f4ee", color:"#1a7a50" };
     if (p.status === 7) return { text:"一部納品", bg:"#fff8f0", color:"#e07d20" };
-    if (p.status === 5) return { text:"配送中",   bg:"#f0f6ff", color:"#3aa876" };
-    if (p.status === 4) return { text:"通関中",   bg:"#fff8e8", color:"#b87f0a" };
-    return                     { text:"未納",     bg:"#fff0f0", color:"#e05050" };
+    if (p.status === 5) return { text:"配送中", bg:"#f0f6ff", color:"#3aa876" };
+    if (p.status === 4) return { text:"通関中", bg:"#fff8e8", color:"#b87f0a" };
+    return { text:"未納", bg:"#fff0f0", color:"#e05050" };
   }
-
   function delivSummary(p) {
     if (!p.deliveryRecords || p.deliveryRecords.length === 0) {
       if (p.status === 6) return [{ label: p.qty, date:"完了", done:true }];
       return [{ label: p.qty, date:"未発送", done:false }];
     }
-    return p.deliveryRecords.filter(r => r.qty > 0).map(r => ({
-      label: `${r.qty}${r.unit||""}`,
-      date:  r.delivDate ? r.delivDate.slice(5) : (r.shipDate ? r.shipDate.slice(5) : "未発送"),
-      done:  r.status === "発送済"
-    }));
+    return p.deliveryRecords.filter(r => r.qty > 0).map(r => ({ label: `${r.qty}${r.unit||""}`, date: r.delivDate ? r.delivDate.slice(5) : (r.shipDate ? r.shipDate.slice(5) : "未発送"), done: r.status === "発送済" }));
   }
-
   return (
     <div style={{ fontSize:12 }}>
-
       {showPrint && <PrintInstructModal orders={orders} onClose={() => setShowPrint(false)} />}
-
-      {/* 月タブ + 印刷ボタン */}
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10, gap:8, flexWrap:"wrap" }}>
         <div style={{ display:"flex", gap:4, flexWrap:"wrap" }}>
-        {months.map(m => (
-          <button key={m} onClick={() => { setSelectedMonth(m); setSelectedClinic("all"); }}
-            style={{ padding:"4px 11px", borderRadius:14, border:"1.5px solid", flexShrink:0,
-              borderColor:currentMonth===m?"#0f2744":"#dde4ef",
-              background:currentMonth===m?"#0f2744":"#fff",
-              color:currentMonth===m?"#fff":"#4a5568",
-              fontWeight:currentMonth===m?700:400, fontSize:11.5, cursor:"pointer" }}>
-            {m}
-          </button>
-        ))}
+          {months.map(m => (<button key={m} onClick={() => { setSelectedMonth(m); setSelectedClinic("all"); }} style={{ padding:"4px 11px", borderRadius:14, border:"1.5px solid", flexShrink:0, borderColor:currentMonth===m?"#0f2744":"#dde4ef", background:currentMonth===m?"#0f2744":"#fff", color:currentMonth===m?"#fff":"#4a5568", fontWeight:currentMonth===m?700:400, fontSize:11.5, cursor:"pointer" }}>{m}</button>))}
         </div>
-        <button onClick={() => setShowPrint(true)}
-          style={{ padding:"6px 14px", borderRadius:8, border:"1.5px solid #0f2744",
-            background:"#0f2744", color:"#fff", fontWeight:700, fontSize:12.5, cursor:"pointer",
-            whiteSpace:"nowrap", flexShrink:0 }}>
-          🖨️ 出荷指示書を印刷
-        </button>
+        <button onClick={() => setShowPrint(true)} style={{ padding:"6px 14px", borderRadius:8, border:"1.5px solid #0f2744", background:"#0f2744", color:"#fff", fontWeight:700, fontSize:12.5, cursor:"pointer", whiteSpace:"nowrap", flexShrink:0 }}>🖨️ 出荷指示書を印刷</button>
       </div>
-
-      {/* サマリー + クリニック絞り込み */}
       <div style={{ display:"flex", gap:10, marginBottom:10, alignItems:"flex-start", flexWrap:"wrap" }}>
         <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
-          {[
-            { key:"all",     l:"全商品",      v:stats.total,   c:"#4a7cc7", bg:"#f0f4ff" },
-            { key:"pending", l:"未納",        v:stats.notship, c:"#e05050", bg:"#fff0f0" },
-            { key:"partial", l:"一部発送済み", v:stats.partial, c:"#e07d20", bg:"#fff8f0" },
-            { key:"done",    l:"完了",        v:stats.done,    c:"#1a7a50", bg:"#e8f4ee" },
-          ].map(s => (
-            <button key={s.key} onClick={() => setStatusFilter(s.key)}
-              style={{ padding:"5px 12px", borderRadius:20, cursor:"pointer", border:`1.5px solid ${s.c}`,
-                background: statusFilter===s.key ? s.c : s.bg,
-                color: statusFilter===s.key ? "#fff" : s.c,
-                fontWeight:700, fontSize:12.5,
-                boxShadow: statusFilter===s.key ? `0 2px 6px ${s.c}44` : "none" }}>
-              {s.l} {s.v}
-            </button>
-          ))}
+          {[{key:"all",l:"全商品",v:stats.total,c:"#4a7cc7",bg:"#f0f4ff"},{key:"pending",l:"未納",v:stats.notship,c:"#e05050",bg:"#fff0f0"},{key:"partial",l:"一部発送済み",v:stats.partial,c:"#e07d20",bg:"#fff8f0"},{key:"done",l:"完了",v:stats.done,c:"#1a7a50",bg:"#e8f4ee"}].map(s => (<button key={s.key} onClick={() => setStatusFilter(s.key)} style={{ padding:"5px 12px", borderRadius:20, cursor:"pointer", border:`1.5px solid ${s.c}`, background:statusFilter===s.key?s.c:s.bg, color:statusFilter===s.key?"#fff":s.c, fontWeight:700, fontSize:12.5, boxShadow:statusFilter===s.key?`0 2px 6px ${s.c}44`:"none" }}>{s.l} {s.v}</button>))}
         </div>
-        {/* 検索欄 */}
         <div style={{ width:"100%", marginBottom:6 }}>
-          <input
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder="受注番号・クリニック名・商品名で検索"
-            style={{ width:"100%", padding:"8px 14px", borderRadius:9, border:"1.5px solid #dde4ef",
-              fontSize:13, outline:"none", background:"#fff", color:"#1a2a3a" }}
-          />
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="受注番号・クリニック名・商品名で検索" style={{ width:"100%", padding:"8px 14px", borderRadius:9, border:"1.5px solid #dde4ef", fontSize:13, outline:"none", background:"#fff", color:"#1a2a3a" }} />
         </div>
         <div style={{ display:"flex", gap:4, flexWrap:"wrap", flex:1 }}>
-          {clinics.map(c => (
-            <button key={c} onClick={() => setSelectedClinic(c)}
-              style={{ padding:"3px 9px", borderRadius:12, border:"1.5px solid",
-                borderColor:selectedClinic===c?"#d4a843":"#dde4ef",
-                background:selectedClinic===c?"#d4a843":"#fff",
-                color:selectedClinic===c?"#0f2744":"#4a5568",
-                fontWeight:selectedClinic===c?700:400, fontSize:11, cursor:"pointer", whiteSpace:"nowrap" }}>
-              {c === "all" ? "全て" : c}
-            </button>
-          ))}
+          {clinics.map(c => (<button key={c} onClick={() => setSelectedClinic(c)} style={{ padding:"3px 9px", borderRadius:12, border:"1.5px solid", borderColor:selectedClinic===c?"#d4a843":"#dde4ef", background:selectedClinic===c?"#d4a843":"#fff", color:selectedClinic===c?"#0f2744":"#4a5568", fontWeight:selectedClinic===c?700:400, fontSize:11, cursor:"pointer", whiteSpace:"nowrap" }}>{c === "all" ? "全て" : c}</button>))}
         </div>
       </div>
-
-      {filtered.length === 0 && (
-        <div style={{ textAlign:"center", padding:"40px", color:"#aaa" }}>該当する注文がありません</div>
-      )}
-
-      {/* テーブル：overflow:hidden で横スクロールなし */}
+      {filtered.length === 0 && (<div style={{ textAlign:"center", padding:"40px", color:"#aaa" }}>該当する注文がありません</div>)}
       <div style={{ border:"1.5px solid #e4eaf3", borderRadius:10, overflow:"hidden", boxShadow:"0 2px 8px rgba(10,30,53,0.05)" }}>
         <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11.5 }}>
-          <colgroup>
-            <col style={{ width:"11%" }} />
-            <col style={{ width:"10%" }} />
-            <col style={{ width:"17%" }} />
-            <col style={{ width:"5%" }} />
-            <col style={{ width:"18%" }} />
-            <col style={{ width:"5%" }} />
-            <col style={{ width:"7%" }} />
-            <col style={{ width:"9%" }} />
-            <col style={{ width:"9%" }} />
-            <col style={{ width:"9%" }} />
-          </colgroup>
-          <thead>
-            <tr style={{ background:"#0f2744" }}>
-              {["受注番号","クリニック","商品名","受注数","納品履歴","未納数","状況","入金状況","入金日","出荷指示"].map(h => (
-                <th key={h} style={{ padding:"7px 8px", textAlign: h==="受注数"||h==="未納数"||h==="状況" ? "center" : "left",
-                  color:"rgba(255,255,255,0.85)", fontWeight:700, whiteSpace:"nowrap", fontSize:11.5 }}>{h}</th>
-              ))}
-            </tr>
-          </thead>
+          <colgroup><col style={{ width:"11%" }} /><col style={{ width:"10%" }} /><col style={{ width:"17%" }} /><col style={{ width:"5%" }} /><col style={{ width:"18%" }} /><col style={{ width:"5%" }} /><col style={{ width:"7%" }} /><col style={{ width:"9%" }} /><col style={{ width:"9%" }} /><col style={{ width:"9%" }} /></colgroup>
+          <thead><tr style={{ background:"#0f2744" }}>{["受注番号","クリニック","商品名","受注数","納品履歴","未納数","状況","入金状況","入金日","出荷指示"].map(h => (<th key={h} style={{ padding:"7px 8px", textAlign:h==="受注数"||h==="未納数"||h==="状況"?"center":"left", color:"rgba(255,255,255,0.85)", fontWeight:700, whiteSpace:"nowrap", fontSize:11.5 }}>{h}</th>))}</tr></thead>
           <tbody>
-            {filtered.map((order, oi) =>
-              order.products.map((p, pi) => {
-                const sc = statusLabel(p);
-                const delivs = delivSummary(p);
-                const totalQty  = p.totalQtyNum || 0;
-                const delivered = p.deliveredQtyNum || (p.status===6 ? totalQty : 0);
-                const remaining = Math.max(0, totalQty - delivered);
-                const isFirst = pi === 0;
-                const rowCount = order.products.length;
-                const rowBg = oi % 2 === 0 ? "#fff" : "#f9fafc";
-                return (
-                  <tr key={`${order.id}-${pi}`} style={{ borderBottom:"1px solid #edf0f6", background:rowBg }}>
-                    {isFirst && (
-                      <td rowSpan={rowCount} style={{ padding:"7px 8px", verticalAlign:"top",
-                        borderRight:"1px solid #edf0f6", background:rowBg }}>
-                        <a href={`https://pitto.i15.bcart.jp/admin/order/list?order_code=${order.id}&sort=order_time-desc&limit=25`}
-                          target="_blank" rel="noopener noreferrer"
-                          style={{ color:"#1a6abf", textDecoration:"underline", fontWeight:700, fontSize:11, display:"block" }}>
-                          {order.id}
-                        </a>
-                        <div style={{ fontSize:10, color:"#8a95a5", marginTop:1 }}>
-                          {(order.date||"").replace("2026年","").replace("日","")}
-                        </div>
-                        <button
-                          onClick={() => {
-                            if (!confirm(`${order.id}の全商品（${order.products.length}種）を受注数で一括出荷指示しますか？`)) return;
-                            const now = new Date().toLocaleDateString("ja-JP",{year:"numeric",month:"2-digit",day:"2-digit"});
-                            const newInstrs = order.products.map(p => ({
-                              id: Date.now() + Math.random(),
-                              productName: p.name,
-                              qty: (p.totalQtyNum||parseInt(p.qty)||"").toString(),
-                              unit: p.unit||"",
-                              instructedAt: now
-                            }));
-                            const merged = [...(order.shipInstructions||[]), ...newInstrs];
-                            onUpdate(order.id, "shipInstructions", merged);
-                          }}
-                          style={{ marginTop:6, width:"100%", padding:"4px 0", borderRadius:6,
-                            border:"1.5px solid #4a7cc7", background:"#f0f6ff",
-                            color:"#1a4a90", fontSize:10, fontWeight:700, cursor:"pointer",
-                            whiteSpace:"nowrap" }}>
-                          📦 一括指示
-                        </button>
-                      </td>
-                    )}
-                    {isFirst && (
-                      <td rowSpan={rowCount} style={{ padding:"7px 8px", verticalAlign:"top",
-                        borderRight:"1px solid #edf0f6", color:"#333", lineHeight:1.4, background:rowBg,
-                        wordBreak:"break-all" }}>
-                        {order.clinic}
-                      </td>
-                    )}
-                    <td style={{ padding:"6px 8px", color:"#1a2a3a", lineHeight:1.4,
-                      borderRight:"1px solid #edf0f6", wordBreak:"break-all" }}>
-                      {p.name}
-                    </td>
-                    <td style={{ padding:"6px 8px", textAlign:"center", fontWeight:700,
-                      color:"#1a2a3a", borderRight:"1px solid #edf0f6", whiteSpace:"nowrap" }}>
-                      {p.qty}
-                    </td>
-                    <td style={{ padding:"5px 8px", borderRight:"1px solid #edf0f6" }}>
-                      {delivs.map((d, j) => (
-                        <div key={j} style={{ display:"flex", alignItems:"center", gap:4, lineHeight:1.6 }}>
-                          <span style={{ fontSize:10, fontWeight:700,
-                            color: d.done ? "#1a7a50" : "#a0aab8" }}>
-                            {d.done ? "✅" : "📋"} {d.label}
-                          </span>
-                          <span style={{ fontSize:10, color: d.done ? "#1a7a50" : "#a0aab8" }}>
-                            {d.date}
-                          </span>
-                        </div>
-                      ))}
-                    </td>
-                    <td style={{ padding:"6px 8px", textAlign:"center",
-                      borderRight:"1px solid #edf0f6", whiteSpace:"nowrap" }}>
-                      {remaining > 0
-                        ? <span style={{ fontWeight:900, color:"#e05050", fontSize:12 }}>{remaining}{p.unit||""}</span>
-                        : <span style={{ color:"#3aa876", fontWeight:700 }}>—</span>
-                      }
-                    </td>
-                    <td style={{ padding:"6px 8px", textAlign:"center" }}>
-                      <span style={{ padding:"2px 7px", borderRadius:20, fontSize:10.5, fontWeight:700,
-                        background:sc.bg, color:sc.color, whiteSpace:"nowrap" }}>
-                        {sc.text}
-                      </span>
-                    </td>
-                    {isFirst && (
-                      <td rowSpan={rowCount} style={{ padding:"6px 8px", verticalAlign:"top",
-                        borderLeft:"1px solid #edf0f6", background:rowBg }}>
-                        <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
-                          {["", "入金済み", "未入金", "クレジット"].map(opt => (
-                            <button key={opt}
-                              onClick={() => onUpdate(order.id, "paymentStatus", opt)}
-                              style={{
-                                padding:"4px 8px", borderRadius:6, border:"1.5px solid", cursor:"pointer",
-                                fontSize:11, fontWeight:700, whiteSpace:"nowrap",
-                                borderColor: order.paymentStatus===opt
-                                  ? (opt==="入金済み" ? "#1a7a50" : opt==="未入金" ? "#e05050" : opt==="クレジット" ? "#4a7cc7" : "#dde4ef")
-                                  : "#dde4ef",
-                                background: order.paymentStatus===opt
-                                  ? (opt==="入金済み" ? "#1a7a50" : opt==="未入金" ? "#e05050" : opt==="クレジット" ? "#4a7cc7" : "#f5f7fa")
-                                  : "#fff",
-                                color: order.paymentStatus===opt
-                                  ? (opt ? "#fff" : "#8a95a5")
-                                  : (opt==="入金済み" ? "#1a7a50" : opt==="未入金" ? "#e05050" : opt==="クレジット" ? "#4a7cc7" : "#aab"),
-                              }}>
-                              {opt || "—"}
-                            </button>
-                          ))}
-                        </div>
-                      </td>
-                    )}
-                    {isFirst && (
-                      <td rowSpan={rowCount} style={{ padding:"6px 8px", verticalAlign:"top",
-                        borderLeft:"1px solid #edf0f6", background:rowBg }}>
-                        <input
-                          type="date"
-                          value={order.paymentDate||""}
-                          onChange={e => onUpdate(order.id, "paymentDate", e.target.value)}
-                          style={{ width:"100%", padding:"4px 6px", borderRadius:6,
-                            border:"1.5px solid #dde4ef", fontSize:11, outline:"none",
-                            background:"#fff", cursor:"pointer", color:"#1a2a3a" }}
-                        />
-                        {order.paymentDate && (
-                          <div style={{ fontSize:10.5, color:"#1a7a50", fontWeight:700, marginTop:3, textAlign:"center" }}>
-                            {order.paymentDate.slice(5).replace("-","/")}
-                          </div>
-                        )}
-                      </td>
-                    )}
-                    {/* 出荷指示セル（別コンポーネント） */}
-                    <ShipInstructCell
-                      product={p}
-                      rowBg={rowBg}
-                      instructions={(order.shipInstructions||[]).filter(i => i.productName === p.name)}
-                      onAdd={(qty) => {
-                        const now = new Date().toLocaleDateString("ja-JP",{year:"numeric",month:"2-digit",day:"2-digit"});
-                        const updated = [...(order.shipInstructions||[]), { id:Date.now(), productName:p.name, qty, unit:p.unit||"", instructedAt:now }];
-                        onUpdate(order.id, "shipInstructions", updated);
-                      }}
-                      onCancel={(instrId) => {
-                        const updated = (order.shipInstructions||[]).filter(i => i.id !== instrId);
-                        onUpdate(order.id, "shipInstructions", updated);
-                      }}
-                    />
-                  </tr>
-                );
-              })
-            )}
+            {filtered.map((order, oi) => order.products.map((p, pi) => {
+              const sc = statusLabel(p);
+              const delivs = delivSummary(p);
+              const totalQty = p.totalQtyNum || 0;
+              const delivered = p.deliveredQtyNum || (p.status===6 ? totalQty : 0);
+              const remaining = Math.max(0, totalQty - delivered);
+              const isFirst = pi === 0;
+              const rowCount = order.products.length;
+              const rowBg = oi % 2 === 0 ? "#fff" : "#f9fafc";
+              return (
+                <tr key={`${order.id}-${pi}`} style={{ borderBottom:"1px solid #edf0f6", background:rowBg }}>
+                  {isFirst && (<td rowSpan={rowCount} style={{ padding:"7px 8px", verticalAlign:"top", borderRight:"1px solid #edf0f6", background:rowBg }}>
+                    <a href={`https://pitto.i15.bcart.jp/admin/order/list?order_code=${order.id}&sort=order_time-desc&limit=25`} target="_blank" rel="noopener noreferrer" style={{ color:"#1a6abf", textDecoration:"underline", fontWeight:700, fontSize:11, display:"block" }}>{order.id}</a>
+                    <div style={{ fontSize:10, color:"#8a95a5", marginTop:1 }}>{(order.date||"").replace("2026年","").replace("日","")}</div>
+                    <button onClick={() => { if (!confirm(`${order.id}の全商品（${order.products.length}種）を受注数で一括出荷指示しますか？`)) return; const now = new Date().toLocaleDateString("ja-JP",{year:"numeric",month:"2-digit",day:"2-digit"}); const newInstrs = order.products.map(p => ({ id:Date.now()+Math.random(), productName:p.name, qty:(p.totalQtyNum||parseInt(p.qty)||"").toString(), unit:p.unit||"", instructedAt:now })); const merged = [...(order.shipInstructions||[]), ...newInstrs]; onUpdate(order.id,"shipInstructions",merged); }} style={{ marginTop:6, width:"100%", padding:"4px 0", borderRadius:6, border:"1.5px solid #4a7cc7", background:"#f0f6ff", color:"#1a4a90", fontSize:10, fontWeight:700, cursor:"pointer", whiteSpace:"nowrap" }}>📦 一括指示</button>
+                  </td>)}
+                  {isFirst && (<td rowSpan={rowCount} style={{ padding:"7px 8px", verticalAlign:"top", borderRight:"1px solid #edf0f6", color:"#333", lineHeight:1.4, background:rowBg, wordBreak:"break-all" }}>{order.clinic}</td>)}
+                  <td style={{ padding:"6px 8px", color:"#1a2a3a", lineHeight:1.4, borderRight:"1px solid #edf0f6", wordBreak:"break-all" }}>{p.name}</td>
+                  <td style={{ padding:"6px 8px", textAlign:"center", fontWeight:700, color:"#1a2a3a", borderRight:"1px solid #edf0f6", whiteSpace:"nowrap" }}>{p.qty}</td>
+                  <td style={{ padding:"5px 8px", borderRight:"1px solid #edf0f6" }}>{delivs.map((d, j) => (<div key={j} style={{ display:"flex", alignItems:"center", gap:4, lineHeight:1.6 }}><span style={{ fontSize:10, fontWeight:700, color:d.done?"#1a7a50":"#a0aab8" }}>{d.done?"✅":"📋"} {d.label}</span><span style={{ fontSize:10, color:d.done?"#1a7a50":"#a0aab8" }}>{d.date}</span></div>))}</td>
+                  <td style={{ padding:"6px 8px", textAlign:"center", borderRight:"1px solid #edf0f6", whiteSpace:"nowrap" }}>{remaining > 0 ? <span style={{ fontWeight:900, color:"#e05050", fontSize:12 }}>{remaining}{p.unit||""}</span> : <span style={{ color:"#3aa876", fontWeight:700 }}>—</span>}</td>
+                  <td style={{ padding:"6px 8px", textAlign:"center" }}><span style={{ padding:"2px 7px", borderRadius:20, fontSize:10.5, fontWeight:700, background:sc.bg, color:sc.color, whiteSpace:"nowrap" }}>{sc.text}</span></td>
+                  {isFirst && (<td rowSpan={rowCount} style={{ padding:"6px 8px", verticalAlign:"top", borderLeft:"1px solid #edf0f6", background:rowBg }}>
+                    <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
+                      {["", "入金済み", "未入金", "クレジット"].map(opt => (<button key={opt} onClick={() => onUpdate(order.id, "paymentStatus", opt)} style={{ padding:"4px 8px", borderRadius:6, border:"1.5px solid", cursor:"pointer", fontSize:11, fontWeight:700, whiteSpace:"nowrap", borderColor:order.paymentStatus===opt?(opt==="入金済み"?"#1a7a50":opt==="未入金"?"#e05050":opt==="クレジット"?"#4a7cc7":"#dde4ef"):"#dde4ef", background:order.paymentStatus===opt?(opt==="入金済み"?"#1a7a50":opt==="未入金"?"#e05050":opt==="クレジット"?"#4a7cc7":"#f5f7fa"):"#fff", color:order.paymentStatus===opt?(opt?"#fff":"#8a95a5"):(opt==="入金済み"?"#1a7a50":opt==="未入金"?"#e05050":opt==="クレジット"?"#4a7cc7":"#aab") }}>{opt || "—"}</button>))}
+                    </div>
+                  </td>)}
+                  {isFirst && (<td rowSpan={rowCount} style={{ padding:"6px 8px", verticalAlign:"top", borderLeft:"1px solid #edf0f6", background:rowBg }}>
+                    <input type="date" value={order.paymentDate||""} onChange={e => onUpdate(order.id, "paymentDate", e.target.value)} style={{ width:"100%", padding:"4px 6px", borderRadius:6, border:"1.5px solid #dde4ef", fontSize:11, outline:"none", background:"#fff", cursor:"pointer", color:"#1a2a3a" }} />
+                    {order.paymentDate && (<div style={{ fontSize:10.5, color:"#1a7a50", fontWeight:700, marginTop:3, textAlign:"center" }}>{order.paymentDate.slice(5).replace("-","/")}</div>)}
+                  </td>)}
+                  <ShipInstructCell product={p} rowBg={rowBg} instructions={(order.shipInstructions||[]).filter(i => i.productName === p.name)} onAdd={(qty) => { const now = new Date().toLocaleDateString("ja-JP",{year:"numeric",month:"2-digit",day:"2-digit"}); const updated = [...(order.shipInstructions||[]), { id:Date.now(), productName:p.name, qty, unit:p.unit||"", instructedAt:now }]; onUpdate(order.id, "shipInstructions", updated); }} onCancel={(instrId) => { const updated = (order.shipInstructions||[]).filter(i => i.id !== instrId); onUpdate(order.id, "shipInstructions", updated); }} />
+                </tr>
+              );
+            }))}
           </tbody>
         </table>
       </div>
-
-      <div style={{ fontSize:11, color:"#c0c8d4", marginTop:6, textAlign:"right" }}>
-        {search.trim() ? `検索結果：${filtered.length}注文 / ${allP.length}商品` : `${filtered.length}注文 / ${allP.length}商品`}
-      </div>
+      <div style={{ fontSize:11, color:"#c0c8d4", marginTop:6, textAlign:"right" }}>{search.trim() ? `検索結果：${filtered.length}注文 / ${allP.length}商品` : `${filtered.length}注文 / ${allP.length}商品`}</div>
     </div>
   );
 }
-
 
 // ── リクエスト管理 ────────────────────────────────────────────────────────
 function RequestManager(props) {
@@ -1629,9 +1080,7 @@ function RequestManager(props) {
   const [replyText, setReplyText] = useState({});
   const [replying, setReplying] = useState({});
   const [replyDone, setReplyDone] = useState({});
-
   const waitFB = async () => { let t=0; while(!window._firebase&&t<30){await new Promise(r=>setTimeout(r,200));t++;} };
-
   useEffect(() => {
     const load = async () => {
       await waitFB();
@@ -1643,7 +1092,6 @@ function RequestManager(props) {
     };
     load();
   }, []);
-
   const handleReply = async (id) => {
     const text = replyText[id];
     if (!text || !text.trim()) return;
@@ -1655,89 +1103,43 @@ function RequestManager(props) {
     } catch(e) { alert("送信に失敗しました"); }
     setReplying(p => ({...p, [id]: false}));
   };
-
-  const unread = requests.filter(r => r.status === "unread" || r.status === "read").length;
   const unreplied = requests.filter(r => r.status !== "replied").length;
-
   if (loading) return <div style={{ textAlign:"center",padding:"40px 0",color:"#8a95a5" }}>読み込み中...</div>;
-
   return (
     <div>
-      {/* サマリー */}
       <div style={{ display:"flex",gap:10,marginBottom:16,flexWrap:"wrap" }}>
-        <div style={{ background:"#fff",borderRadius:12,border:"1.5px solid #e4eaf3",padding:"12px 18px",flex:1,minWidth:120 }}>
-          <div style={{ fontSize:22,fontWeight:900,color:"#e07d20" }}>{unreplied}</div>
-          <div style={{ fontSize:11,color:"#8a95a5",marginTop:2 }}>未返信</div>
-        </div>
-        <div style={{ background:"#fff",borderRadius:12,border:"1.5px solid #e4eaf3",padding:"12px 18px",flex:1,minWidth:120 }}>
-          <div style={{ fontSize:22,fontWeight:900,color:"#3aa876" }}>{requests.filter(r=>r.status==="replied").length}</div>
-          <div style={{ fontSize:11,color:"#8a95a5",marginTop:2 }}>返信済み</div>
-        </div>
-        <div style={{ background:"#fff",borderRadius:12,border:"1.5px solid #e4eaf3",padding:"12px 18px",flex:1,minWidth:120 }}>
-          <div style={{ fontSize:22,fontWeight:900,color:"#6b8cba" }}>{requests.length}</div>
-          <div style={{ fontSize:11,color:"#8a95a5",marginTop:2 }}>合計</div>
-        </div>
+        {[{l:"未返信",v:unreplied,c:"#e07d20"},{l:"返信済み",v:requests.filter(r=>r.status==="replied").length,c:"#3aa876"},{l:"合計",v:requests.length,c:"#6b8cba"}].map(s=>(
+          <div key={s.l} style={{ background:"#fff",borderRadius:12,border:"1.5px solid #e4eaf3",padding:"12px 18px",flex:1,minWidth:120 }}>
+            <div style={{ fontSize:22,fontWeight:900,color:s.c }}>{s.v}</div>
+            <div style={{ fontSize:11,color:"#8a95a5",marginTop:2 }}>{s.l}</div>
+          </div>
+        ))}
       </div>
-
-      {requests.length === 0 && (
-        <div style={{ textAlign:"center",padding:"48px 0",color:"#8a95a5" }}>
-          <div style={{ fontSize:32,marginBottom:12 }}>📭</div>
-          <div style={{ fontSize:14 }}>リクエストはまだありません</div>
-        </div>
-      )}
-
+      {requests.length === 0 && (<div style={{ textAlign:"center",padding:"48px 0",color:"#8a95a5" }}><div style={{ fontSize:32,marginBottom:12 }}>📭</div><div style={{ fontSize:14 }}>リクエストはまだありません</div></div>)}
       {requests.map(r => (
         <div key={r.id} style={{ background:"#fff",borderRadius:14,border:`1.5px solid ${r.status==="replied"?"#c0d0e8":"#f0c090"}`,marginBottom:12,overflow:"hidden",boxShadow:"0 1px 8px rgba(10,30,53,0.05)",borderLeft:`4px solid ${r.status==="replied"?"#3aa876":"#e07d20"}` }}>
           <div style={{ padding:"14px 16px" }}>
-            {/* ヘッダー */}
             <div style={{ display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10 }}>
               <div>
                 <div style={{ display:"flex",alignItems:"center",gap:8,marginBottom:4,flexWrap:"wrap" }}>
                   <span style={{ fontSize:15,fontWeight:900,color:"#0f2744" }}>{r.orderId}</span>
-                  <span style={{ padding:"3px 9px",borderRadius:20,fontSize:11,fontWeight:700,
-                    background:r.status==="replied"?"#e8f0fa":"#fff8e8",
-                    color:r.status==="replied"?"#0f2744":"#b87f0a",
-                    border:r.status==="replied"?"1px solid #c0d0e8":"1px solid #e8c95a" }}>
-                    {r.status==="replied"?"✅ 返信済み":"🚨 未返信"}
-                  </span>
+                  <span style={{ padding:"3px 9px",borderRadius:20,fontSize:11,fontWeight:700,background:r.status==="replied"?"#e8f0fa":"#fff8e8",color:r.status==="replied"?"#0f2744":"#b87f0a",border:r.status==="replied"?"1px solid #c0d0e8":"1px solid #e8c95a" }}>{r.status==="replied"?"✅ 返信済み":"🚨 未返信"}</span>
                 </div>
                 <div style={{ fontSize:11.5,color:"#8a95a5" }}>{r.clinic}　{r.email}</div>
               </div>
               <div style={{ fontSize:11,color:"#a0aab8",textAlign:"right" }}>{r.createdAt}</div>
             </div>
-            {/* リクエスト内容 */}
-            <div style={{ padding:"10px 14px",background:"#fff8f0",borderRadius:9,border:"1px solid #f0c090",fontSize:13,color:"#5a3010",marginBottom:10 }}>
-              📬 {r.message}
-            </div>
-            {/* 返信済みの場合 */}
-            {r.reply && (
-              <div style={{ padding:"10px 14px",background:"#f0f6ff",borderRadius:9,border:"1px solid #d0e0f4",fontSize:13,color:"#1a3a5c",marginBottom:4 }}>
-                💬 {r.reply}
-              </div>
-            )}
+            <div style={{ padding:"10px 14px",background:"#fff8f0",borderRadius:9,border:"1px solid #f0c090",fontSize:13,color:"#5a3010",marginBottom:10 }}>📬 {r.message}</div>
+            {r.reply && (<div style={{ padding:"10px 14px",background:"#f0f6ff",borderRadius:9,border:"1px solid #d0e0f4",fontSize:13,color:"#1a3a5c",marginBottom:4 }}>💬 {r.reply}</div>)}
             {r.repliedAt && <div style={{ fontSize:11,color:"#a0aab8",marginBottom:8,textAlign:"right" }}>返信日時：{r.repliedAt}</div>}
-            {/* 返信フォーム */}
             {r.status !== "replied" && !replyDone[r.id] && (
               <div style={{ marginTop:8 }}>
                 <div style={{ fontSize:11.5,color:"#8a95a5",marginBottom:6 }}>返信メッセージを入力</div>
-                <textarea
-                  value={replyText[r.id]||""}
-                  onChange={e=>setReplyText(p=>({...p,[r.id]:e.target.value}))}
-                  placeholder="例：〇〇の商品は現在通関中で、約3〜5日でお届け予定です。"
-                  rows={3}
-                  style={{ width:"100%",padding:"10px 12px",borderRadius:9,border:"1.5px solid #dde4ef",fontSize:13,outline:"none",resize:"vertical",boxSizing:"border-box",marginBottom:8 }}
-                />
-                <button onClick={()=>handleReply(r.id)} disabled={replying[r.id]}
-                  style={{ width:"100%",padding:"11px",borderRadius:9,border:"none",background:"#0f2744",color:"#fff",fontWeight:800,fontSize:13,cursor:"pointer",opacity:replying[r.id]?0.7:1 }}>
-                  {replying[r.id]?"送信中...":"返信を送る"}
-                </button>
+                <textarea value={replyText[r.id]||""} onChange={e=>setReplyText(p=>({...p,[r.id]:e.target.value}))} placeholder="例：〇〇の商品は現在通関中で、約3〜5日でお届け予定です。" rows={3} style={{ width:"100%",padding:"10px 12px",borderRadius:9,border:"1.5px solid #dde4ef",fontSize:13,outline:"none",resize:"vertical",boxSizing:"border-box",marginBottom:8 }}/>
+                <button onClick={()=>handleReply(r.id)} disabled={replying[r.id]} style={{ width:"100%",padding:"11px",borderRadius:9,border:"none",background:"#0f2744",color:"#fff",fontWeight:800,fontSize:13,cursor:"pointer",opacity:replying[r.id]?0.7:1 }}>{replying[r.id]?"送信中...":"返信を送る"}</button>
               </div>
             )}
-            {replyDone[r.id] && (
-              <div style={{ padding:"10px",background:"#f0fdf6",borderRadius:9,border:"1px solid #a0d8b8",fontSize:13,color:"#1a7a50",fontWeight:600,textAlign:"center" }}>
-                ✅ 返信を送信しました
-              </div>
-            )}
+            {replyDone[r.id] && (<div style={{ padding:"10px",background:"#f0fdf6",borderRadius:9,border:"1px solid #a0d8b8",fontSize:13,color:"#1a7a50",fontWeight:600,textAlign:"center" }}>✅ 返信を送信しました</div>)}
           </div>
         </div>
       ))}
@@ -1755,7 +1157,7 @@ function App() {
   const [groupMode,setGroupMode]=useState("month");
   const [search,setSearch]=useState("");
   const [importMsg,setImportMsg]=useState("");
-  const [tab,setTab]=useState("orders"); // "orders" | "accounts" | "requests"
+  const [tab,setTab]=useState("orders");
   const [unreadCount,setUnreadCount]=useState(0);
 
   useEffect(()=>{
@@ -1763,26 +1165,19 @@ function App() {
     const load=async()=>{
       let t=0; while(!window._firebase&&t<30){await new Promise(r=>setTimeout(r,200));t++;}
       try{
-        // 注文データとアノテーションを並行取得
-        const [orders, annotations, bindings] = await Promise.all([
+        const [ordersData, annotations, bindings] = await Promise.all([
           window._firebase.loadOrders(),
           window._firebase.loadAnnotations(),
           window._firebase.loadBindings(),
         ]);
-        // 注釈を注文データにマージ
-        const merged = (orders||[]).map(o => {
+        const merged = (ordersData||[]).map(o => {
           const ann = annotations[o.id] || {};
-          return {
-            ...o,
-            paymentStatus:    ann.paymentStatus    || o.paymentStatus    || "",
-            paymentDate:      ann.paymentDate      || o.paymentDate      || "",
-            shipInstructions: ann.shipInstructions || o.shipInstructions || [],
-          };
+          return { ...o, paymentStatus: ann.paymentStatus || o.paymentStatus || "", paymentDate: ann.paymentDate || o.paymentDate || "", shipInstructions: ann.shipInstructions || o.shipInstructions || [] };
         });
         setOrders(merged);
         window._annotations = annotations;
         window._bindings = bindings;
-        console.log("✅ 読込完了:", merged.length, "件 / 注釈:", Object.keys(annotations).length, "件");
+        console.log("✅ 読込完了:", merged.length, "件");
       }catch(e){ console.error("load error:", e); }
       setLoading(false);
     };
@@ -1793,7 +1188,6 @@ function App() {
     setOrders(prev=>prev.map(o=>{
       if(o.id!==id) return o;
       const updated={...o,[field]:value,updatedAt:nowStr()};
-      // 注釈フィールドはwindow._annotationsにも即時反映
       if(["paymentStatus","paymentDate","shipInstructions"].includes(field)){
         if(!window._annotations) window._annotations={};
         if(!window._annotations[id]) window._annotations[id]={};
@@ -1809,38 +1203,20 @@ function App() {
       prev.forEach(o=>map[o.id]=o);
       newOrders.forEach(newOrder=>{
         const existing = map[newOrder.id];
-        // 既存データ（Firebase保存済み）と注釈をマージ
         const ann = (window._annotations || {})[newOrder.id] || {};
         const base = existing || {};
-        map[newOrder.id] = {
-          ...newOrder,
-          paymentStatus:    base.paymentStatus    || ann.paymentStatus    || "",
-          paymentDate:      base.paymentDate      || ann.paymentDate      || "",
-          shipInstructions: base.shipInstructions || ann.shipInstructions || [],
-        };
+        map[newOrder.id] = { ...newOrder, paymentStatus: base.paymentStatus || ann.paymentStatus || "", paymentDate: base.paymentDate || ann.paymentDate || "", shipInstructions: base.shipInstructions || ann.shipInstructions || [] };
       });
       return Object.values(map).sort((a,b)=>b.id.localeCompare(a.id));
     });
-    setImportMsg(`✅ ${newOrders.length}件をインポートしました。手動入力データは保持されています。「Firebaseに保存」を押してください。`);
+    setImportMsg(`✅ ${newOrders.length}件をインポートしました。「Firebaseに保存」を押してください。`);
     setTimeout(()=>setImportMsg(""),8000);
   };
   const downloadBackup = async (ordersData) => {
-    // 注釈データと、リクエスト履歴だけバックアップ
     const annotations = {};
-    ordersData.forEach(o => {
-      if (o.paymentStatus || o.paymentDate || (o.shipInstructions && o.shipInstructions.length > 0)) {
-        annotations[o.id] = {
-          paymentStatus:    o.paymentStatus    || "",
-          paymentDate:      o.paymentDate      || "",
-          shipInstructions: o.shipInstructions || [],
-        };
-      }
-    });
+    ordersData.forEach(o => { if (o.paymentStatus || o.paymentDate || (o.shipInstructions && o.shipInstructions.length > 0)) { annotations[o.id] = { paymentStatus: o.paymentStatus || "", paymentDate: o.paymentDate || "", shipInstructions: o.shipInstructions || [] }; } });
     let allData = { version:3, exportedAt: new Date().toISOString(), annotations, requests:[] };
-    try {
-      const full = await window._firebase.loadAllData();
-      allData.requests = full.requests || [];
-    } catch(e) {}
+    try { const full = await window._firebase.loadAllData(); allData.requests = full.requests || []; } catch(e) {}
     const blob = new Blob([JSON.stringify(allData, null, 2)], {type:"application/json"});
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -1850,18 +1226,16 @@ function App() {
     a.click();
     URL.revokeObjectURL(url);
   };
-
   const handleSave=async()=>{
     setSaveStatus("saving");
     try{
       await window._firebase.saveOrders(orders);
       setSaveStatus("saved");
-      // 自動バックアップ
       try { await downloadBackup(orders); } catch(be){ console.error("バックアップエラー:", be); }
     }catch(e){
       console.error("保存エラー:", e);
       setSaveStatus("error");
-      alert("⚠️ 保存に失敗しました。\n\n" + (e.message||"不明なエラー") + "\n\nもう一度「Firebaseに保存」を押してください。");
+      alert("⚠️ 保存に失敗しました。\n\n" + (e.message||"不明なエラー"));
     }
     setTimeout(()=>setSaveStatus(""),4000);
   };
@@ -1878,8 +1252,6 @@ function App() {
   return (
     <div style={{ minHeight:"100vh",background:"#f0f4f9" }}>
       {showCsv&&<CsvImportModal onImport={handleImport} onClose={()=>setShowCsv(false)}/>}
-
-      {/* トップバー */}
       <div style={{ background:"linear-gradient(135deg,#0a1e35,#0f2744)",padding:"18px 18px 20px",position:"sticky",top:0,zIndex:50 }}>
         <div style={{ maxWidth:1200,margin:"0 auto" }}>
           <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14 }}>
@@ -1890,13 +1262,10 @@ function App() {
             {tab==="orders"&&(
               <div style={{ display:"flex",gap:8 }}>
                 <button onClick={()=>setShowCsv(true)} style={{ padding:"9px 14px",borderRadius:9,border:"1.5px solid rgba(100,200,150,0.6)",background:"transparent",color:"#7df0b0",fontWeight:700,fontSize:13,cursor:"pointer" }}>📂 CSV取込</button>
-                <button onClick={handleSave} disabled={saveStatus==="saving"} style={{ padding:"9px 16px",borderRadius:9,border:"none",background:saveStatus==="saved"?"#3aa876":saveStatus==="error"?"#e05050":"#d4a843",color:"#0a1e35",fontWeight:800,fontSize:13,cursor:"pointer" }}>
-                  {saveStatus==="saving"?"保存中...":saveStatus==="saved"?"✓ 保存済み":saveStatus==="error"?"エラー":"Firebaseに保存"}
-                </button>
+                <button onClick={handleSave} disabled={saveStatus==="saving"} style={{ padding:"9px 16px",borderRadius:9,border:"none",background:saveStatus==="saved"?"#3aa876":saveStatus==="error"?"#e05050":"#d4a843",color:"#0a1e35",fontWeight:800,fontSize:13,cursor:"pointer" }}>{saveStatus==="saving"?"保存中...":saveStatus==="saved"?"✓ 保存済み":saveStatus==="error"?"エラー":"Firebaseに保存"}</button>
               </div>
             )}
           </div>
-          {/* サマリー */}
           <div style={{ display:"flex",gap:7,overflowX:"auto",paddingBottom:2,marginBottom:14 }}>
             {[{l:"対応中商品",v:activeP,c:"#d4a843"},{l:"通関待ち",v:cnt[4]||0,c:"#e07d20"},{l:"配送中",v:cnt[5]||0,c:"#3aa876"},{l:"完了商品",v:cnt[6]||0,c:"#6b8cba"},{l:"全注文",v:orders.length,c:"#8a9ab5"}].map(s=>(
               <div key={s.l} style={{ background:"rgba(255,255,255,0.09)",borderRadius:10,padding:"7px 13px",flexShrink:0,border:`1px solid ${s.c}30` }}>
@@ -1905,7 +1274,6 @@ function App() {
               </div>
             ))}
           </div>
-          {/* タブ */}
           <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:3 }}>
             {[["orders","📦 注文管理"],["status","📊 ステータス管理"],["requests", unreadCount > 0 ? `📬 リクエスト ${unreadCount}件` : "📬 リクエスト"],["accounts","👤 クリニック管理"],["backup","💾 バックアップ"]].map(([key,label])=>(
               <button key={key} onClick={()=>setTab(key)} style={{ padding:"9px 8px",borderRadius:8,border:"none",background:tab===key?"#fff":"rgba(255,255,255,0.08)",color:tab===key?"#0f2744":"rgba(255,255,255,0.7)",fontWeight:tab===key?700:500,fontSize:12.5,cursor:"pointer",transition:"all 0.2s",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis" }}>{label}</button>
@@ -1915,17 +1283,10 @@ function App() {
       </div>
 
       <div style={{ maxWidth:1200,margin:"0 auto",padding:"18px 14px 48px" }}>
-
-        {tab==="accounts" && (
-          <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
-            <ClinicBindingManager orders={orders} />
-            <ClinicAccountManager />
-          </div>
-        )}
+        {tab==="accounts" && <ClinicManager orders={orders} />}
         {tab==="requests" && <RequestManager onUnreadCount={setUnreadCount}/>}
         {tab==="status" && <StatusManager orders={orders} onUpdate={updateOrder} />}
         {tab==="backup" && <BackupManager orders={orders} downloadBackup={downloadBackup} />}
-
         {tab==="orders" && (
           <>
             {loading&&<div style={{ textAlign:"center",padding:"60px 0",color:"#8a95a5" }}><div style={{ fontSize:32,marginBottom:12 }}>🔄</div><div style={{ fontSize:14 }}>データを読み込み中...</div></div>}
@@ -1933,8 +1294,7 @@ function App() {
             {!loading&&(
               <>
                 <div style={{ display:"flex",gap:8,marginBottom:16,flexWrap:"wrap",alignItems:"center" }}>
-                  <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="注文番号・クリニック・商品名で検索"
-                    style={{ flex:1,minWidth:160,padding:"10px 14px",borderRadius:10,border:"1.5px solid #dde4ef",fontSize:13,outline:"none",background:"#fff",color:"#0f2744" }}/>
+                  <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="注文番号・クリニック・商品名で検索" style={{ flex:1,minWidth:160,padding:"10px 14px",borderRadius:10,border:"1.5px solid #dde4ef",fontSize:13,outline:"none",background:"#fff",color:"#0f2744" }}/>
                   <div style={{ display:"flex",background:"#fff",borderRadius:10,border:"1.5px solid #dde4ef",overflow:"hidden" }}>
                     {[["month","📅 月別"],["clinic","🏥 クリニック別"]].map(([k,l])=>(
                       <button key={k} onClick={()=>setGroupMode(k)} style={{ padding:"9px 13px",border:"none",background:groupMode===k?"#0f2744":"transparent",color:groupMode===k?"#fff":"#6a7a8a",fontWeight:groupMode===k?700:500,fontSize:12.5,cursor:"pointer",whiteSpace:"nowrap" }}>{l}</button>
