@@ -10,7 +10,7 @@
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
   import { getFirestore, collection, getDocs, getDocsFromServer, doc, getDoc, setDoc, query, where } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
-  import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged, sendPasswordResetEmail } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+  import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged, sendPasswordResetEmail, reauthenticateWithCredential, EmailAuthProvider, updatePassword, verifyBeforeUpdateEmail } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
   const firebaseConfig = {
     apiKey: "AIzaSyDNg5KsLABnwJbN5EpvWjpLnkstFzXA1HE",
@@ -72,6 +72,16 @@
       const list = [];
       snap.forEach(d => { const r = d.data(); if (r.email === email) list.push(r); });
       return list.sort((a,b) => b.createdAt.localeCompare(a.createdAt));
+    },
+    reauth: async (email, password) => {
+      const credential = EmailAuthProvider.credential(email, password);
+      await reauthenticateWithCredential(auth.currentUser, credential);
+    },
+    updatePassword: async (newPassword) => {
+      await updatePassword(auth.currentUser, newPassword);
+    },
+    updateEmail: async (newEmail) => {
+      await verifyBeforeUpdateEmail(auth.currentUser, newEmail);
     }
   };
 </script>
@@ -272,6 +282,127 @@ function GroupedProductList({ products }) {
   );
 }
 
+// ── アカウント設定モーダル ────────────────────────────────────────────────
+function AccountSettingsModal({ user, onClose }) {
+  const [tab, setTab] = useState("password"); // "password" | "email"
+  const [currentPw, setCurrentPw] = useState("");
+  const [newPw, setNewPw] = useState("");
+  const [newPw2, setNewPw2] = useState("");
+  const [newEmail, setNewEmail] = useState("");
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const reset = () => { setCurrentPw(""); setNewPw(""); setNewPw2(""); setNewEmail(""); setError(""); setSuccess(""); };
+
+  const handlePasswordChange = async () => {
+    if (!currentPw || !newPw || !newPw2) { setError("すべての項目を入力してください"); return; }
+    if (newPw !== newPw2) { setError("新しいパスワードが一致しません"); return; }
+    if (newPw.length < 6) { setError("パスワードは6文字以上で設定してください"); return; }
+    setLoading(true); setError(""); setSuccess("");
+    try {
+      await window._firebase.reauth(user.email, currentPw);
+      await window._firebase.updatePassword(newPw);
+      setSuccess("✅ パスワードを変更しました");
+      setCurrentPw(""); setNewPw(""); setNewPw2("");
+    } catch(e) {
+      const c = e.code || "";
+      if (c.includes("wrong-password") || c.includes("invalid-credential")) setError("現在のパスワードが正しくありません");
+      else setError("変更に失敗しました。もう一度お試しください");
+    }
+    setLoading(false);
+  };
+
+  const handleEmailChange = async () => {
+    if (!currentPw || !newEmail) { setError("すべての項目を入力してください"); return; }
+    if (!newEmail.includes("@")) { setError("正しいメールアドレスを入力してください"); return; }
+    setLoading(true); setError(""); setSuccess("");
+    try {
+      await window._firebase.reauth(user.email, currentPw);
+      await window._firebase.updateEmail(newEmail);
+      setSuccess("✅ 確認メールを送信しました。新しいメールアドレスに届いたリンクをクリックすると変更完了です。");
+      setCurrentPw(""); setNewEmail("");
+    } catch(e) {
+      const c = e.code || "";
+      if (c.includes("wrong-password") || c.includes("invalid-credential")) setError("現在のパスワードが正しくありません");
+      else if (c.includes("email-already-in-use")) setError("そのメールアドレスは既に使用されています");
+      else setError("変更に失敗しました。もう一度お試しください");
+    }
+    setLoading(false);
+  };
+
+  const inp = { width:"100%", padding:"11px 13px", borderRadius:9, border:"1.5px solid #dde4ef", background:"#fff", fontSize:14, outline:"none", color:"#1a2a3a" };
+  const tabStyle = (active) => ({
+    flex:1, padding:"9px 0", borderRadius:8, border:"none", cursor:"pointer", fontSize:13, fontWeight:700,
+    background: active ? "#0f2744" : "transparent",
+    color: active ? "#fff" : "#8a95a5",
+  });
+
+  return (
+    <div style={{ position:"fixed", inset:0, zIndex:200, display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
+      <div onClick={onClose} style={{ position:"absolute", inset:0, background:"rgba(0,0,0,0.5)" }}/>
+      <div style={{ position:"relative", width:"100%", maxWidth:400, background:"#fff", borderRadius:16, overflow:"hidden", boxShadow:"0 8px 40px rgba(0,0,0,0.25)" }}>
+        {/* ヘッダー */}
+        <div style={{ background:"linear-gradient(160deg,#0a1e35,#0f2744)", padding:"18px 20px" }}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+            <div style={{ fontSize:15, fontWeight:800, color:"#fff" }}>⚙️ アカウント設定</div>
+            <button onClick={onClose} style={{ border:"none", background:"rgba(255,255,255,0.15)", color:"#fff", borderRadius:20, padding:"5px 12px", fontSize:12, cursor:"pointer", fontWeight:700 }}>✕ 閉じる</button>
+          </div>
+          <div style={{ fontSize:12, color:"rgba(255,255,255,0.45)", marginTop:6 }}>{user.email}</div>
+        </div>
+        {/* タブ */}
+        <div style={{ display:"flex", gap:4, padding:"12px 16px 0", background:"#f8fafd", borderBottom:"1px solid #edf0f6" }}>
+          <button style={tabStyle(tab==="password")} onClick={()=>{ setTab("password"); reset(); }}>パスワード変更</button>
+          <button style={tabStyle(tab==="email")} onClick={()=>{ setTab("email"); reset(); }}>メールアドレス変更</button>
+        </div>
+        {/* フォーム */}
+        <div style={{ padding:"20px 20px 24px" }}>
+          {tab === "password" ? (
+            <>
+              <div style={{ marginBottom:13 }}>
+                <div style={{ fontSize:11.5, color:"#8a95a5", marginBottom:6 }}>現在のパスワード</div>
+                <input type="password" value={currentPw} onChange={e=>{setCurrentPw(e.target.value);setError("");}} placeholder="現在のパスワード" style={inp}/>
+              </div>
+              <div style={{ marginBottom:13 }}>
+                <div style={{ fontSize:11.5, color:"#8a95a5", marginBottom:6 }}>新しいパスワード（6文字以上）</div>
+                <input type="password" value={newPw} onChange={e=>{setNewPw(e.target.value);setError("");}} placeholder="新しいパスワード" style={inp}/>
+              </div>
+              <div style={{ marginBottom:16 }}>
+                <div style={{ fontSize:11.5, color:"#8a95a5", marginBottom:6 }}>新しいパスワード（確認）</div>
+                <input type="password" value={newPw2} onChange={e=>{setNewPw2(e.target.value);setError("");}} placeholder="もう一度入力" style={inp}/>
+              </div>
+              {error && <div style={{ padding:"10px 12px", background:"#fff0f0", border:"1px solid #fcc", borderRadius:8, color:"#c04040", fontSize:12.5, marginBottom:12 }}>⚠ {error}</div>}
+              {success && <div style={{ padding:"10px 12px", background:"#f0fdf6", border:"1px solid #a0d8b8", borderRadius:8, color:"#1a7a50", fontSize:12.5, marginBottom:12 }}>{success}</div>}
+              <button onClick={handlePasswordChange} disabled={loading} style={{ width:"100%", padding:"12px", borderRadius:10, border:"none", background:"#0f2744", color:"#fff", fontWeight:800, fontSize:14, cursor:"pointer", opacity:loading?0.7:1 }}>
+                {loading ? "変更中..." : "パスワードを変更する"}
+              </button>
+            </>
+          ) : (
+            <>
+              <div style={{ padding:"10px 13px", background:"#fffbef", border:"1px solid #e8c95a", borderRadius:9, fontSize:12.5, color:"#7a6020", marginBottom:16, lineHeight:1.6 }}>
+                📧 新しいメールアドレスに確認メールが届きます。リンクをクリックすると変更が完了します。
+              </div>
+              <div style={{ marginBottom:13 }}>
+                <div style={{ fontSize:11.5, color:"#8a95a5", marginBottom:6 }}>現在のパスワード</div>
+                <input type="password" value={currentPw} onChange={e=>{setCurrentPw(e.target.value);setError("");}} placeholder="本人確認のため入力" style={inp}/>
+              </div>
+              <div style={{ marginBottom:16 }}>
+                <div style={{ fontSize:11.5, color:"#8a95a5", marginBottom:6 }}>新しいメールアドレス</div>
+                <input type="email" value={newEmail} onChange={e=>{setNewEmail(e.target.value);setError("");}} placeholder="new@example.com" style={inp}/>
+              </div>
+              {error && <div style={{ padding:"10px 12px", background:"#fff0f0", border:"1px solid #fcc", borderRadius:8, color:"#c04040", fontSize:12.5, marginBottom:12 }}>⚠ {error}</div>}
+              {success && <div style={{ padding:"10px 12px", background:"#f0fdf6", border:"1px solid #a0d8b8", borderRadius:8, color:"#1a7a50", fontSize:12.5, marginBottom:12, lineHeight:1.6 }}>{success}</div>}
+              <button onClick={handleEmailChange} disabled={loading} style={{ width:"100%", padding:"12px", borderRadius:10, border:"none", background:"#0f2744", color:"#fff", fontWeight:800, fontSize:14, cursor:"pointer", opacity:loading?0.7:1 }}>
+                {loading ? "送信中..." : "確認メールを送信する"}
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── 急ぎリクエスト ────────────────────────────────────────────────────────
 function UrgentRequest({ order, user, myRequests, onSent }) {
   const [open, setOpen] = useState(false);
@@ -367,9 +498,7 @@ function MainScreen({ user }) {
   const [selectedMonth, setSelectedMonth] = useState(null);
   const [modalOrder, setModalOrder] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [query, setQuery] = useState("");
-  const [found, setFound] = useState(null);
-  const [searched, setSearched] = useState(false);
+  const [showAccount, setShowAccount] = useState(false);
 
   const loadData = async () => {
     const [orderData, requestData, bindings] = await Promise.all([
@@ -400,34 +529,20 @@ function MainScreen({ user }) {
 
   useEffect(() => { loadData(); }, []);
 
-  const handleSearch = () => {
-    const q = query.trim();
-    if (!q) return;
-    setFound(orders.find(o => o.id === q) || null);
-    setSearched(true);
-  };
-
   return (
     <div style={{ minHeight:"100vh",background:"#f0f4f9" }}>
-      <div style={{ background:"linear-gradient(160deg,#0a1e35 0%,#0f2744 55%,#1a3d6e 100%)",padding:"28px 20px 36px",position:"relative",overflow:"hidden" }}>
+      <div style={{ background:"linear-gradient(160deg,#0a1e35 0%,#0f2744 55%,#1a3d6e 100%)",padding:"28px 20px 28px",position:"relative",overflow:"hidden" }}>
         <div style={{ position:"absolute",top:-50,right:-50,width:200,height:200,borderRadius:"50%",background:"rgba(212,168,67,0.06)",pointerEvents:"none" }}/>
         <div style={{ maxWidth:520,margin:"0 auto",position:"relative" }}>
-          <div style={{ display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16 }}>
+          <div style={{ display:"flex",justifyContent:"space-between",alignItems:"flex-start" }}>
             <div>
               <div style={{ fontSize:10.5,letterSpacing:"0.2em",color:"#d4a843",fontWeight:700,marginBottom:4,textTransform:"uppercase" }}>Import Status Tracking</div>
               <div style={{ fontSize:20,fontWeight:900,color:"#fff",lineHeight:1.3 }}>輸入状況確認システム</div>
+              <div style={{ fontSize:11.5,color:"rgba(255,255,255,0.45)",marginTop:6 }}>ログイン中：{user.email}</div>
             </div>
-            <button onClick={()=>window._firebase.signOut()} style={{ padding:"7px 14px",borderRadius:8,border:"1px solid rgba(255,255,255,0.2)",background:"transparent",color:"rgba(255,255,255,0.6)",fontSize:12,cursor:"pointer" }}>ログアウト</button>
-          </div>
-          <div style={{ fontSize:11.5,color:"rgba(255,255,255,0.45)",marginBottom:16 }}>ログイン中：{user.email}</div>
-          <div style={{ background:"rgba(255,255,255,0.08)",border:"1.5px solid rgba(212,168,67,0.3)",borderRadius:14,padding:14 }}>
-            <div style={{ fontSize:11,color:"rgba(255,255,255,0.45)",marginBottom:7 }}>注文番号を入力してください</div>
-            <div style={{ display:"flex",gap:8 }}>
-              <input value={query} onChange={e=>setQuery(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleSearch()} placeholder="注文番号"
-                style={{ flex:1,padding:"12px 14px",borderRadius:10,border:"1.5px solid rgba(255,255,255,0.12)",background:"rgba(255,255,255,0.1)",color:"#fff",fontSize:15,outline:"none" }}/>
-              <button onClick={handleSearch} disabled={loading} style={{ padding:"12px 20px",borderRadius:10,border:"none",background:"#d4a843",color:"#0a1e35",fontWeight:900,fontSize:14,cursor:"pointer",opacity:loading?0.6:1 }}>
-                {loading?"読込中":"確認する"}
-              </button>
+            <div style={{ display:"flex",flexDirection:"column",gap:6,alignItems:"flex-end" }}>
+              <button onClick={()=>window._firebase.signOut()} style={{ padding:"7px 14px",borderRadius:8,border:"1px solid rgba(255,255,255,0.2)",background:"transparent",color:"rgba(255,255,255,0.6)",fontSize:12,cursor:"pointer" }}>ログアウト</button>
+              <button onClick={()=>setShowAccount(true)} style={{ padding:"7px 14px",borderRadius:8,border:"1px solid rgba(212,168,67,0.4)",background:"rgba(212,168,67,0.12)",color:"#d4a843",fontSize:12,cursor:"pointer",fontWeight:700 }}>⚙️ アカウント設定</button>
             </div>
           </div>
         </div>
@@ -435,7 +550,7 @@ function MainScreen({ user }) {
 
       <div style={{ maxWidth:520,margin:"0 auto",padding:"20px 14px 48px" }}>
 
-        {!searched && myOrders.length > 0 && (() => {
+        {myOrders.length > 0 && (() => {
           const months = [...new Set(myOrders.map(o => (o.date||"").slice(0,7)).filter(Boolean))].sort().reverse();
           const currentMonth = selectedMonth || months[0] || "";
           const displayOrders = myOrders.filter(o => (o.date||"").startsWith(currentMonth));
@@ -455,9 +570,9 @@ function MainScreen({ user }) {
                 </button>
               ))}
             </div>
-            <div style={{ fontSize:13,fontWeight:700,color:"#fff",marginBottom:12,display:"flex",alignItems:"center",gap:8 }}>
+            <div style={{ fontSize:13,fontWeight:700,color:"#4a5568",marginBottom:12,display:"flex",alignItems:"center",gap:8 }}>
               <span>📋 ご注文一覧</span>
-              <span style={{ fontSize:11,color:"rgba(255,255,255,0.5)",fontWeight:400 }}>{displayOrders.length}件</span>
+              <span style={{ fontSize:11,color:"#8a95a5",fontWeight:400 }}>{displayOrders.length}件</span>
             </div>
             {displayOrders.map(order => (
               <div key={order.id}
@@ -493,6 +608,17 @@ function MainScreen({ user }) {
           );
         })()}
 
+        {loading && myOrders.length === 0 && (
+          <div style={{ textAlign:"center",padding:"60px 0",color:"#8a95a5",fontSize:14 }}>読み込み中...</div>
+        )}
+        {!loading && myOrders.length === 0 && (
+          <div style={{ background:"#fff",borderRadius:16,padding:"36px 24px",textAlign:"center",border:"1.5px solid #e4eaf3" }}>
+            <div style={{ fontSize:36,marginBottom:10 }}>📋</div>
+            <div style={{ fontSize:15,fontWeight:700,color:"#333",marginBottom:6 }}>注文データがありません</div>
+            <div style={{ fontSize:13,color:"#888",lineHeight:1.7 }}>ご不明な点は担当者までお問い合わせください。</div>
+          </div>
+        )}
+
         {/* 詳細モーダル（スライドイン） */}
         {modalOrder && (
           <div style={{ position:"fixed", inset:0, zIndex:100, display:"flex" }}>
@@ -520,46 +646,9 @@ function MainScreen({ user }) {
           </div>
         )}
 
-        {searched&&!found&&(
-          <div style={{ background:"#fff",borderRadius:16,padding:"36px 24px",textAlign:"center",border:"1.5px solid #e4eaf3" }}>
-            <div style={{ fontSize:36,marginBottom:10 }}>🔍</div>
-            <div style={{ fontSize:15,fontWeight:700,color:"#333",marginBottom:6 }}>注文が見つかりませんでした</div>
-            <div style={{ fontSize:13,color:"#888",lineHeight:1.7 }}>注文番号をご確認の上、再度お試しください。<br/>ご不明な点はお電話にてお問い合わせください。</div>
-          </div>
-        )}
-        {found&&(
-          <div style={{ display:"flex",flexDirection:"column",gap:12 }}>
-            {myOrders.length > 0 && (
-              <button onClick={() => { setFound(null); setSearched(false); setQuery(""); }}
-                style={{ display:"flex",alignItems:"center",gap:6,padding:"8px 0",background:"none",border:"none",color:"#4a7cc7",fontSize:13,fontWeight:700,cursor:"pointer" }}>
-                ← 注文一覧に戻る
-              </button>
-            )}
-            <div style={{ background:"#fff",borderRadius:14,border:"1.5px solid #e4eaf3",padding:"16px 18px",boxShadow:"0 2px 10px rgba(10,30,53,0.05)" }}>
-              <div style={{ display:"flex",justifyContent:"space-between",alignItems:"flex-start" }}>
-                <div>
-                  <div style={{ fontSize:10.5,color:"#a0aab8",letterSpacing:"0.08em",marginBottom:3 }}>注文番号</div>
-                  <div style={{ fontSize:18,fontWeight:900,color:"#0f2744",letterSpacing:"0.04em" }}>{found.id}</div>
-                </div>
-                <div style={{ textAlign:"right" }}>
-                  <div style={{ fontSize:10.5,color:"#a0aab8",marginBottom:3 }}>注文日</div>
-                  <div style={{ fontSize:12.5,fontWeight:600,color:"#333" }}>{found.date}</div>
-                </div>
-              </div>
-              <div style={{ marginTop:10,display:"flex",alignItems:"center",justifyContent:"space-between" }}>
-                <span style={{ fontSize:12.5,color:"#6a7a8a" }}>{found.clinic}</span>
-                <span style={{ fontSize:11,color:"#a0aab8" }}>最終更新：{found.updatedAt}</span>
-              </div>
-            </div>
+        {/* アカウント設定モーダル */}
+        {showAccount && <AccountSettingsModal user={user} onClose={()=>setShowAccount(false)} />}
 
-            <GroupedProductList products={found.products}/>
-            <UrgentRequest order={found} user={user} myRequests={myRequests} onSent={loadData}/>
-
-            <div style={{ fontSize:12,color:"#a0aab8",textAlign:"center",lineHeight:1.7,padding:"4px 0 8px" }}>
-              ステータスは随時更新されます。<br/>ご不明な点はお電話にてお問い合わせください。
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );
