@@ -515,26 +515,27 @@ function ClinicManager({ orders }) {
   const handleChangePw = async (email) => {
     const state = pwEdit[email] || {};
     const newPw = state.newPw || "";
+    const manualCurrentPw = state.manualCurrentPw || "";
     if (!newPw || newPw.length < 6) {
       setPwEdit(p => ({...p, [email]: {...(p[email]||{}), status:"short"}}));
       return;
     }
     const row = rows.find(r => r.email === email);
-    const currentPw = row?.password || "";
+    // 保存済みパスワード優先、なければ管理者入力の現行パスワードを使用
+    const currentPw = row?.password || manualCurrentPw;
+    if (!currentPw) {
+      setPwEdit(p => ({...p, [email]: {...(p[email]||{}), status:"need_current_pw"}}));
+      return;
+    }
     setPwEdit(p => ({...p, [email]: {...(p[email]||{}), status:"changing"}}));
     await waitFB();
     try {
-      if (!currentPw) {
-        // 現行パスワード未設定の場合はリセットメールしか手段がない
-        setPwEdit(p => ({...p, [email]: {...(p[email]||{}), status:"no_current_pw"}}));
-        return;
-      }
       await window._firebase.changeUserPassword(email, currentPw, newPw);
       // Firestoreのパスワードも更新
       const newRows = rows.map(r => r.email === email ? {...r, password: newPw} : r);
       setRows(newRows);
       await window._firebase.saveBindingsFull(newRows);
-      setPwEdit(p => ({...p, [email]: {open:false, newPw:"", showPw:false, status:"done"}}));
+      setPwEdit(p => ({...p, [email]: {open:false, newPw:"", showPw:false, manualCurrentPw:"", status:"done"}}));
       setTimeout(() => setPwEdit(p => ({...p, [email]: {}})), 3000);
     } catch(e) {
       const msg = e.message || "";
@@ -650,7 +651,29 @@ function ClinicManager({ orders }) {
                       </div>
                     </div>
                     {pw.open && (
-                      <div>
+                      <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                        {/* パスワード未保存の場合：現行パスワード入力欄を表示 */}
+                        {!row.password && (
+                          <div>
+                            <div style={{ fontSize:10.5, color:"#e07d20", fontWeight:600, marginBottom:4 }}>
+                              ⚠ このアカウントのパスワードは管理画面に未保存です。現在のパスワードを入力してください
+                            </div>
+                            <div style={{ position:"relative" }}>
+                              <input
+                                type={pw.showCurrentPw ? "text" : "password"}
+                                value={pw.manualCurrentPw || ""}
+                                onChange={e => setPwEdit(p => ({...p, [row.email]: {...(p[row.email]||{}), manualCurrentPw: e.target.value, status:""}}))}
+                                placeholder="現在のパスワード"
+                                style={{ ...inp, paddingRight:36 }}
+                              />
+                              <button onClick={() => setPwEdit(p => ({...p, [row.email]: {...(p[row.email]||{}), showCurrentPw: !pw.showCurrentPw}}))}
+                                style={{ position:"absolute", right:8, top:"50%", transform:"translateY(-50%)", border:"none", background:"none", cursor:"pointer", fontSize:13, color:"#8a95a5" }}>
+                                {pw.showCurrentPw ? "🙈" : "👁"}
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                        {/* 新パスワード + 変更ボタン */}
                         <div style={{ display:"flex", gap:8, alignItems:"center" }}>
                           <div style={{ flex:1, position:"relative" }}>
                             <input
@@ -670,11 +693,11 @@ function ClinicManager({ orders }) {
                             {pw.status==="changing" ? "変更中..." : "変更する"}
                           </button>
                         </div>
-                        {pw.status === "done" && <div style={{ marginTop:6, fontSize:12, color:"#1a7a50", fontWeight:700 }}>✅ パスワードを変更しました</div>}
-                        {pw.status === "short" && <div style={{ marginTop:6, fontSize:12, color:"#e05050" }}>⚠ パスワードは6文字以上で入力してください</div>}
-                        {pw.status === "wrong_pw" && <div style={{ marginTop:6, fontSize:12, color:"#e05050" }}>❌ 現在の保存済みパスワードと一致しません。パスワードリセットメールを使用してください</div>}
-                        {pw.status === "no_current_pw" && <div style={{ marginTop:6, fontSize:12, color:"#e07d20" }}>⚠ 現在のパスワードが未保存のため変更できません。📧 リセットメールを送信してください</div>}
-                        {pw.status === "error" && <div style={{ marginTop:6, fontSize:12, color:"#e05050" }}>❌ 変更に失敗しました</div>}
+                        {pw.status === "done" && <div style={{ fontSize:12, color:"#1a7a50", fontWeight:700 }}>✅ パスワードを変更しました</div>}
+                        {pw.status === "short" && <div style={{ fontSize:12, color:"#e05050" }}>⚠ パスワードは6文字以上で入力してください</div>}
+                        {pw.status === "need_current_pw" && <div style={{ fontSize:12, color:"#e05050" }}>⚠ 現在のパスワードを入力してください</div>}
+                        {pw.status === "wrong_pw" && <div style={{ fontSize:12, color:"#e05050" }}>❌ 現在のパスワードが正しくありません。📧 リセットメールを使用してください</div>}
+                        {pw.status === "error" && <div style={{ fontSize:12, color:"#e05050" }}>❌ 変更に失敗しました</div>}
                       </div>
                     )}
                     {pw.status === "done" && !pw.open && <div style={{ marginTop:4, fontSize:12, color:"#1a7a50", fontWeight:700 }}>✅ パスワードを変更しました</div>}
