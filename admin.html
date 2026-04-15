@@ -533,163 +533,132 @@ function BackupManager({ orders, downloadBackup }) {
   );
 }
 
-// ── クリニック紐づけ管理 ──────────────────────────────────────────────────
-// ── クリニック紐づけ管理 ──────────────────────────────────────────────────
+// ── クリニック紐づけ管理（シンプル確実版）────────────────────────────────
 function ClinicBindingManager({ orders }) {
-  const [bindings, setBindings] = useState({});
-  const bindingsRef = React.useRef({});  // 常に最新のbindingsを保持
+  const [rows, setRows] = useState([]); // [{email, clinics:[]}]
   const [loading, setLoading] = useState(true);
-  const [saveMsg, setSaveMsg] = useState("");
-  const [editEmail, setEditEmail] = useState(null);
-  const [newEmail, setNewEmail] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState("");
   const [addEmail, setAddEmail] = useState("");
   const [addClinics, setAddClinics] = useState([]);
 
-  // bindingsをsetしてrefも更新するヘルパー
-  const updateBindings = (updater) => {
-    setBindings(prev => {
-      const next = typeof updater === 'function' ? updater(prev) : updater;
-      bindingsRef.current = next;
-      return next;
-    });
-  };
+  const clinicNames = [...new Set(orders.map(o => o.clinic).filter(Boolean))].sort();
 
-  // Firebase直接操作（最大10秒待つ）
-  const getDB = () => {
-    let t = 0;
-    return new Promise((resolve, reject) => {
-      const check = () => {
-        if (window._firebase) resolve(window._firebase);
-        else if (t++ > 50) reject(new Error("Firebase未初期化（タイムアウト）"));
-        else setTimeout(check, 200);
-      };
-      check();
-    });
-  };
-
-  useEffect(() => {
+  // Firebase から読み込み
+  const load = async () => {
     setLoading(true);
-    const load = async () => {
-      try {
-        // window._bindingsにキャッシュがあれば使用、なければFirebaseから読込
-        let data = window._bindings || {};
-        if (Object.keys(data).length === 0) {
-          const fb = await getDB();
-          data = await fb.loadBindings();
-          window._bindings = data;
-        }
-        console.log('📂 紐づけ読込:', JSON.stringify(data));
-        const normalized = {};
-        Object.entries(data).forEach(([email, val]) => {
-          normalized[email] = Array.isArray(val) ? val : (val ? [val] : []);
-        });
-        updateBindings(normalized);
-      } catch(e) {
-        console.error("loadBindings error:", e);
-      }
-      setLoading(false);
-    };
-    load();
-  }, []); // マウント時のみ実行
-
-  const handleSave = async () => {
-    setSaveMsg("saving");
+    let t = 0;
+    while (!window._firebase && t++ < 30) await new Promise(r => setTimeout(r, 200));
     try {
-      const fb = await getDB();
-      const latestBindings = bindingsRef.current;
-      console.log("保存するデータ(ref):", JSON.stringify(latestBindings));
-      console.log("保存するデータ(state):", JSON.stringify(bindings));
-      if (Object.keys(latestBindings).length === 0) {
-        alert("⚠ 紐づけデータが空です。先に「追加する」ボタンでクリニックを追加してから保存してください。");
-        setSaveMsg("");
-        return;
-      }
-      await fb.saveBindings(latestBindings);
-      setSaveMsg("saved");
-      setTimeout(() => setSaveMsg(""), 3000);
+      const data = await window._firebase.loadBindings();
+      // {email: clinics} → [{email, clinics}] に変換
+      const arr = Object.entries(data).map(([email, clinics]) => ({
+        email,
+        clinics: Array.isArray(clinics) ? clinics : (clinics ? [clinics] : [])
+      }));
+      setRows(arr);
+    } catch(e) { console.error(e); }
+    setLoading(false);
+  };
+
+  useEffect(() => { load(); }, []);
+
+  // 保存
+  const handleSave = async () => {
+    setSaving(true); setMsg("");
+    try {
+      // rows → {email: clinics} オブジェクトに変換してから配列形式で保存
+      const bindings = {};
+      rows.forEach(r => { if (r.email) bindings[r.email] = r.clinics; });
+      console.log("💾 保存するbindings:", JSON.stringify(bindings));
+      // Firestoreに直接保存
+      let t = 0;
+      while (!window._firebase && t++ < 30) await new Promise(r => setTimeout(r, 200));
+      await window._firebase.saveBindings(bindings);
+      window._bindings = bindings;
+      setMsg("saved");
+      setTimeout(() => setMsg(""), 3000);
     } catch(e) {
-      console.error("saveBindings error:", e);
-      setSaveMsg("error:" + e.message);
+      console.error(e);
+      setMsg("error");
       alert("保存エラー: " + e.message);
     }
+    setSaving(false);
   };
 
-  const handleDelete = (email) => {
-    if (!confirm(`${email} の紐づけを削除しますか？`)) return;
-    updateBindings(b => { const nb = {...b}; delete nb[email]; return nb; });
-  };
-
-  const handleEmailChange = (oldEmail) => {
-    if (!newEmail.trim() || newEmail === oldEmail) { setEditEmail(null); return; }
-    updateBindings(b => { const nb = {...b}; nb[newEmail.trim()] = nb[oldEmail]; delete nb[oldEmail]; return nb; });
-    setEditEmail(null); setNewEmail("");
-  };
-
-  const handleRemoveClinic = (email, clinic) => {
-    updateBindings(b => { const nb = {...b}; nb[email] = nb[email].filter(c => c !== clinic); if (nb[email].length === 0) delete nb[email]; return nb; });
-  };
-
-  const handleAddClinicToEmail = (email, clinic) => {
+  const removeRow = (email) => setRows(prev => prev.filter(r => r.email !== email));
+  const removeClinic = (email, clinic) => setRows(prev => prev.map(r =>
+    r.email === email ? {...r, clinics: r.clinics.filter(c => c !== clinic)} : r
+  ));
+  const addClinicToRow = (email, clinic) => {
     if (!clinic) return;
-    updateBindings(b => { const nb = {...b}; if (!nb[email]) nb[email] = []; if (!nb[email].includes(clinic)) nb[email] = [...nb[email], clinic]; return nb; });
+    setRows(prev => prev.map(r =>
+      r.email === email && !r.clinics.includes(clinic)
+        ? {...r, clinics: [...r.clinics, clinic]}
+        : r
+    ));
   };
 
   const handleAdd = () => {
     const email = addEmail.trim();
     if (!email || addClinics.length === 0) return;
-    updateBindings(b => {
-      const nb = {...b, [email]: [...addClinics]};
-      console.log("追加後のbindings:", JSON.stringify(nb));
-      return nb;
+    setRows(prev => {
+      const existing = prev.find(r => r.email === email);
+      if (existing) {
+        return prev.map(r => r.email === email
+          ? {...r, clinics: [...new Set([...r.clinics, ...addClinics])]}
+          : r
+        );
+      }
+      return [...prev, {email, clinics: addClinics}];
     });
     setAddEmail(""); setAddClinics([]);
   };
 
-  const clinicNames = [...new Set(orders.map(o => o.clinic).filter(Boolean))].sort();
-  const entries = Object.entries(bindings);
-
   return (
-    <div style={{ background:"#fff", borderRadius:14, border:"1.5px solid #e4eaf3", padding:"20px", boxShadow:"0 2px 10px rgba(10,30,53,0.05)" }}>
-      <div style={{ fontSize:14, fontWeight:800, color:"#0f2744", marginBottom:4 }}>🔗 クリニック紐づけ設定</div>
-      <div style={{ fontSize:12, color:"#8a95a5", marginBottom:16, lineHeight:1.6 }}>
+    <div style={{background:"#fff",borderRadius:14,border:"1.5px solid #e4eaf3",padding:"20px",boxShadow:"0 2px 10px rgba(10,30,53,0.05)"}}>
+      <div style={{fontSize:14,fontWeight:800,color:"#0f2744",marginBottom:4}}>🔗 クリニック紐づけ設定</div>
+      <div style={{fontSize:12,color:"#8a95a5",marginBottom:16,lineHeight:1.6}}>
         メールアドレスとクリニック名を紐づけると、ログイン時に自分の注文が自動表示されます。
       </div>
 
-      {loading ? <div style={{ color:"#8a95a5", fontSize:13, padding:"20px 0", textAlign:"center" }}>読込中...</div> : (<>
+      {loading ? (
+        <div style={{textAlign:"center",padding:"20px",color:"#8a95a5"}}>読込中...</div>
+      ) : (<>
 
-        {/* 紐づけ一覧 */}
-        <div style={{ border:"1.5px solid #e4eaf3", borderRadius:10, overflow:"hidden", marginBottom:14 }}>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr auto", background:"#0f2744", padding:"8px 14px", fontSize:12, fontWeight:700, color:"rgba(255,255,255,0.8)", gap:8, borderBottom:"1px solid #e4eaf3" }}>
+        {/* 紐づけ一覧テーブル */}
+        <div style={{border:"1.5px solid #e4eaf3",borderRadius:10,overflow:"hidden",marginBottom:14}}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr auto",background:"#0f2744",padding:"8px 14px",fontSize:12,fontWeight:700,color:"rgba(255,255,255,0.85)",gap:8}}>
             <span>メールアドレス</span><span>紐づいたクリニック</span><span>操作</span>
           </div>
-          {entries.length === 0 && <div style={{ padding:"20px", textAlign:"center", color:"#a0aab8", fontSize:13 }}>まだ紐づけがありません</div>}
-          {entries.map(([email, clinics]) => (
-            <div key={email} style={{ borderBottom:"1px solid #f0f4f9", padding:"10px 14px" }}>
-              <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6 }}>
-                {editEmail === email ? (<>
-                  <input value={newEmail} onChange={e => setNewEmail(e.target.value)} onKeyDown={e => e.key==="Enter" && handleEmailChange(email)}
-                    style={{ flex:1, padding:"5px 8px", borderRadius:7, border:"1.5px solid #4a7cc7", fontSize:12, outline:"none" }} />
-                  <button onClick={() => handleEmailChange(email)} style={{ padding:"4px 10px", borderRadius:6, border:"none", background:"#0f2744", color:"#fff", fontSize:11, cursor:"pointer", fontWeight:700 }}>変更</button>
-                  <button onClick={() => { setEditEmail(null); setNewEmail(""); }} style={{ padding:"4px 8px", borderRadius:6, border:"1.5px solid #dde4ef", background:"#fff", fontSize:11, cursor:"pointer" }}>戻る</button>
-                </>) : (<>
-                  <span style={{ fontSize:13, fontWeight:600, color:"#1a2a3a", flex:1 }}>{email}</span>
-                  <button onClick={() => { setEditEmail(email); setNewEmail(email); }} style={{ padding:"3px 8px", borderRadius:6, border:"1.5px solid #dde4ef", background:"#f8fafd", fontSize:11, cursor:"pointer", color:"#4a7cc7", fontWeight:700 }}>✏️ 変更</button>
-                  <button onClick={() => handleDelete(email)} style={{ padding:"3px 8px", borderRadius:6, border:"1.5px solid #e0c0c0", background:"#fff8f8", fontSize:11, cursor:"pointer", color:"#e05050", fontWeight:700 }}>削除</button>
-                </>)}
+          {rows.length === 0 && (
+            <div style={{padding:"20px",textAlign:"center",color:"#a0aab8",fontSize:13}}>まだ紐づけがありません</div>
+          )}
+          {rows.map(row => (
+            <div key={row.email} style={{borderBottom:"1px solid #f0f4f9",padding:"10px 14px"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:6}}>
+                <span style={{fontSize:13,fontWeight:600,color:"#1a2a3a"}}>{row.email}</span>
+                <button onClick={() => removeRow(row.email)}
+                  style={{padding:"3px 8px",borderRadius:6,border:"1.5px solid #e0c0c0",background:"#fff8f8",fontSize:11,cursor:"pointer",color:"#e05050",fontWeight:700}}>
+                  削除
+                </button>
               </div>
-              <div style={{ display:"flex", gap:5, flexWrap:"wrap", paddingLeft:4, alignItems:"center" }}>
-                {clinics.length === 0 && <span style={{ fontSize:12, color:"#e05050", fontWeight:700, padding:"3px 8px", borderRadius:20, background:"#fff0f0", border:"1px solid #e0c0c0" }}>⚠ 未設定</span>}
-                {clinics.map(c => (
-                  <div key={c} style={{ display:"flex", alignItems:"center", gap:5, padding:"4px 10px", borderRadius:20, background:"#e8f0ff", border:"1.5px solid #4a7cc7" }}>
-                    <span style={{ fontSize:12.5, color:"#0f2744", fontWeight:700 }}>{c}</span>
-                    <button onClick={() => handleRemoveClinic(email, c)} style={{ border:"none", background:"none", color:"#e05050", fontWeight:900, fontSize:14, cursor:"pointer", padding:0, lineHeight:1 }}>×</button>
+              <div style={{display:"flex",gap:5,flexWrap:"wrap",alignItems:"center"}}>
+                {row.clinics.length === 0 && (
+                  <span style={{fontSize:12,color:"#e05050",fontWeight:700,padding:"3px 8px",borderRadius:20,background:"#fff0f0",border:"1px solid #e0c0c0"}}>⚠ 未設定</span>
+                )}
+                {row.clinics.map(c => (
+                  <div key={c} style={{display:"flex",alignItems:"center",gap:4,padding:"4px 10px",borderRadius:20,background:"#e8f0ff",border:"1.5px solid #4a7cc7"}}>
+                    <span style={{fontSize:12.5,color:"#0f2744",fontWeight:700}}>{c}</span>
+                    <button onClick={() => removeClinic(row.email, c)}
+                      style={{border:"none",background:"none",color:"#e05050",fontWeight:900,fontSize:14,cursor:"pointer",padding:0,lineHeight:1}}>×</button>
                   </div>
                 ))}
-                {clinicNames.filter(n => !clinics.includes(n)).length > 0 && (
-                  <select onChange={e => { if(e.target.value) handleAddClinicToEmail(email, e.target.value); e.target.value=""; }}
-                    style={{ padding:"4px 8px", borderRadius:20, border:"1.5px dashed #4a7cc7", fontSize:12, color:"#4a7cc7", background:"#fff", cursor:"pointer", outline:"none" }}>
+                {clinicNames.filter(n => !row.clinics.includes(n)).length > 0 && (
+                  <select onChange={e => { if(e.target.value) addClinicToRow(row.email, e.target.value); e.target.value=""; }}
+                    style={{padding:"4px 8px",borderRadius:20,border:"1.5px dashed #4a7cc7",fontSize:12,color:"#4a7cc7",background:"#fff",cursor:"pointer",outline:"none"}}>
                     <option value="">＋ 追加</option>
-                    {clinicNames.filter(n => !clinics.includes(n)).map(n => <option key={n} value={n}>{n}</option>)}
+                    {clinicNames.filter(n => !row.clinics.includes(n)).map(n => <option key={n} value={n}>{n}</option>)}
                   </select>
                 )}
               </div>
@@ -697,59 +666,57 @@ function ClinicBindingManager({ orders }) {
           ))}
         </div>
 
-        {/* 新規追加 */}
-        <div style={{ background:"#f8fafd", borderRadius:10, border:"1.5px solid #e4eaf3", padding:"14px", marginBottom:14 }}>
-          <div style={{ fontSize:12, fontWeight:700, color:"#0f2744", marginBottom:10 }}>新規追加</div>
-          <div style={{ marginBottom:8 }}>
-            <div style={{ fontSize:11, color:"#8a95a5", marginBottom:4 }}>メールアドレス</div>
+        {/* 新規追加フォーム */}
+        <div style={{background:"#f8fafd",borderRadius:10,border:"1.5px solid #e4eaf3",padding:"14px",marginBottom:14}}>
+          <div style={{fontSize:12,fontWeight:700,color:"#0f2744",marginBottom:10}}>新規追加</div>
+          <div style={{marginBottom:8}}>
+            <div style={{fontSize:11,color:"#8a95a5",marginBottom:4}}>メールアドレス</div>
             <input value={addEmail} onChange={e => setAddEmail(e.target.value)} placeholder="clinic@example.com" type="email"
-              style={{ width:"100%", padding:"8px 10px", borderRadius:8, border:"1.5px solid #dde4ef", fontSize:12.5, outline:"none", boxSizing:"border-box" }} />
+              style={{width:"100%",padding:"8px 10px",borderRadius:8,border:"1.5px solid #dde4ef",fontSize:12.5,outline:"none",boxSizing:"border-box"}} />
           </div>
-          <div style={{ marginBottom:10 }}>
-            <div style={{ fontSize:11, color:"#8a95a5", marginBottom:4 }}>紐づけるクリニック</div>
+          <div style={{marginBottom:10}}>
+            <div style={{fontSize:11,color:"#8a95a5",marginBottom:4}}>紐づけるクリニック</div>
             {clinicNames.length === 0 ? (
-              <div style={{ padding:"10px", background:"#fff8e8", borderRadius:8, fontSize:12, color:"#7a6020", border:"1px solid #e8c95a" }}>⚠ 先にCSVを取込んで「Firebaseに保存」してください</div>
+              <div style={{padding:"10px",background:"#fff8e8",borderRadius:8,fontSize:12,color:"#7a6020",border:"1px solid #e8c95a"}}>⚠ 先にCSVを取込んで「Firebaseに保存」してください</div>
             ) : (
-              <select onChange={e => { const v=e.target.value; if(v && !addClinics.includes(v)) setAddClinics(prev=>[...prev,v]); e.target.value=""; }}
-                style={{ width:"100%", padding:"8px 10px", borderRadius:8, border:"1.5px solid #dde4ef", fontSize:12.5, outline:"none", background:"#fff", boxSizing:"border-box" }}>
+              <select onChange={e => { const v=e.target.value; if(v && !addClinics.includes(v)) setAddClinics(p=>[...p,v]); e.target.value=""; }}
+                style={{width:"100%",padding:"8px 10px",borderRadius:8,border:"1.5px solid #dde4ef",fontSize:12.5,outline:"none",background:"#fff",boxSizing:"border-box"}}>
                 <option value="">-- クリニックを選択 --</option>
                 {clinicNames.map(n => <option key={n} value={n}>{n}</option>)}
               </select>
             )}
             {addClinics.length > 0 && (
-              <div style={{ display:"flex", gap:5, flexWrap:"wrap", marginTop:8 }}>
+              <div style={{display:"flex",gap:5,flexWrap:"wrap",marginTop:8}}>
                 {addClinics.map(c => (
-                  <div key={c} style={{ display:"flex", alignItems:"center", gap:5, padding:"5px 10px", borderRadius:20, background:"#e8f0ff", border:"1.5px solid #4a7cc7" }}>
-                    <span style={{ fontSize:12.5, color:"#0f2744", fontWeight:700 }}>{c}</span>
-                    <button onClick={() => setAddClinics(prev=>prev.filter(x=>x!==c))} style={{ border:"none", background:"none", color:"#e05050", fontWeight:900, fontSize:14, cursor:"pointer", padding:0, lineHeight:1 }}>×</button>
+                  <div key={c} style={{display:"flex",alignItems:"center",gap:4,padding:"5px 10px",borderRadius:20,background:"#e8f0ff",border:"1.5px solid #4a7cc7"}}>
+                    <span style={{fontSize:12.5,color:"#0f2744",fontWeight:700}}>{c}</span>
+                    <button onClick={() => setAddClinics(p=>p.filter(x=>x!==c))}
+                      style={{border:"none",background:"none",color:"#e05050",fontWeight:900,fontSize:14,cursor:"pointer",padding:0}}>×</button>
                   </div>
                 ))}
               </div>
             )}
           </div>
           <button onClick={handleAdd} disabled={!addEmail.trim() || addClinics.length===0}
-            style={{ width:"100%", padding:"9px", borderRadius:9, border:"none", background:"#0f2744", color:"#fff", fontWeight:700, fontSize:13, cursor:"pointer", opacity:(!addEmail.trim()||addClinics.length===0)?0.4:1 }}>
+            style={{width:"100%",padding:"9px",borderRadius:9,border:"none",background:"#0f2744",color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer",opacity:(!addEmail.trim()||addClinics.length===0)?0.4:1}}>
             追加する
           </button>
         </div>
 
         {/* 保存ボタン */}
-        <button onClick={handleSave}
-          style={{ width:"100%", padding:"13px", borderRadius:10, border:"none",
-            background: saveMsg==="saved" ? "#3aa876" : saveMsg==="saving" ? "#6b8cba" : saveMsg.startsWith("error") ? "#e05050" : "linear-gradient(135deg,#0f2744,#1a3d6e)",
-            color:"#fff", fontWeight:800, fontSize:14, cursor:"pointer" }}>
-          {saveMsg==="saved" ? "✅ 保存しました！" : saveMsg==="saving" ? "保存中..." : saveMsg.startsWith("error") ? "❌ エラー" : "💾 紐づけを保存する"}
+        <button onClick={handleSave} disabled={saving}
+          style={{width:"100%",padding:"13px",borderRadius:10,border:"none",
+            background: msg==="saved"?"#3aa876":msg==="error"?"#e05050":"linear-gradient(135deg,#0f2744,#1a3d6e)",
+            color:"#fff",fontWeight:800,fontSize:14,cursor:"pointer",opacity:saving?0.7:1}}>
+          {saving?"保存中...":msg==="saved"?"✅ 保存しました！":msg==="error"?"❌ エラー":"💾 紐づけを保存する"}
         </button>
-        {saveMsg==="saved" && <div style={{ marginTop:8, padding:"8px 12px", background:"#f0fdf6", border:"1px solid #3aa876", borderRadius:8, fontSize:12, color:"#1a7a50", textAlign:"center" }}>Firebaseに保存しました。お客様画面に反映されます。</div>}
+        {msg==="saved"&&<div style={{marginTop:8,padding:"8px 12px",background:"#f0fdf6",border:"1px solid #3aa876",borderRadius:8,fontSize:12,color:"#1a7a50",textAlign:"center"}}>Firebaseに保存しました。お客様画面に反映されます。</div>}
 
       </>)}
     </div>
   );
 }
 
-
-
-// ── クリニックアカウント管理 ───────────────────────────────────────────────
 function ClinicAccountManager() {
   const [email, setEmail] = useState("");
   const [status, setStatus] = useState(""); // "" | "loading" | "success" | "exists" | "error"
