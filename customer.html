@@ -367,7 +367,8 @@ function UrgentRequest({ order, user, myRequests, onSent }) {
 function MainScreen({ user }) {
   const [orders, setOrders] = useState([]);
   const [myRequests, setMyRequests] = useState([]);
-  const [myOrders, setMyOrders] = useState([]); // 紐づけされた自分の注文
+  const [myOrders, setMyOrders] = useState([]);
+  const [selectedMonth, setSelectedMonth] = useState(null);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
   const [found, setFound] = useState(null);
@@ -439,13 +440,33 @@ function MainScreen({ user }) {
       <div style={{ maxWidth:520,margin:"0 auto",padding:"20px 14px 48px" }}>
 
         {/* 紐づけされた自分の注文を自動表示 */}
-        {!searched && myOrders.length > 0 && (
+        {!searched && myOrders.length > 0 && (() => {
+          // 月一覧を抽出
+          const months = [...new Set(myOrders.map(o => (o.date||"").slice(0,7)).filter(Boolean))].sort().reverse();
+          const currentMonth = selectedMonth || months[0] || "";
+          const displayOrders = myOrders.filter(o => (o.date||"").startsWith(currentMonth));
+          return (
           <div style={{ marginBottom:20 }}>
-            <div style={{ fontSize:13,fontWeight:700,color:"#0f2744",marginBottom:12,display:"flex",alignItems:"center",gap:8 }}>
-              <span>📋 ご注文一覧</span>
-              <span style={{ fontSize:11,color:"#8a95a5",fontWeight:400 }}>全{myOrders.length}件</span>
+            {/* 月タブ */}
+            <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:14 }}>
+              {months.map(m => (
+                <button key={m} onClick={() => setSelectedMonth(m)}
+                  style={{ padding:"7px 16px", borderRadius:20, border:"1.5px solid", cursor:"pointer", fontSize:13, fontWeight:700,
+                    borderColor: currentMonth===m ? "#d4a843" : "rgba(255,255,255,0.3)",
+                    background: currentMonth===m ? "#d4a843" : "rgba(255,255,255,0.08)",
+                    color: currentMonth===m ? "#0a1e35" : "rgba(255,255,255,0.7)" }}>
+                  {m.replace("-","年").replace(/-(\d{2})$/,"$1月")}
+                  <span style={{ fontSize:11, marginLeft:5, opacity:0.8 }}>
+                    {myOrders.filter(o=>(o.date||"").startsWith(m)).length}件
+                  </span>
+                </button>
+              ))}
             </div>
-            {myOrders.map(order => (
+            <div style={{ fontSize:13,fontWeight:700,color:"#fff",marginBottom:12,display:"flex",alignItems:"center",gap:8 }}>
+              <span>📋 ご注文一覧</span>
+              <span style={{ fontSize:11,color:"rgba(255,255,255,0.5)",fontWeight:400 }}>{displayOrders.length}件</span>
+            </div>
+            {displayOrders.map(order => (
               <div key={order.id}
                 style={{ background:"#fff",borderRadius:14,border:"1.5px solid #e4eaf3",marginBottom:10,overflow:"hidden",boxShadow:"0 1px 6px rgba(10,30,53,0.05)" }}>
                 {/* 注文ヘッダー */}
@@ -478,7 +499,8 @@ function MainScreen({ user }) {
               </div>
             ))}
           </div>
-        )}
+          );
+        })()}
 
         {searched&&!found&&(
           <div style={{ background:"#fff",borderRadius:16,padding:"36px 24px",textAlign:"center",border:"1.5px solid #e4eaf3" }}>
