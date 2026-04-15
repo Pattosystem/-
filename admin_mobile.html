@@ -35,27 +35,24 @@ body { font-family:'Hiragino Sans','Yu Gothic',sans-serif; background:#f0f4f9; m
         return d.exists() ? (d.data().data || {}) : {};
       } catch(e) { return {}; }
     },
+    // 写真を個別ドキュメントで保存（1MB制限回避）
     savePhoto: async (date, clinic, orderId, productName, photoBase64) => {
-      // appdata/ship_photos に保存
-      const d = await getDoc(doc(db, "appdata", "ship_photos"));
-      const existing = d.exists() ? (d.data().list || []) : [];
+      const id = Date.now();
       const newEntry = {
-        id: Date.now(),
-        date, clinic, orderId, productName,
+        id, date, clinic, orderId, productName,
         photo: photoBase64,
         takenAt: new Date().toISOString()
       };
-      existing.push(newEntry);
-      await setDoc(doc(db, "appdata", "ship_photos"), {
-        list: existing,
-        updatedAt: new Date().toISOString()
-      });
+      // ship_photos コレクションに個別ドキュメントとして保存
+      await setDoc(doc(db, "ship_photos", String(id)), newEntry);
       return newEntry;
     },
     loadPhotos: async () => {
       try {
-        const d = await getDoc(doc(db, "appdata", "ship_photos"));
-        return d.exists() ? (d.data().list || []) : [];
+        const snap = await getDocs(collection(db, "ship_photos"));
+        const list = [];
+        snap.forEach(d => list.push(d.data()));
+        return list.sort((a,b) => a.id - b.id);
       } catch(e) { return []; }
     }
   };
