@@ -931,17 +931,22 @@ function SalesManager({ orders }) {
     setCreating(true); setCreateMsg("");
     await waitFB();
     try {
-      await window._firebase.createSalesAccount(addEmail.trim(), addPassword.trim());
       const today = new Date().toLocaleDateString("ja-JP",{year:"numeric",month:"2-digit",day:"2-digit"});
       const newRow = { email:addEmail.trim(), name:addName.trim(), clinics:addClinics, password:addPassword.trim(), registeredAt:today };
       const newRows = [...rows.filter(r=>r.email!==addEmail.trim()), newRow];
+      try {
+        // 新規アカウント作成を試みる（既存の場合はスキップ）
+        await window._firebase.createSalesAccount(addEmail.trim(), addPassword.trim());
+      } catch(e) {
+        if (!e.message.includes("EMAIL_EXISTS")) throw e;
+        // 既存アカウントの場合はそのまま紐づけのみ登録
+      }
       setRows(newRows);
       await window._firebase.saveSalesBindings(newRows);
-      setCreateMsg("success");
+      setCreateMsg("success_existing");
       setAddEmail(""); setAddName(""); setAddPassword(""); setAddClinics([]);
     } catch(e) {
-      if (e.message.includes("EMAIL_EXISTS")) setCreateMsg("exists");
-      else { setCreateMsg("error"); console.error(e); }
+      setCreateMsg("error"); console.error(e);
     }
     setCreating(false);
   };
@@ -1059,7 +1064,7 @@ function SalesManager({ orders }) {
           )}
         </div>
         {createMsg==="success"&&<div style={{ padding:"10px 14px",background:"#f0fdf6",border:"1px solid #a0d8b8",borderRadius:9,fontSize:13,color:"#1a7a50",fontWeight:600,marginBottom:12 }}>✅ 営業アカウントを作成しました。</div>}
-        {createMsg==="exists"&&<div style={{ padding:"10px 14px",background:"#fffbef",border:"1px solid #e8c95a",borderRadius:9,fontSize:13,color:"#7a6020",marginBottom:12 }}>⚠ このメールアドレスはすでに登録されています。</div>}
+        {createMsg==="success_existing"&&<div style={{ padding:"10px 14px",background:"#f0fdf6",border:"1px solid #a0d8b8",borderRadius:9,fontSize:13,color:"#1a7a50",fontWeight:600,marginBottom:12 }}>✅ 既存のアカウントを営業担当として登録しました。このメールアドレスは既にFirebaseに登録済みのため、パスワードは変更されていません。</div>}
         {createMsg==="pw_short"&&<div style={{ padding:"10px 14px",background:"#fff0f0",border:"1px solid #e0c0c0",borderRadius:9,fontSize:13,color:"#c05050",marginBottom:12 }}>⚠ パスワードは6文字以上で設定してください。</div>}
         {createMsg==="error"&&<div style={{ padding:"10px 14px",background:"#fff0f0",border:"1px solid #e0c0c0",borderRadius:9,fontSize:13,color:"#c05050",marginBottom:12 }}>❌ 登録に失敗しました。</div>}
         <button onClick={handleCreate} disabled={creating||!addEmail.trim()||!addPassword.trim()}
