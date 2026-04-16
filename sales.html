@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>営業管理システム</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+  import { getFirestore, collection, getDocs, getDocsFromServer, doc, getDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+  import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyDNg5KsLABnwJbN5EpvWjpLnkstFzXA1HE",
+    authDomain: "order-tracking-92681.firebaseapp.com",
+    projectId: "order-tracking-92681",
+    storageBucket: "order-tracking-92681.firebasestorage.app",
+    messagingSenderId: "988787355455",
+    appId: "1:988787355455:web:c7ce248d9fe2178636ed8a"
+  };
+  const app = initializeApp(firebaseConfig);
+  const db = getFirestore(app);
+  const auth = getAuth(app);
+
+  window._sfb = {
+    signIn: (email, pw) => signInWithEmailAndPassword(auth, email, pw),
+    signOut: () => signOut(auth),
+    onAuthStateChanged: (cb) => onAuthStateChanged(auth, cb),
+    loadOrders: async () => {
+      const snap = await getDocsFromServer(collection(db, "orders"));
+      const list = []; snap.forEach(d => list.push(d.data())); return list;
+    },
+    loadSalesBindings: async () => {
+      try {
+        const d = await getDoc(doc(db, "appdata", "sales_bindings"));
+        if (!d.exists()) return [];
+        const raw = d.data();
+        if (raw.json) return JSON.parse(raw.json);
+        return [];
+      } catch(e) { return []; }
+    },
+  };
+</script>
+<style>
+* { box-sizing:border-box; margin:0; padding:0; }
+body { background:#f0f4f9; font-family:'Hiragino Sans','Noto Sans JP','Yu Gothic',sans-serif; height:100vh; overflow:hidden; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useMemo } = React;
+
+// ── ユーティリティ ────────────────────────────────────────────────────────
+function parseJpDate(s) {
+  if (!s) return null;
+  const m = s.match(/(\d{4})年(\d{2})月(\d{2})日/);
+  if (m) return new Date(parseInt(m[1]), parseInt(m[2])-1, parseInt(m[3]));
+  return null;
+}
+function daysBetween(d1, d2) {
+  if (!d1||!d2) return null;
+  return Math.round((d2-d1)/(1000*60*60*24));
+}
+function toMonthKey(dateStr) {
+  const m = (dateStr||"").match(/(\d{4})年(\d{2})月/);
+  return m ? `${m[1]}-${m[2]}` : "";
+}
+function formatMonth(key) {
+  return key.replace("-","年") + "月";
+}
+
+const STATUS_STAGES = [
+  { id:0, short:"受付済", color:"#8a9ab5" },
+  { id:1, short:"準備中", color:"#6b8cba" },
+  { id:2, short:"空港到着", color:"#4a7cc7" },
+  { id:3, short:"輸送中", color:"#d4a843" },
+  { id:4, short:"通関待ち", color:"#e07d20" },
+  { id:5, short:"配送中", color:"#3aa876" },
+  { id:6, short:"完了", color:"#0f2744" },
+  { id:7, short:"一部発送済", color:"#e07d20" },
+];
+
+// ── ログイン ──────────────────────────────────────────────────────────────
+function LoginScreen() {
+  const [email, setEmail] = useState("");
+  const [pw, setPw] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const waitFB = async () => { let t=0; while(!window._sfb&&t<30){await new Promise(r=>setTimeout(r,200));t++;} };
+  const handleLogin = async () => {
+    if (!email||!pw) { setError("メールアドレスとパスワードを入力してください"); return; }
+    setLoading(true); setError("");
+    await waitFB();
+    try { await window._sfb.signIn(email, pw); }
+    catch(e) {
+      const c=e.code||"";
+      if(c.includes("invalid-credential")||c.includes("wrong-password")) setError("メールアドレスまたはパスワードが正しくありません");
+      else setError("ログインに失敗しました");
+      setLoading(false);
+    }
+  };
+  const inp = { width:"100%",padding:"13px 14px",borderRadius:10,border:"1.5px solid rgba(255,255,255,0.15)",background:"rgba(255,255,255,0.08)",color:"#fff",fontSize:15,outline:"none" };
+  return (
+    <div style={{ minHeight:"100vh",background:"linear-gradient(160deg,#0a2818 0%,#0f3d20 55%,#1a5a30 100%)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:20 }}>
+      <div style={{ width:"100%",maxWidth:380 }}>
+        <div style={{ textAlign:"center",marginBottom:32 }}>
+          <div style={{ fontSize:10.5,letterSpacing:"0.2em",color:"#5dd88a",fontWeight:700,marginBottom:8,textTransform:"uppercase" }}>Sales Management</div>
+          <div style={{ fontSize:24,fontWeight:900,color:"#fff",lineHeight:1.3,marginBottom:8 }}>営業管理<br/>システム</div>
+          <div style={{ fontSize:12.5,color:"rgba(255,255,255,0.5)" }}>担当クリニックの状況を管理します</div>
+        </div>
+        <div style={{ background:"rgba(255,255,255,0.07)",border:"1.5px solid rgba(255,255,255,0.12)",borderRadius:16,padding:"28px 24px" }}>
+          <div style={{ marginBottom:14 }}>
+            <div style={{ fontSize:11.5,color:"rgba(255,255,255,0.6)",marginBottom:6 }}>メールアドレス</div>
+            <input type="email" value={email} onChange={e=>{setEmail(e.target.value);setError("");}} onKeyDown={e=>e.key==="Enter"&&handleLogin()} placeholder="sales@example.com" style={inp}/>
+          </div>
+          <div style={{ marginBottom:16 }}>
+            <div style={{ fontSize:11.5,color:"rgba(255,255,255,0.6)",marginBottom:6 }}>パスワード</div>
+            <input type="password" value={pw} onChange={e=>{setPw(e.target.value);setError("");}} onKeyDown={e=>e.key==="Enter"&&handleLogin()} placeholder="••••••••" style={inp}/>
+          </div>
+          {error&&<div style={{ padding:"10px 12px",background:"rgba(220,50,50,0.15)",border:"1px solid rgba(220,50,50,0.3)",borderRadius:8,color:"#ff9090",fontSize:12.5,marginBottom:14 }}>⚠ {error}</div>}
+          <button onClick={handleLogin} disabled={loading} style={{ width:"100%",padding:14,borderRadius:10,border:"none",background:"#3aa876",color:"#fff",fontWeight:800,fontSize:14,cursor:"pointer",opacity:loading?0.7:1 }}>{loading?"ログイン中...":"ログイン"}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── クリニックカード（左パネル） ──────────────────────────────────────────
+function ClinicCard({ clinic, orders, isSelected, onClick }) {
+  const clinicOrders = orders.filter(o => o.clinic === clinic);
+  const allProducts = clinicOrders.flatMap(o => o.products);
+  const inProgress = allProducts.filter(p => p.status < 6).length;
+
+  // 最終注文日
+  const sorted = [...clinicOrders].sort((a,b) => b.id.localeCompare(a.id));
+  const lastOrder = sorted[0];
+  const lastOrderDate = lastOrder ? parseJpDate(lastOrder.date) : null;
+  const daysSinceLast = lastOrderDate ? daysBetween(lastOrderDate, new Date()) : null;
+
+  // フォローアップ要否
+  const needsFollowUp = daysSinceLast === null || daysSinceLast >= 30;
+
+  return (
+    <div onClick={onClick} style={{
+      background: isSelected ? "#0f3d20" : "#fff",
+      borderRadius:12, border:`1.5px solid ${isSelected?"#3aa876":needsFollowUp?"#e07d20":"#e4eaf3"}`,
+      marginBottom:8, overflow:"hidden", cursor:"pointer",
+      boxShadow: isSelected?"0 4px 16px rgba(10,61,32,0.3)":"0 1px 4px rgba(10,30,53,0.05)",
+      transition:"all 0.15s"
+    }}>
+      <div style={{ padding:"11px 13px" }}>
+        <div style={{ display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4 }}>
+          <div style={{ fontSize:13,fontWeight:800,color:isSelected?"#fff":"#0f2744",flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{clinic}</div>
+          <div style={{ display:"flex",gap:4,flexShrink:0,marginLeft:6 }}>
+            {inProgress>0 && <span style={{ padding:"2px 6px",borderRadius:20,fontSize:10,fontWeight:700,background:isSelected?"rgba(212,168,67,0.4)":"#fff8e8",color:isSelected?"#ffd878":"#b87f0a",border:isSelected?"1px solid rgba(212,168,67,0.5)":"1px solid #e8c95a" }}>対応中 {inProgress}</span>}
+            {needsFollowUp && <span style={{ padding:"2px 6px",borderRadius:20,fontSize:10,fontWeight:700,background:isSelected?"rgba(224,125,32,0.4)":"#fff8f0",color:isSelected?"#ffb060":"#e07d20",border:isSelected?"1px solid rgba(224,125,32,0.5)":"1px solid #f0c090" }}>🔔 要連絡</span>}
+          </div>
+        </div>
+        <div style={{ fontSize:10.5,color:isSelected?"rgba(255,255,255,0.5)":"#a0aab8" }}>
+          {lastOrder ? `最終注文：${lastOrder.date}（${daysSinceLast}日前）` : "注文なし"}
+        </div>
+        <div style={{ fontSize:10.5,color:isSelected?"rgba(255,255,255,0.4)":"#c0c8d4",marginTop:2 }}>
+          累計 {clinicOrders.length}件
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── 全体ダッシュボード ────────────────────────────────────────────────────
+function OverviewDashboard({ clinics, orders, salesName }) {
+  const now = new Date();
+  const thisMonth = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}`;
+
+  // フォローアップアラート（30日以上未注文）
+  const followUpList = clinics.map(clinic => {
+    const clinicOrders = orders.filter(o => o.clinic === clinic);
+    const sorted = [...clinicOrders].sort((a,b) => b.id.localeCompare(a.id));
+    const last = sorted[0];
+    const lastDate = last ? parseJpDate(last.date) : null;
+    const days = lastDate ? daysBetween(lastDate, now) : null;
+    return { clinic, lastOrderDate: last?.date||null, days, orderCount: clinicOrders.length };
+  }).filter(c => c.days === null || c.days >= 30).sort((a,b) => (b.days||999) - (a.days||999));
+
+  // 今月の注文サマリー
+  const thisMonthOrders = orders.filter(o => toMonthKey(o.date) === thisMonth);
+  const thisMonthClinicCounts = clinics.map(c => ({
+    clinic: c,
+    count: thisMonthOrders.filter(o => o.clinic === c).length,
+    products: thisMonthOrders.filter(o => o.clinic === c).flatMap(o => o.products).length,
+  })).filter(c => c.count > 0).sort((a,b) => b.count - a.count);
+
+  // 月次トレンド（過去6ヶ月）
+  const monthKeys = [];
+  for (let i=5; i>=0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth()-i, 1);
+    monthKeys.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`);
+  }
+  const monthlyTrend = monthKeys.map(mk => ({
+    month: formatMonth(mk),
+    orders: orders.filter(o => toMonthKey(o.date) === mk && clinics.includes(o.clinic)).length,
+    clinics: [...new Set(orders.filter(o => toMonthKey(o.date) === mk && clinics.includes(o.clinic)).map(o => o.clinic))].length,
+  }));
+  const maxOrders = Math.max(...monthlyTrend.map(m => m.orders), 1);
+
+  const allActiveProducts = orders.filter(o=>clinics.includes(o.clinic)).flatMap(o=>o.products).filter(p=>p.status<6).length;
+
+  return (
+    <div style={{ padding:"20px",display:"flex",flexDirection:"column",gap:16 }}>
+      {/* あいさつ */}
+      <div>
+        <div style={{ fontSize:16,fontWeight:900,color:"#0f2744" }}>おはようございます{salesName?"、"+salesName+"さん":""}</div>
+        <div style={{ fontSize:12,color:"#8a95a5",marginTop:2 }}>担当 {clinics.length}クリニック の状況サマリーです</div>
+      </div>
+
+      {/* サマリーカード */}
+      <div style={{ display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8 }}>
+        {[
+          { label:"担当クリニック", value:clinics.length, unit:"件", color:"#3aa876", bg:"#f0fdf6", icon:"🏥" },
+          { label:"対応中商品", value:allActiveProducts, unit:"件", color:"#d4a843", bg:"#fffbef", icon:"📦" },
+          { label:"要フォローアップ", value:followUpList.length, unit:"件", color:followUpList.length>0?"#e07d20":"#3aa876", bg:followUpList.length>0?"#fff8f0":"#f0fdf6", icon:"🔔" },
+        ].map(s => (
+          <div key={s.label} style={{ background:s.bg,borderRadius:12,padding:"12px 14px",border:`1.5px solid ${s.color}30` }}>
+            <div style={{ fontSize:10,color:s.color,fontWeight:700,marginBottom:3 }}>{s.icon} {s.label}</div>
+            <div style={{ fontSize:24,fontWeight:900,color:s.color }}>{s.value}<span style={{ fontSize:11,marginLeft:2 }}>{s.unit}</span></div>
+          </div>
+        ))}
+      </div>
+
+      {/* フォローアップアラート */}
+      {followUpList.length > 0 && (
+        <div style={{ background:"#fff",borderRadius:14,border:"1.5px solid #f0c090",padding:"16px",boxShadow:"0 2px 8px rgba(10,30,53,0.05)" }}>
+          <div style={{ fontSize:13,fontWeight:800,color:"#e07d20",marginBottom:10 }}>🔔 フォローアップ推奨（{followUpList.length}件）</div>
+          {followUpList.map(c => (
+            <div key={c.clinic} style={{ display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:"1px solid #f8f0e8" }}>
+              <div>
+                <div style={{ fontSize:13,fontWeight:700,color:"#1a2a3a" }}>{c.clinic}</div>
+                <div style={{ fontSize:11,color:"#a0aab8",marginTop:1 }}>
+                  {c.lastOrderDate ? `最終注文：${c.lastOrderDate}` : "注文履歴なし"}
+                  {c.orderCount > 0 ? ` / 累計${c.orderCount}件` : ""}
+                </div>
+              </div>
+              <div style={{ textAlign:"right" }}>
+                <div style={{ fontSize:16,fontWeight:900,color:c.days===null||c.days>=60?"#e05050":"#e07d20" }}>
+                  {c.days===null?"未注文":c.days+"日"}
+                </div>
+                <div style={{ fontSize:10,color:"#a0aab8" }}>{c.days===null?"":"未注文"}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* 月次受注トレンド */}
+      <div style={{ background:"#fff",borderRadius:14,border:"1.5px solid #e4eaf3",padding:"16px",boxShadow:"0 2px 8px rgba(10,30,53,0.05)" }}>
+        <div style={{ fontSize:13,fontWeight:800,color:"#0f2744",marginBottom:12 }}>📊 月次受注トレンド（担当クリニック合計）</div>
+        <div style={{ display:"flex",gap:4,alignItems:"flex-end",height:80,marginBottom:8 }}>
+          {monthlyTrend.map((m,i) => (
+            <div key={i} style={{ flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:3 }}>
+              <div style={{ fontSize:10,fontWeight:700,color:"#0f2744" }}>{m.orders||""}</div>
+              <div style={{ width:"100%",background:m.orders>0?"#3aa876":"#e4eaf3",borderRadius:"4px 4px 0 0",height:Math.max(4,(m.orders/maxOrders)*60)+"px",transition:"height 0.3s" }}/>
+              <div style={{ fontSize:9,color:"#a0aab8",textAlign:"center",lineHeight:1.2 }}>{m.month.replace("年","/").replace("月","")}</div>
+            </div>
+          ))}
+        </div>
+        <div style={{ fontSize:11,color:"#a0aab8",textAlign:"center" }}>※ 棒グラフの数値は受注件数</div>
+      </div>
+
+      {/* 今月の活発クリニック */}
+      {thisMonthClinicCounts.length > 0 && (
+        <div style={{ background:"#fff",borderRadius:14,border:"1.5px solid #e4eaf3",padding:"16px",boxShadow:"0 2px 8px rgba(10,30,53,0.05)" }}>
+          <div style={{ fontSize:13,fontWeight:800,color:"#0f2744",marginBottom:10 }}>📋 今月の受注状況</div>
+          {thisMonthClinicCounts.map(c => (
+            <div key={c.clinic} style={{ display:"flex",justifyContent:"space-between",alignItems:"center",padding:"7px 0",borderBottom:"1px solid #f4f6fb" }}>
+              <div style={{ fontSize:12.5,fontWeight:600,color:"#1a2a3a" }}>{c.clinic}</div>
+              <div style={{ display:"flex",gap:10,fontSize:12 }}>
+                <span style={{ color:"#4a7cc7",fontWeight:700 }}>{c.count}注文</span>
+                <span style={{ color:"#8a95a5" }}>{c.products}商品</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {followUpList.length === 0 && thisMonthClinicCounts.length === 0 && (
+        <div style={{ textAlign:"center",padding:"40px",color:"#a0aab8" }}>
+          <div style={{ fontSize:32,marginBottom:8 }}>✨</div>
+          <div style={{ fontSize:13,fontWeight:700 }}>全クリニック対応中です</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── クリニック詳細 ────────────────────────────────────────────────────────
+function ClinicDetail({ clinic, orders }) {
+  const clinicOrders = orders.filter(o => o.clinic === clinic).sort((a,b) => b.id.localeCompare(a.id));
+  const allProducts = clinicOrders.flatMap(o => o.products);
+  const inProgress = allProducts.filter(p => p.status < 6);
+
+  const now = new Date();
+  const lastOrder = clinicOrders[0];
+  const lastDate = lastOrder ? parseJpDate(lastOrder.date) : null;
+  const daysSinceLast = lastDate ? daysBetween(lastDate, now) : null;
+
+  // 月次サマリー（過去6ヶ月）
+  const monthKeys = [];
+  for (let i=5; i>=0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth()-i, 1);
+    monthKeys.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`);
+  }
+  const monthlyStats = monthKeys.map(mk => {
+    const mo = clinicOrders.filter(o => toMonthKey(o.date) === mk);
+    const products = mo.flatMap(o => o.products);
+    return { month: formatMonth(mk), orders: mo.length, products: products.length };
+  });
+  const maxO = Math.max(...monthlyStats.map(m => m.orders), 1);
+
+  // よく注文する商品 TOP5
+  const productCount = {};
+  allProducts.forEach(p => {
+    const name = p.name.split("（")[0].trim();
+    productCount[name] = (productCount[name]||0) + 1;
+  });
+  const topProducts = Object.entries(productCount).sort((a,b)=>b[1]-a[1]).slice(0,5);
+
+  return (
+    <div style={{ padding:"20px",display:"flex",flexDirection:"column",gap:16 }}>
+      {/* ヘッダー */}
+      <div style={{ background:"linear-gradient(135deg,#0f3d20,#1a5a30)",borderRadius:14,padding:"18px 20px",color:"#fff" }}>
+        <div style={{ fontSize:11,color:"rgba(255,255,255,0.5)",marginBottom:4 }}>CLINIC DETAIL</div>
+        <div style={{ fontSize:20,fontWeight:900,marginBottom:6 }}>{clinic}</div>
+        <div style={{ display:"flex",gap:8,flexWrap:"wrap" }}>
+          <span style={{ padding:"3px 10px",borderRadius:20,fontSize:11.5,fontWeight:700,background:"rgba(255,255,255,0.12)",color:"#fff" }}>累計 {clinicOrders.length}注文</span>
+          {inProgress.length > 0 && <span style={{ padding:"3px 10px",borderRadius:20,fontSize:11.5,fontWeight:700,background:"rgba(212,168,67,0.3)",color:"#ffd878",border:"1px solid rgba(212,168,67,0.4)" }}>対応中 {inProgress.length}件</span>}
+          {daysSinceLast !== null && <span style={{ padding:"3px 10px",borderRadius:20,fontSize:11.5,fontWeight:700,background:daysSinceLast>=30?"rgba(224,125,32,0.3)":"rgba(255,255,255,0.1)",color:daysSinceLast>=30?"#ffb060":"rgba(255,255,255,0.7)" }}>最終注文 {daysSinceLast}日前</span>}
+        </div>
+      </div>
+
+      {/* 月次発注グラフ */}
+      <div style={{ background:"#fff",borderRadius:14,border:"1.5px solid #e4eaf3",padding:"16px",boxShadow:"0 2px 8px rgba(10,30,53,0.05)" }}>
+        <div style={{ fontSize:13,fontWeight:800,color:"#0f2744",marginBottom:12 }}>📊 月次発注推移</div>
+        <div style={{ display:"flex",gap:4,alignItems:"flex-end",height:80,marginBottom:8 }}>
+          {monthlyStats.map((m,i) => (
+            <div key={i} style={{ flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:3 }}>
+              <div style={{ fontSize:10,fontWeight:700,color:"#0f2744" }}>{m.orders||""}</div>
+              <div style={{ width:"100%",background:m.orders>0?"#3aa876":"#e4eaf3",borderRadius:"4px 4px 0 0",height:Math.max(4,(m.orders/maxO)*60)+"px",transition:"height 0.3s" }}/>
+              <div style={{ fontSize:9,color:"#a0aab8",textAlign:"center",lineHeight:1.2 }}>{m.month.replace("年","/").replace("月","")}</div>
+            </div>
+          ))}
+        </div>
+        <div style={{ display:"flex",gap:12,fontSize:11,color:"#8a95a5",justifyContent:"center",marginTop:4 }}>
+          {monthlyStats.slice(-3).map((m,i)=>(
+            <span key={i}>{m.month.replace("年","/").replace("月","")}: {m.orders}注文・{m.products}商品</span>
+          ))}
+        </div>
+      </div>
+
+      {/* よく注文する商品 */}
+      {topProducts.length > 0 && (
+        <div style={{ background:"#fff",borderRadius:14,border:"1.5px solid #e4eaf3",padding:"16px",boxShadow:"0 2px 8px rgba(10,30,53,0.05)" }}>
+          <div style={{ fontSize:13,fontWeight:800,color:"#0f2744",marginBottom:10 }}>🏆 よく注文される商品</div>
+          {topProducts.map(([name,count],i) => (
+            <div key={i} style={{ display:"flex",alignItems:"center",gap:8,padding:"6px 0",borderBottom:i<topProducts.length-1?"1px solid #f4f6fb":"none" }}>
+              <div style={{ width:20,height:20,borderRadius:6,background:i===0?"#d4a843":i===1?"#8a9ab5":i===2?"#b87040":"#e4eaf3",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:800,color:"#fff",flexShrink:0 }}>{i+1}</div>
+              <div style={{ flex:1,fontSize:12.5,color:"#1a2a3a",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{name}</div>
+              <div style={{ fontSize:12,fontWeight:700,color:"#4a7cc7",flexShrink:0 }}>{count}回</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* 対応中注文 */}
+      {inProgress.length > 0 && (
+        <div style={{ background:"#fff",borderRadius:14,border:"1.5px solid #e4eaf3",padding:"16px",boxShadow:"0 2px 8px rgba(10,30,53,0.05)" }}>
+          <div style={{ fontSize:13,fontWeight:800,color:"#0f2744",marginBottom:10 }}>📦 現在の対応中商品</div>
+          {clinicOrders.filter(o=>o.products.some(p=>p.status<6)).map(order=>(
+            <div key={order.id} style={{ marginBottom:10,padding:"10px 12px",background:"#f8fafd",borderRadius:10,border:"1.5px solid #e4eaf3" }}>
+              <div style={{ fontSize:12,fontWeight:700,color:"#0f2744",marginBottom:6 }}>
+                {order.id} <span style={{ fontSize:10.5,fontWeight:400,color:"#a0aab8",marginLeft:6 }}>{order.date}</span>
+                {order.date && <span style={{ fontSize:10.5,color:"#c0c8d4",marginLeft:4 }}>（{daysBetween(parseJpDate(order.date),now)}日経過）</span>}
+              </div>
+              {order.products.filter(p=>p.status<6).map((p,i)=>{
+                const s = STATUS_STAGES[p.status]||STATUS_STAGES[0];
+                return (
+                  <div key={i} style={{ display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:11.5,padding:"3px 0" }}>
+                    <span style={{ color:"#4a5568",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{p.name.split("（")[0].trim()}</span>
+                    <span style={{ flexShrink:0,padding:"1px 7px",borderRadius:20,fontSize:10,fontWeight:700,background:s.color+"18",color:s.color,marginLeft:6 }}>{s.short}</span>
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* 最近の注文履歴 */}
+      <div style={{ background:"#fff",borderRadius:14,border:"1.5px solid #e4eaf3",padding:"16px",boxShadow:"0 2px 8px rgba(10,30,53,0.05)" }}>
+        <div style={{ fontSize:13,fontWeight:800,color:"#0f2744",marginBottom:10 }}>🗓 最近の注文履歴</div>
+        {clinicOrders.slice(0,10).map(order=>{
+          const active = order.products.filter(p=>p.status<6).length;
+          return (
+            <div key={order.id} style={{ display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:"1px solid #f4f6fb" }}>
+              <div>
+                <div style={{ fontSize:12.5,fontWeight:700,color:"#0f2744" }}>{order.id}</div>
+                <div style={{ fontSize:11,color:"#a0aab8",marginTop:1 }}>{order.date} · {order.products.length}商品</div>
+              </div>
+              <div>
+                {active>0
+                  ? <span style={{ padding:"2px 8px",borderRadius:20,fontSize:11,fontWeight:700,background:"#fff8e8",color:"#b87f0a",border:"1px solid #e8c95a" }}>対応中 {active}</span>
+                  : <span style={{ padding:"2px 8px",borderRadius:20,fontSize:11,fontWeight:700,background:"#e8f4ee",color:"#1a7a50" }}>✅ 完了</span>
+                }
+              </div>
+            </div>
+          );
+        })}
+        {clinicOrders.length > 10 && <div style={{ fontSize:11,color:"#a0aab8",textAlign:"center",marginTop:8 }}>他 {clinicOrders.length-10} 件...</div>}
+      </div>
+    </div>
+  );
+}
+
+// ── メイン ────────────────────────────────────────────────────────────────
+function MainScreen({ user }) {
+  const [orders, setOrders] = useState([]);
+  const [assignedClinics, setAssignedClinics] = useState([]);
+  const [salesName, setSalesName] = useState("");
+  const [selectedClinic, setSelectedClinic] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 900);
+
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth < 900);
+    window.addEventListener('resize', handler);
+    return () => window.removeEventListener('resize', handler);
+  }, []);
+
+  useEffect(() => {
+    const load = async () => {
+      let t=0; while(!window._sfb&&t<30){await new Promise(r=>setTimeout(r,200));t++;}
+      const [orderData, salesBindings] = await Promise.all([
+        window._sfb.loadOrders(),
+        window._sfb.loadSalesBindings(),
+      ]);
+      setOrders(orderData);
+      const myBinding = salesBindings.find(b => b.email === user.email);
+      if (myBinding) {
+        setAssignedClinics(Array.isArray(myBinding.clinics) ? myBinding.clinics : []);
+        setSalesName(myBinding.name || "");
+      }
+      setLoading(false);
+    };
+    load();
+  }, []);
+
+  const myOrders = useMemo(() => orders.filter(o => assignedClinics.includes(o.clinic)), [orders, assignedClinics]);
+
+  if (loading) return (
+    <div style={{ minHeight:"100vh",background:"linear-gradient(160deg,#0a2818,#0f3d20)",display:"flex",alignItems:"center",justifyContent:"center",color:"rgba(255,255,255,0.5)",fontSize:14 }}>読み込み中...</div>
+  );
+
+  return (
+    <div style={{ display:"flex",flexDirection:"column",height:"100vh",overflow:"hidden" }}>
+      {/* ヘッダー */}
+      <div style={{ background:"linear-gradient(160deg,#0a2818 0%,#0f3d20 55%,#1a5a30 100%)",padding:"14px 20px",flexShrink:0 }}>
+        <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center" }}>
+          <div>
+            <div style={{ fontSize:9.5,letterSpacing:"0.2em",color:"#5dd88a",fontWeight:700,textTransform:"uppercase" }}>Sales Management</div>
+            <div style={{ fontSize:16,fontWeight:900,color:"#fff" }}>営業管理システム</div>
+            <div style={{ fontSize:10.5,color:"rgba(255,255,255,0.4)",marginTop:2 }}>{user.email}{salesName?" / "+salesName:""} · 担当 {assignedClinics.length}クリニック</div>
+          </div>
+          <button onClick={()=>window._sfb.signOut()} style={{ padding:"6px 12px",borderRadius:8,border:"1px solid rgba(255,255,255,0.2)",background:"transparent",color:"rgba(255,255,255,0.6)",fontSize:11.5,cursor:"pointer" }}>ログアウト</button>
+        </div>
+      </div>
+
+      {/* 2ペインレイアウト */}
+      <div style={{ flex:1,display:"flex",overflow:"hidden",background:"#f0f4f9" }}>
+        {/* 左：クリニック一覧 */}
+        <div style={{ width:isMobile?0:300,flexShrink:0,background:"#f0f4f9",borderRight:"1.5px solid #e4eaf3",display:isMobile?"none":"flex",flexDirection:"column",overflow:"hidden" }}>
+          <div style={{ padding:"12px 12px 8px",borderBottom:"1px solid #e4eaf3",flexShrink:0,background:"#fff" }}>
+            <div style={{ fontSize:12,fontWeight:800,color:"#0f2744",marginBottom:2 }}>🏥 担当クリニック</div>
+            <button onClick={()=>setSelectedClinic(null)}
+              style={{ width:"100%",padding:"6px",borderRadius:8,border:"1.5px solid",cursor:"pointer",fontSize:11.5,fontWeight:700,marginTop:6,
+                borderColor:!selectedClinic?"#3aa876":"#dde4ef",
+                background:!selectedClinic?"#3aa876":"#fff",
+                color:!selectedClinic?"#fff":"#6a7a8a" }}>
+              📊 全体ダッシュボード
+            </button>
+          </div>
+          <div style={{ flex:1,overflowY:"auto",padding:"10px 10px" }}>
+            {assignedClinics.length === 0 ? (
+              <div style={{ textAlign:"center",padding:"40px 0",color:"#a0aab8",fontSize:12 }}>担当クリニックが設定されていません<br/>管理者に連絡してください</div>
+            ) : assignedClinics.map(clinic => (
+              <ClinicCard key={clinic} clinic={clinic} orders={myOrders} isSelected={selectedClinic===clinic} onClick={()=>setSelectedClinic(clinic)}/>
+            ))}
+          </div>
+        </div>
+
+        {/* 右：詳細 or ダッシュボード */}
+        <div style={{ flex:1,overflowY:"auto",background:"#f0f4f9" }}>
+          {selectedClinic
+            ? <ClinicDetail clinic={selectedClinic} orders={myOrders} />
+            : <OverviewDashboard clinics={assignedClinics} orders={myOrders} salesName={salesName} />
+          }
+        </div>
+      </div>
+
+      {/* モバイル：下タブ */}
+      {isMobile && (
+        <div style={{ position:"fixed",bottom:0,left:0,right:0,background:"#fff",borderTop:"1.5px solid #e4eaf3",display:"flex",zIndex:50 }}>
+          <button onClick={()=>setSelectedClinic(null)} style={{ flex:1,padding:"10px",border:"none",background:!selectedClinic?"#0f3d20":"#fff",color:!selectedClinic?"#fff":"#4a5568",fontSize:11.5,fontWeight:700,cursor:"pointer" }}>📊 全体</button>
+          {assignedClinics.map(c=>(
+            <button key={c} onClick={()=>setSelectedClinic(c)} style={{ flex:1,padding:"10px",border:"none",background:selectedClinic===c?"#0f3d20":"#fff",color:selectedClinic===c?"#fff":"#4a5568",fontSize:11,fontWeight:700,cursor:"pointer",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{c}</button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function App() {
+  const [user, setUser] = useState(null);
+  const [authReady, setAuthReady] = useState(false);
+  useEffect(() => {
+    const wait = async () => {
+      let t=0; while(!window._sfb&&t<30){await new Promise(r=>setTimeout(r,200));t++;}
+      window._sfb.onAuthStateChanged(u => { setUser(u); setAuthReady(true); });
+    };
+    wait();
+  }, []);
+  if (!authReady) return <div style={{ minHeight:"100vh",background:"linear-gradient(160deg,#0a2818,#0f3d20)",display:"flex",alignItems:"center",justifyContent:"center",color:"rgba(255,255,255,0.5)",fontSize:14 }}>読み込み中...</div>;
+  return user ? <MainScreen user={user}/> : <LoginScreen/>;
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
