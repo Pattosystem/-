@@ -759,6 +759,7 @@ function MainScreen({ user }) {
   const [clinicNames, setClinicNames] = useState([]);
   const [selectedMonth, setSelectedMonth] = useState(null);
   const [selectedOrder, setSelectedOrder] = useState(null);
+  const [selectedClinic, setSelectedClinic] = useState("all");
   const [loading, setLoading] = useState(true);
   const [showAccount, setShowAccount] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 900);
@@ -833,7 +834,11 @@ function MainScreen({ user }) {
 
   const months = [...new Set(myOrders.map(o => (o.date||"").slice(0,7)).filter(Boolean))].sort().reverse();
   const currentMonth = selectedMonth || months[0] || "";
-  const displayOrders = myOrders.filter(o => (o.date||"").startsWith(currentMonth));
+  // クリニック一覧（複数紐づきの場合）
+  const clinicsInOrders = [...new Set(myOrders.map(o => o.clinic).filter(Boolean))].sort();
+  const displayOrders = myOrders
+    .filter(o => (o.date||"").startsWith(currentMonth))
+    .filter(o => selectedClinic === "all" || o.clinic === selectedClinic);
 
   // 月タブをクリックしたとき注文選択をリセット
   const handleMonthSelect = (m) => { setSelectedMonth(m); setSelectedOrder(null); };
@@ -876,8 +881,8 @@ function MainScreen({ user }) {
   const OrderList = () => (
     <div style={{ display:"flex",flexDirection:"column",height:"100%",overflow:"hidden" }}>
       {/* 月タブ */}
-      <div style={{ padding:"12px 14px",borderBottom:"1px solid #e4eaf3",flexShrink:0,background:"#fff" }}>
-        <div style={{ display:"flex",gap:5,flexWrap:"wrap" }}>
+      <div style={{ padding:"10px 14px 0",flexShrink:0,background:"#fff" }}>
+        <div style={{ display:"flex",gap:5,flexWrap:"wrap",marginBottom:8 }}>
           {months.map(m => (
             <button key={m} onClick={()=>handleMonthSelect(m)}
               style={{ padding:"5px 12px",borderRadius:20,border:"1.5px solid",cursor:"pointer",fontSize:12,fontWeight:700,
@@ -889,6 +894,36 @@ function MainScreen({ user }) {
             </button>
           ))}
         </div>
+        {/* クリニック切り替え（複数紐づきの場合のみ表示） */}
+        {clinicsInOrders.length > 1 && (
+          <div style={{ display:"flex",gap:5,flexWrap:"wrap",paddingBottom:10,borderBottom:"1px solid #e4eaf3" }}>
+            <button onClick={()=>setSelectedClinic("all")}
+              style={{ padding:"4px 11px",borderRadius:20,border:"1.5px solid",cursor:"pointer",fontSize:11,fontWeight:700,
+                borderColor:selectedClinic==="all"?"#4a7cc7":"#dde4ef",
+                background:selectedClinic==="all"?"#4a7cc7":"#fff",
+                color:selectedClinic==="all"?"#fff":"#6a7a8a" }}>
+              🏥 全クリニック
+              <span style={{ fontSize:10,marginLeft:3,opacity:0.8 }}>
+                {myOrders.filter(o=>(o.date||"").startsWith(currentMonth)).length}
+              </span>
+            </button>
+            {clinicsInOrders.map(c => (
+              <button key={c} onClick={()=>setSelectedClinic(c)}
+                style={{ padding:"4px 11px",borderRadius:20,border:"1.5px solid",cursor:"pointer",fontSize:11,fontWeight:700,
+                  borderColor:selectedClinic===c?"#0f2744":"#dde4ef",
+                  background:selectedClinic===c?"#0f2744":"#fff",
+                  color:selectedClinic===c?"#fff":"#6a7a8a" }}>
+                {c}
+                <span style={{ fontSize:10,marginLeft:3,opacity:0.8 }}>
+                  {myOrders.filter(o=>(o.date||"").startsWith(currentMonth) && o.clinic===c).length}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+        {clinicsInOrders.length <= 1 && (
+          <div style={{ borderBottom:"1px solid #e4eaf3",marginBottom:0 }}/>
+        )}
       </div>
       {/* 注文カード一覧 */}
       <div style={{ flex:1,overflowY:"auto",padding:"10px" }}>
@@ -970,7 +1005,8 @@ function MainScreen({ user }) {
                   displayOrders={displayOrders}
                   allOrders={myOrders}
                   currentMonth={currentMonth}
-                  onSelectOrder={(order) => setSelectedOrder(order)}
+                  selectedClinic={selectedClinic}
+                  onSelectOrder={(order) => { setSelectedOrder(order); }}
                 />
               </div>
             )}
