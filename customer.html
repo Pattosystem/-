@@ -548,12 +548,21 @@ function DashboardPanel({ displayOrders, allOrders, currentMonth, onSelectOrder 
           );
         };
 
+        // シンプルカード（件数のみ）
+        const SimpleCard = ({ label, value, color, bg, icon }) => (
+          <div style={{ background:bg, borderRadius:12, padding:"13px 14px", border:`1.5px solid ${color}30` }}>
+            <div style={{ fontSize:10.5, color:color, fontWeight:700, marginBottom:3 }}>{icon} {label}</div>
+            <div style={{ fontSize:24, fontWeight:900, color:color }}>{value}<span style={{ fontSize:11, marginLeft:3 }}>件</span></div>
+          </div>
+        );
+
         return (
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
+            {/* 対応中商品だけ商品リスト付き */}
             <SummaryCard label="対応中商品" value={inProgress} color="#d4a843" bg="#fffbef" icon="📦" items={inProgressList} />
-            <SummaryCard label="もうすぐ到着" value={soon} color="#3aa876" bg="#f0fdf6" icon="🚚" items={soonList} />
-            <SummaryCard label="一部発送済み" value={partial} color="#e07d20" bg="#fff8f0" icon="🔶" items={partialList} />
-            <SummaryCard label="納品完了" value={completed} color="#6b8cba" bg="#f4f6fb" icon="✅" items={completedList} />
+            <SimpleCard label="もうすぐ到着" value={soon} color="#3aa876" bg="#f0fdf6" icon="🚚" />
+            <SimpleCard label="一部発送済み" value={partial} color="#e07d20" bg="#fff8f0" icon="🔶" />
+            <SimpleCard label="納品完了" value={completed} color="#6b8cba" bg="#f4f6fb" icon="✅" />
           </div>
         );
       })()}
