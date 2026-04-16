@@ -63,16 +63,25 @@
         const d = await getDoc(doc(db, "appdata", "bindings"));
         if (!d.exists()) return {};
         const raw = d.data();
-        // clinicsの復元："|"区切り文字列 or Array両対応
         const parseClinics = (val) => {
           if (Array.isArray(val)) return val.filter(Boolean);
-          if (typeof val === "string") return val.split("|").filter(Boolean);
+          if (typeof val === "string" && val.includes("|")) return val.split("|").filter(Boolean);
+          if (typeof val === "string" && val) return [val];
           return [];
         };
+        // 新形式: json文字列
+        if (raw.json) {
+          const list = JSON.parse(raw.json);
+          const obj = {};
+          list.forEach(item => { if(item.email) obj[item.email] = Array.isArray(item.clinics) ? item.clinics : []; });
+          console.log("📂 bindings(json):", JSON.stringify(obj));
+          return obj;
+        }
+        // 旧形式
         if (Array.isArray(raw.list)) {
           const obj = {};
           raw.list.forEach(item => { if(item.email) obj[item.email] = parseClinics(item.clinics); });
-          console.log("📂 bindings:", JSON.stringify(obj));
+          console.log("📂 bindings(list):", JSON.stringify(obj));
           return obj;
         }
         return raw.data || {};
