@@ -360,6 +360,9 @@ function parseBcartCSV(text) {
     shipDate:   headers.indexOf("発送日"),
     delivDate:  headers.indexOf("納品日"),
     category:   headers.indexOf("明細区分"),
+    unitPrice:  Math.max(headers.indexOf("単価"), headers.indexOf("販売単価")),
+    lineAmount: Math.max(headers.indexOf("商品金額"), headers.indexOf("小計")),
+    orderTotal: Math.max(headers.indexOf("受注金額"), headers.indexOf("合計金額")),
   };
   const orderMap={};
   for(let i=1;i<allRows.length;i++){
@@ -406,10 +409,19 @@ function parseBcartCSV(text) {
       let autoStatus=0;
       if(shipStatus==="発送済"&&delivDate) autoStatus=6;
       else if(shipStatus==="発送済") autoStatus=5;
+      // 金額データ抽出
+      const unitPriceVal = idx.unitPrice>=0 ? parseInt((row[idx.unitPrice]||"0").replace(/[^0-9]/g,""),10)||0 : 0;
+      const lineAmountVal = idx.lineAmount>=0 ? parseInt((row[idx.lineAmount]||"0").replace(/[^0-9]/g,""),10)||0 : 0;
+      const amount = lineAmountVal || (unitPriceVal * qtyNum);
+      // 注文合計（初回行のみ）
+      if(idx.orderTotal>=0 && !orderMap[orderNo].totalAmount) {
+        orderMap[orderNo].totalAmount = parseInt((row[idx.orderTotal]||"0").replace(/[^0-9]/g,""),10)||0;
+      }
       orderMap[orderNo].products.push({
         name:displayName, qty:qtyNum&&unit?`${qtyNum}${unit}`:unit||"—",
         status:autoStatus, eta:autoStatus===6?"—":autoStatus===5?"間もなくお届け":"約30日",
-        note:"", deliveryInfo:"", deliveryRecords:[]
+        note:"", deliveryInfo:"", deliveryRecords:[],
+        unitPrice: unitPriceVal, amount: amount, qtyNum: qtyNum,
       });
     }
   }
