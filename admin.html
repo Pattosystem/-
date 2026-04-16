@@ -517,11 +517,21 @@ function ClinicManager({ orders }) {
 
   // 紐づけ保存
   const handleSave = async () => {
+    // 保存前に現在の状態を確認ダイアログで表示
+    const preview = rows.map(r => `${r.email}\n  clinics: [${(r.clinics||[]).join(', ')}]`).join('\n\n');
+    if (!confirm(`【保存前確認】以下の内容を保存します。正しければOKを押してください。\n\n${preview}`)) {
+      return;
+    }
     setSaving(true); setSaveMsg("");
     try {
       await waitFB();
       await window._firebase.saveBindingsFull(rows);
       setSaveMsg("saved");
+      // 保存後にFirestoreから再読み込みして確認
+      const reloaded = await window._firebase.loadBindingsFull();
+      const reloadPreview = reloaded.map(r => `${r.email}: [${(r.clinics||[]).join(', ')}]`).join('\n');
+      alert(`【保存後確認】Firestoreに保存されたデータ:\n\n${reloadPreview}`);
+      setRows(reloaded);
       setTimeout(() => setSaveMsg(""), 3000);
     } catch(e) {
       console.error(e); setSaveMsg("error");
