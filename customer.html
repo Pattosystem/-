@@ -525,16 +525,20 @@ function DashboardPanel({ displayOrders, allOrders, currentMonth, onSelectOrder 
               </div>
               {showItems.length > 0 && (
                 <div style={{ borderTop:`1px solid ${color}20`, paddingTop:7, display:"flex", flexDirection:"column", gap:4 }}>
-                  {showItems.map((p, i) => (
-                    <div key={i} style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline", gap:6 }}>
-                      <div style={{ fontSize:10, color:"#4a5568", lineHeight:1.4, flex:1, minWidth:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
-                        {p.name}
+                  {showItems.map((p, i) => {
+                    // （）より前の商品名本体だけ表示
+                    const shortName = p.name.split("（")[0].split("　")[0].trim();
+                    return (
+                      <div key={i} style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline", gap:6 }}>
+                        <div style={{ fontSize:10, color:"#4a5568", lineHeight:1.4, flex:1, minWidth:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                          {shortName}
+                        </div>
+                        <div style={{ fontSize:10.5, fontWeight:700, color:color, flexShrink:0, whiteSpace:"nowrap" }}>
+                          {p.qty}
+                        </div>
                       </div>
-                      <div style={{ fontSize:10.5, fontWeight:700, color:color, flexShrink:0, whiteSpace:"nowrap" }}>
-                        {p.qty}
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                   {rest > 0 && (
                     <div style={{ fontSize:10, color:"#a0aab8", marginTop:2 }}>他 {rest} 商品...</div>
                   )}
