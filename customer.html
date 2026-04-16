@@ -781,6 +781,8 @@ function MainScreen({ user }) {
     const clinicVal = bindings[user.email];
     const names = clinicVal ? (Array.isArray(clinicVal) ? clinicVal : [clinicVal]).filter(Boolean) : [];
     setClinicNames(names);
+    window._currentClinicNames = names; // subscribeOrdersコールバック用
+    console.log("🏥 紐づきクリニック:", names);
     return names;
   };
 
@@ -805,10 +807,10 @@ function MainScreen({ user }) {
     setMyRequests(data);
   };
 
-  // 手動更新ボタン
+  // 手動更新ボタン（毎回bindingsを再読み込み）
   const handleRefresh = async () => {
     setUpdating(true);
-    const names = clinicNames.length > 0 ? clinicNames : await loadMeta();
+    const names = await loadMeta(); // 常に最新のbindingsを取得
     const orderData = await window._firebase.loadOrders();
     processOrders(orderData, names);
   };
@@ -818,9 +820,11 @@ function MainScreen({ user }) {
     const init = async () => {
       let t=0; while(!window._firebase&&t<30){await new Promise(r=>setTimeout(r,200));t++;}
       const names = await loadMeta();
-      // リアルタイム購読開始
+      // リアルタイム購読：コールバック内でも最新のbindingsを参照するためrefを使う
+      window._currentClinicNames = names;
       unsubscribe = window._firebase.subscribeOrders((orderData) => {
-        processOrders(orderData, names);
+        // window._currentClinicNamesを参照することでbindings更新後も正しく動く
+        processOrders(orderData, window._currentClinicNames || []);
       });
     };
     init();
@@ -842,6 +846,9 @@ function MainScreen({ user }) {
           <div style={{ fontSize:10,letterSpacing:"0.2em",color:"#d4a843",fontWeight:700,marginBottom:3,textTransform:"uppercase" }}>Import Status Tracking</div>
           <div style={{ fontSize:18,fontWeight:900,color:"#fff",lineHeight:1.2 }}>輸入状況確認システム</div>
           <div style={{ fontSize:11,color:"rgba(255,255,255,0.4)",marginTop:4 }}>ログイン中：{user.email}</div>
+          <div style={{ fontSize:10.5,color:"rgba(255,255,255,0.35)",marginTop:3 }}>
+            紐づき：{clinicNames.length > 0 ? clinicNames.join(' / ') : '（未設定）'}
+          </div>
         </div>
         <div style={{ display:"flex",flexDirection:"column",gap:5,alignItems:"flex-end" }}>
           <div style={{ display:"flex",gap:6 }}>
