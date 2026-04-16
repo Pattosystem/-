@@ -153,9 +153,21 @@
         const d = await getDoc(doc(db, "appdata", "bindings"));
         if (!d.exists()) return {};
         const raw = d.data();
+        const parseClinics = (val) => {
+          if (Array.isArray(val)) return val.filter(Boolean);
+          if (typeof val === "string" && val.includes("|")) return val.split("|").filter(Boolean);
+          if (typeof val === "string" && val) return [val];
+          return [];
+        };
+        if (raw.json) {
+          const list = JSON.parse(raw.json);
+          const obj = {};
+          list.forEach(item => { if(item.email) obj[item.email] = Array.isArray(item.clinics) ? item.clinics : []; });
+          return obj;
+        }
         if (Array.isArray(raw.list)) {
           const obj = {};
-          raw.list.forEach(item => { if(item.email) obj[item.email] = item.clinics || []; });
+          raw.list.forEach(item => { if(item.email) obj[item.email] = parseClinics(item.clinics); });
           return obj;
         }
         return raw.data || {};
@@ -167,10 +179,24 @@
         const d = await getDoc(doc(db, "appdata", "bindings"));
         if (!d.exists()) return [];
         const raw = d.data();
-        // clinicsの復元："|"区切り文字列 or Array両対応
+        // 新形式: json文字列
+        if (raw.json) {
+          const list = JSON.parse(raw.json);
+          console.log("📂 loadBindingsFull json:", raw.json);
+          return list.map(item => ({
+            email: item.email || "",
+            name: item.name || "",
+            clinicName: item.clinicName || "",
+            clinics: Array.isArray(item.clinics) ? item.clinics : [],
+            password: item.password || "",
+            registeredAt: item.registeredAt || "",
+          }));
+        }
+        // 旧形式: list配列（clinicsがstring or array）
         const parseClinics = (val) => {
           if (Array.isArray(val)) return val.filter(Boolean);
-          if (typeof val === "string") return val.split("|").filter(Boolean);
+          if (typeof val === "string" && val.includes("|")) return val.split("|").filter(Boolean);
+          if (typeof val === "string" && val) return [val];
           return [];
         };
         if (Array.isArray(raw.list)) {
@@ -190,22 +216,21 @@
     },
     // name・registeredAt含む完全な形式で保存
     saveBindingsFull: async (list) => {
-      // FirestoreはArray内にArrayを持てないため、clinicsは"|"区切り文字列に変換して保存
-      const serialized = list.map(item => ({
-        ...item,
-        clinics: Array.isArray(item.clinics) ? item.clinics.join("|") : (item.clinics || ""),
-      }));
-      console.log("💾 saveBindingsFull:", JSON.stringify(serialized));
+      // list全体をJSON文字列で保存（ネスト配列問題を完全回避）
+      const json = JSON.stringify(list);
+      console.log("💾 saveBindingsFull json:", json);
       await setDoc(doc(db, "appdata", "bindings"), {
-        list: serialized, savedAt: new Date().toISOString(), count: serialized.length
+        json, savedAt: new Date().toISOString(), count: list.length
       });
-      // 旧互換用キャッシュも更新（clinicsはArrayに戻す）
+      // 旧互換用キャッシュも更新
       const obj = {};
-      list.forEach(item => { if(item.email) obj[item.email] = Array.isArray(item.clinics) ? item.clinics : (item.clinics||"").split("|").filter(Boolean); });
+      list.forEach(item => { if(item.email) obj[item.email] = Array.isArray(item.clinics) ? item.clinics : []; });
       window._bindings = obj;
+      // 保存確認
       const verify = await getDoc(doc(db, "appdata", "bindings"));
-      const savedList = verify.data().list || [];
-      if (savedList.length !== list.length) throw new Error(`件数不一致: ${savedList.length}/${list.length}`);
+      const saved = JSON.parse(verify.data().json || "[]");
+      console.log("✅ 保存確認:", saved.length, "件, 1件目clinics:", saved[0]?.clinics);
+      if (saved.length !== list.length) throw new Error(`件数不一致: ${saved.length}/${list.length}`);
       return true;
     },
     restoreAllData: async (data) => {
