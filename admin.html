@@ -167,30 +167,41 @@
         const d = await getDoc(doc(db, "appdata", "bindings"));
         if (!d.exists()) return [];
         const raw = d.data();
+        // clinicsの復元："|"区切り文字列 or Array両対応
+        const parseClinics = (val) => {
+          if (Array.isArray(val)) return val.filter(Boolean);
+          if (typeof val === "string") return val.split("|").filter(Boolean);
+          return [];
+        };
         if (Array.isArray(raw.list)) {
           return raw.list.map(item => ({
             email: item.email || "",
             name: item.name || "",
             clinicName: item.clinicName || "",
-            clinics: Array.isArray(item.clinics) ? item.clinics : (item.clinics ? [item.clinics] : []),
+            clinics: parseClinics(item.clinics),
             password: item.password || "",
             registeredAt: item.registeredAt || "",
           }));
         }
         return Object.entries(raw.data || {}).map(([email, clinics]) => ({
-          email, name: "", clinicName: "", clinics: Array.isArray(clinics) ? clinics : [clinics], password: "", registeredAt: ""
+          email, name: "", clinicName: "", clinics: parseClinics(clinics), password: "", registeredAt: ""
         }));
       } catch(e) { console.error("loadBindingsFull error:", e); return []; }
     },
     // name・registeredAt含む完全な形式で保存
     saveBindingsFull: async (list) => {
-      console.log("💾 saveBindingsFull:", JSON.stringify(list));
+      // FirestoreはArray内にArrayを持てないため、clinicsは"|"区切り文字列に変換して保存
+      const serialized = list.map(item => ({
+        ...item,
+        clinics: Array.isArray(item.clinics) ? item.clinics.join("|") : (item.clinics || ""),
+      }));
+      console.log("💾 saveBindingsFull:", JSON.stringify(serialized));
       await setDoc(doc(db, "appdata", "bindings"), {
-        list, savedAt: new Date().toISOString(), count: list.length
+        list: serialized, savedAt: new Date().toISOString(), count: serialized.length
       });
-      // 旧互換用キャッシュも更新
+      // 旧互換用キャッシュも更新（clinicsはArrayに戻す）
       const obj = {};
-      list.forEach(item => { if(item.email) obj[item.email] = item.clinics; });
+      list.forEach(item => { if(item.email) obj[item.email] = Array.isArray(item.clinics) ? item.clinics : (item.clinics||"").split("|").filter(Boolean); });
       window._bindings = obj;
       const verify = await getDoc(doc(db, "appdata", "bindings"));
       const savedList = verify.data().list || [];
