@@ -63,9 +63,15 @@
         const d = await getDoc(doc(db, "appdata", "bindings"));
         if (!d.exists()) return {};
         const raw = d.data();
+        // clinicsの復元："|"区切り文字列 or Array両対応
+        const parseClinics = (val) => {
+          if (Array.isArray(val)) return val.filter(Boolean);
+          if (typeof val === "string") return val.split("|").filter(Boolean);
+          return [];
+        };
         if (Array.isArray(raw.list)) {
           const obj = {};
-          raw.list.forEach(item => { if(item.email) obj[item.email] = item.clinics || []; });
+          raw.list.forEach(item => { if(item.email) obj[item.email] = parseClinics(item.clinics); });
           console.log("📂 bindings:", JSON.stringify(obj));
           return obj;
         }
