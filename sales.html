@@ -9,286 +9,312 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-  import { getFirestore, collection, getDocs, getDocsFromServer, doc, getDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+  import { getFirestore, collection, getDocsFromServer, doc, getDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
   import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-
   const firebaseConfig = {
-    apiKey: "AIzaSyDNg5KsLABnwJbN5EpvWjpLnkstFzXA1HE",
-    authDomain: "order-tracking-92681.firebaseapp.com",
-    projectId: "order-tracking-92681",
-    storageBucket: "order-tracking-92681.firebasestorage.app",
-    messagingSenderId: "988787355455",
-    appId: "1:988787355455:web:c7ce248d9fe2178636ed8a"
+    apiKey:"AIzaSyDNg5KsLABnwJbN5EpvWjpLnkstFzXA1HE",
+    authDomain:"order-tracking-92681.firebaseapp.com",
+    projectId:"order-tracking-92681",
+    storageBucket:"order-tracking-92681.firebasestorage.app",
+    messagingSenderId:"988787355455",
+    appId:"1:988787355455:web:c7ce248d9fe2178636ed8a"
   };
   const app = initializeApp(firebaseConfig);
   const db = getFirestore(app);
   const auth = getAuth(app);
-
   window._sfb = {
-    signIn: (email, pw) => signInWithEmailAndPassword(auth, email, pw),
-    signOut: () => signOut(auth),
-    onAuthStateChanged: (cb) => onAuthStateChanged(auth, cb),
-    loadOrders: async () => {
-      const snap = await getDocsFromServer(collection(db, "orders"));
-      const list = []; snap.forEach(d => list.push(d.data())); return list;
+    signIn:(e,p)=>signInWithEmailAndPassword(auth,e,p),
+    signOut:()=>signOut(auth),
+    onAuthStateChanged:(cb)=>onAuthStateChanged(auth,cb),
+    loadOrders:async()=>{
+      const snap=await getDocsFromServer(collection(db,"orders"));
+      const list=[]; snap.forEach(d=>list.push(d.data())); return list;
     },
-    loadSalesBindings: async () => {
-      try {
-        const d = await getDoc(doc(db, "appdata", "sales_bindings"));
-        if (!d.exists()) return [];
-        const raw = d.data();
-        if (raw.json) return JSON.parse(raw.json);
+    loadSalesBindings:async()=>{
+      try{
+        const d=await getDoc(doc(db,"appdata","sales_bindings"));
+        if(!d.exists()) return [];
+        const raw=d.data();
+        if(raw.json) return JSON.parse(raw.json);
         return [];
-      } catch(e) { return []; }
+      }catch(e){return [];}
     },
   };
 </script>
 <style>
-* { box-sizing:border-box; margin:0; padding:0; }
-body { background:#f0f4f9; font-family:'Hiragino Sans','Noto Sans JP','Yu Gothic',sans-serif; height:100vh; overflow:hidden; }
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:#f0f4f9;font-family:'Hiragino Sans','Noto Sans JP','Yu Gothic',sans-serif;height:100vh;overflow:hidden;}
 </style>
 </head>
 <body>
 <div id="root"></div>
 <script type="text/babel">
-const { useState, useEffect, useMemo } = React;
+const {useState,useEffect,useMemo} = React;
 
-// ── ユーティリティ ────────────────────────────────────────────────────────
-function parseJpDate(s) {
-  if (!s) return null;
-  const m = s.match(/(\d{4})年(\d{2})月(\d{2})日/);
-  if (m) return new Date(parseInt(m[1]), parseInt(m[2])-1, parseInt(m[3]));
+function parseJpDate(s){
+  if(!s)return null;
+  const m=s.match(/(\d{4})年(\d{2})月(\d{2})日/);
+  if(m)return new Date(parseInt(m[1]),parseInt(m[2])-1,parseInt(m[3]));
   return null;
 }
-function daysBetween(d1, d2) {
-  if (!d1||!d2) return null;
-  return Math.round((d2-d1)/(1000*60*60*24));
-}
-function toMonthKey(dateStr) {
-  const m = (dateStr||"").match(/(\d{4})年(\d{2})月/);
-  return m ? `${m[1]}-${m[2]}` : "";
-}
-function formatMonth(key) {
-  return key.replace("-","年") + "月";
-}
+function daysBetween(d1,d2){if(!d1||!d2)return null;return Math.round((d2-d1)/(1000*60*60*24));}
+function toMK(d){const m=(d||"").match(/(\d{4})年(\d{2})月/);return m?`${m[1]}-${m[2]}`:""}
+function fmtMK(k){if(!k)return"";return k.replace("-","年")+"月";}
+function fmtYen(n){if(!n)return"—";return"¥"+n.toLocaleString();}
 
-const STATUS_STAGES = [
-  { id:0, short:"受付済", color:"#8a9ab5" },
-  { id:1, short:"準備中", color:"#6b8cba" },
-  { id:2, short:"空港到着", color:"#4a7cc7" },
-  { id:3, short:"輸送中", color:"#d4a843" },
-  { id:4, short:"通関待ち", color:"#e07d20" },
-  { id:5, short:"配送中", color:"#3aa876" },
-  { id:6, short:"完了", color:"#0f2744" },
-  { id:7, short:"一部発送済", color:"#e07d20" },
+const G="#2d7a4a", GL="#3aa876", GLL="#5dd88a";
+const STATUS_STAGES=[
+  {id:0,short:"受付済",color:"#8a9ab5"},{id:1,short:"準備中",color:"#6b8cba"},
+  {id:2,short:"空港到着",color:"#4a7cc7"},{id:3,short:"輸送中",color:"#d4a843"},
+  {id:4,short:"通関待ち",color:"#e07d20"},{id:5,short:"配送中",color:"#3aa876"},
+  {id:6,short:"完了",color:"#0f2744"},{id:7,short:"一部発送済",color:"#e07d20"},
 ];
 
 // ── ログイン ──────────────────────────────────────────────────────────────
-function LoginScreen() {
-  const [email, setEmail] = useState("");
-  const [pw, setPw] = useState("");
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
-  const waitFB = async () => { let t=0; while(!window._sfb&&t<30){await new Promise(r=>setTimeout(r,200));t++;} };
-  const handleLogin = async () => {
-    if (!email||!pw) { setError("メールアドレスとパスワードを入力してください"); return; }
-    setLoading(true); setError("");
+function LoginScreen(){
+  const [email,setEmail]=useState(""); const [pw,setPw]=useState("");
+  const [error,setError]=useState(""); const [loading,setLoading]=useState(false);
+  const waitFB=async()=>{let t=0;while(!window._sfb&&t<30){await new Promise(r=>setTimeout(r,200));t++;}};
+  const handleLogin=async()=>{
+    if(!email||!pw){setError("入力してください");return;}
+    setLoading(true);setError("");
     await waitFB();
-    try { await window._sfb.signIn(email, pw); }
-    catch(e) {
+    try{await window._sfb.signIn(email,pw);}
+    catch(e){
       const c=e.code||"";
-      if(c.includes("invalid-credential")||c.includes("wrong-password")) setError("メールアドレスまたはパスワードが正しくありません");
+      if(c.includes("invalid-credential")||c.includes("wrong-password"))setError("メールアドレスまたはパスワードが正しくありません");
       else setError("ログインに失敗しました");
       setLoading(false);
     }
   };
-  const inp = { width:"100%",padding:"13px 14px",borderRadius:10,border:"1.5px solid rgba(255,255,255,0.15)",background:"rgba(255,255,255,0.08)",color:"#fff",fontSize:15,outline:"none" };
-  return (
-    <div style={{ minHeight:"100vh",background:"linear-gradient(160deg,#0a2818 0%,#0f3d20 55%,#1a5a30 100%)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:20 }}>
-      <div style={{ width:"100%",maxWidth:380 }}>
-        <div style={{ textAlign:"center",marginBottom:32 }}>
-          <div style={{ fontSize:10.5,letterSpacing:"0.2em",color:"#5dd88a",fontWeight:700,marginBottom:8,textTransform:"uppercase" }}>Sales Management</div>
-          <div style={{ fontSize:24,fontWeight:900,color:"#fff",lineHeight:1.3,marginBottom:8 }}>営業管理<br/>システム</div>
-          <div style={{ fontSize:12.5,color:"rgba(255,255,255,0.5)" }}>担当クリニックの状況を管理します</div>
+  const inp={width:"100%",padding:"13px 14px",borderRadius:10,border:"1.5px solid rgba(255,255,255,0.15)",background:"rgba(255,255,255,0.08)",color:"#fff",fontSize:15,outline:"none"};
+  return(
+    <div style={{minHeight:"100vh",background:`linear-gradient(160deg,#0a2818,#0f3d20,#1a5a30)`,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+      <div style={{width:"100%",maxWidth:380}}>
+        <div style={{textAlign:"center",marginBottom:32}}>
+          <div style={{fontSize:10.5,letterSpacing:"0.2em",color:GLL,fontWeight:700,marginBottom:8,textTransform:"uppercase"}}>Sales Management System</div>
+          <div style={{fontSize:24,fontWeight:900,color:"#fff",lineHeight:1.3,marginBottom:8}}>営業管理<br/>システム</div>
         </div>
-        <div style={{ background:"rgba(255,255,255,0.07)",border:"1.5px solid rgba(255,255,255,0.12)",borderRadius:16,padding:"28px 24px" }}>
-          <div style={{ marginBottom:14 }}>
-            <div style={{ fontSize:11.5,color:"rgba(255,255,255,0.6)",marginBottom:6 }}>メールアドレス</div>
+        <div style={{background:"rgba(255,255,255,0.07)",border:"1.5px solid rgba(255,255,255,0.12)",borderRadius:16,padding:"28px 24px"}}>
+          <div style={{marginBottom:14}}>
+            <div style={{fontSize:11.5,color:"rgba(255,255,255,0.6)",marginBottom:6}}>メールアドレス</div>
             <input type="email" value={email} onChange={e=>{setEmail(e.target.value);setError("");}} onKeyDown={e=>e.key==="Enter"&&handleLogin()} placeholder="sales@example.com" style={inp}/>
           </div>
-          <div style={{ marginBottom:16 }}>
-            <div style={{ fontSize:11.5,color:"rgba(255,255,255,0.6)",marginBottom:6 }}>パスワード</div>
+          <div style={{marginBottom:16}}>
+            <div style={{fontSize:11.5,color:"rgba(255,255,255,0.6)",marginBottom:6}}>パスワード</div>
             <input type="password" value={pw} onChange={e=>{setPw(e.target.value);setError("");}} onKeyDown={e=>e.key==="Enter"&&handleLogin()} placeholder="••••••••" style={inp}/>
           </div>
-          {error&&<div style={{ padding:"10px 12px",background:"rgba(220,50,50,0.15)",border:"1px solid rgba(220,50,50,0.3)",borderRadius:8,color:"#ff9090",fontSize:12.5,marginBottom:14 }}>⚠ {error}</div>}
-          <button onClick={handleLogin} disabled={loading} style={{ width:"100%",padding:14,borderRadius:10,border:"none",background:"#3aa876",color:"#fff",fontWeight:800,fontSize:14,cursor:"pointer",opacity:loading?0.7:1 }}>{loading?"ログイン中...":"ログイン"}</button>
+          {error&&<div style={{padding:"10px 12px",background:"rgba(220,50,50,0.15)",border:"1px solid rgba(220,50,50,0.3)",borderRadius:8,color:"#ff9090",fontSize:12.5,marginBottom:14}}>⚠ {error}</div>}
+          <button onClick={handleLogin} disabled={loading} style={{width:"100%",padding:14,borderRadius:10,border:"none",background:GL,color:"#fff",fontWeight:800,fontSize:14,cursor:"pointer",opacity:loading?0.7:1}}>{loading?"ログイン中...":"ログイン"}</button>
         </div>
       </div>
     </div>
   );
 }
 
-// ── クリニックカード（左パネル） ──────────────────────────────────────────
-function ClinicCard({ clinic, orders, isSelected, onClick }) {
-  const clinicOrders = orders.filter(o => o.clinic === clinic);
-  const allProducts = clinicOrders.flatMap(o => o.products);
-  const inProgress = allProducts.filter(p => p.status < 6).length;
-
-  // 最終注文日
-  const sorted = [...clinicOrders].sort((a,b) => b.id.localeCompare(a.id));
-  const lastOrder = sorted[0];
-  const lastOrderDate = lastOrder ? parseJpDate(lastOrder.date) : null;
-  const daysSinceLast = lastOrderDate ? daysBetween(lastOrderDate, new Date()) : null;
-
-  // フォローアップ要否
-  const needsFollowUp = daysSinceLast === null || daysSinceLast >= 30;
-
-  return (
-    <div onClick={onClick} style={{
-      background: isSelected ? "#0f3d20" : "#fff",
-      borderRadius:12, border:`1.5px solid ${isSelected?"#3aa876":needsFollowUp?"#e07d20":"#e4eaf3"}`,
-      marginBottom:8, overflow:"hidden", cursor:"pointer",
-      boxShadow: isSelected?"0 4px 16px rgba(10,61,32,0.3)":"0 1px 4px rgba(10,30,53,0.05)",
-      transition:"all 0.15s"
-    }}>
-      <div style={{ padding:"11px 13px" }}>
-        <div style={{ display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4 }}>
-          <div style={{ fontSize:13,fontWeight:800,color:isSelected?"#fff":"#0f2744",flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{clinic}</div>
-          <div style={{ display:"flex",gap:4,flexShrink:0,marginLeft:6 }}>
-            {inProgress>0 && <span style={{ padding:"2px 6px",borderRadius:20,fontSize:10,fontWeight:700,background:isSelected?"rgba(212,168,67,0.4)":"#fff8e8",color:isSelected?"#ffd878":"#b87f0a",border:isSelected?"1px solid rgba(212,168,67,0.5)":"1px solid #e8c95a" }}>対応中 {inProgress}</span>}
-            {needsFollowUp && <span style={{ padding:"2px 6px",borderRadius:20,fontSize:10,fontWeight:700,background:isSelected?"rgba(224,125,32,0.4)":"#fff8f0",color:isSelected?"#ffb060":"#e07d20",border:isSelected?"1px solid rgba(224,125,32,0.5)":"1px solid #f0c090" }}>🔔 要連絡</span>}
-          </div>
+// ── 月次グラフ ────────────────────────────────────────────────────────────
+function MiniBar({data,valueKey,labelKey,color,height=80}){
+  const max=Math.max(...data.map(d=>d[valueKey]),1);
+  return(
+    <div style={{display:"flex",gap:3,alignItems:"flex-end",height:height+24}}>
+      {data.map((d,i)=>(
+        <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
+          <div style={{fontSize:9,fontWeight:700,color:"#0f2744",minHeight:12}}>{d[valueKey]>0?d[valueKey]:""}</div>
+          <div style={{width:"100%",background:d[valueKey]>0?color:"#e4eaf3",borderRadius:"3px 3px 0 0",height:Math.max(3,Math.round((d[valueKey]/max)*height))+"px",transition:"height 0.3s"}}/>
+          <div style={{fontSize:8.5,color:"#a0aab8",textAlign:"center",lineHeight:1.2}}>{(d[labelKey]||"").replace("年","/").replace("月","")}</div>
         </div>
-        <div style={{ fontSize:10.5,color:isSelected?"rgba(255,255,255,0.5)":"#a0aab8" }}>
-          {lastOrder ? `最終注文：${lastOrder.date}（${daysSinceLast}日前）` : "注文なし"}
-        </div>
-        <div style={{ fontSize:10.5,color:isSelected?"rgba(255,255,255,0.4)":"#c0c8d4",marginTop:2 }}>
-          累計 {clinicOrders.length}件
-        </div>
-      </div>
+      ))}
     </div>
   );
 }
 
 // ── 全体ダッシュボード ────────────────────────────────────────────────────
-function OverviewDashboard({ clinics, orders, salesName }) {
-  const now = new Date();
-  const thisMonth = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}`;
+function OverviewDashboard({clinics,orders,salesName,onSelectClinic}){
+  const now=new Date();
+  const thisMK=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}`;
+  const lastMK=`${now.getMonth()===0?now.getFullYear()-1:now.getFullYear()}-${String(now.getMonth()===0?12:now.getMonth()).padStart(2,"0")}`;
 
-  // フォローアップアラート（30日以上未注文）
-  const followUpList = clinics.map(clinic => {
-    const clinicOrders = orders.filter(o => o.clinic === clinic);
-    const sorted = [...clinicOrders].sort((a,b) => b.id.localeCompare(a.id));
-    const last = sorted[0];
-    const lastDate = last ? parseJpDate(last.date) : null;
-    const days = lastDate ? daysBetween(lastDate, now) : null;
-    return { clinic, lastOrderDate: last?.date||null, days, orderCount: clinicOrders.length };
-  }).filter(c => c.days === null || c.days >= 30).sort((a,b) => (b.days||999) - (a.days||999));
-
-  // 今月の注文サマリー
-  const thisMonthOrders = orders.filter(o => toMonthKey(o.date) === thisMonth);
-  const thisMonthClinicCounts = clinics.map(c => ({
-    clinic: c,
-    count: thisMonthOrders.filter(o => o.clinic === c).length,
-    products: thisMonthOrders.filter(o => o.clinic === c).flatMap(o => o.products).length,
-  })).filter(c => c.count > 0).sort((a,b) => b.count - a.count);
-
-  // 月次トレンド（過去6ヶ月）
-  const monthKeys = [];
-  for (let i=5; i>=0; i--) {
-    const d = new Date(now.getFullYear(), now.getMonth()-i, 1);
+  // 月次キー（過去6ヶ月）
+  const monthKeys=[];
+  for(let i=5;i>=0;i--){
+    const d=new Date(now.getFullYear(),now.getMonth()-i,1);
     monthKeys.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`);
   }
-  const monthlyTrend = monthKeys.map(mk => ({
-    month: formatMonth(mk),
-    orders: orders.filter(o => toMonthKey(o.date) === mk && clinics.includes(o.clinic)).length,
-    clinics: [...new Set(orders.filter(o => toMonthKey(o.date) === mk && clinics.includes(o.clinic)).map(o => o.clinic))].length,
-  }));
-  const maxOrders = Math.max(...monthlyTrend.map(m => m.orders), 1);
 
-  const allActiveProducts = orders.filter(o=>clinics.includes(o.clinic)).flatMap(o=>o.products).filter(p=>p.status<6).length;
+  // 全担当クリニックの集計
+  const myOrders=orders.filter(o=>clinics.includes(o.clinic));
 
-  return (
-    <div style={{ padding:"20px",display:"flex",flexDirection:"column",gap:16 }}>
-      {/* あいさつ */}
-      <div>
-        <div style={{ fontSize:16,fontWeight:900,color:"#0f2744" }}>おはようございます{salesName?"、"+salesName+"さん":""}</div>
-        <div style={{ fontSize:12,color:"#8a95a5",marginTop:2 }}>担当 {clinics.length}クリニック の状況サマリーです</div>
+  // 今月・先月の売上
+  const calcRevenue=(mk)=>{
+    const mo=myOrders.filter(o=>toMK(o.date)===mk);
+    let rev=0;
+    mo.forEach(o=>{
+      if(o.totalAmount) rev+=o.totalAmount;
+      else o.products.forEach(p=>{if(p.amount)rev+=p.amount;});
+    });
+    return {orders:mo.length, revenue:rev};
+  };
+  const thisM=calcRevenue(thisMK);
+  const lastM=calcRevenue(lastMK);
+  const revDiff=lastM.revenue>0?Math.round((thisM.revenue-lastM.revenue)/lastM.revenue*100):null;
+
+  // 月次トレンドデータ
+  const trend=monthKeys.map(mk=>{
+    const d=calcRevenue(mk);
+    return {month:fmtMK(mk),orders:d.orders,revenue:d.revenue};
+  });
+  const maxRev=Math.max(...trend.map(t=>t.revenue),1);
+
+  // フォローアップ（30日以上未注文）
+  const followUp=clinics.map(clinic=>{
+    const co=myOrders.filter(o=>o.clinic===clinic).sort((a,b)=>b.id.localeCompare(a.id));
+    const last=co[0];
+    const lastDate=last?parseJpDate(last.date):null;
+    const days=lastDate?daysBetween(lastDate,now):null;
+    // クリニック売上（全期間）
+    let totalRev=0;
+    co.forEach(o=>{
+      if(o.totalAmount)totalRev+=o.totalAmount;
+      else o.products.forEach(p=>{if(p.amount)totalRev+=p.amount;});
+    });
+    return {clinic,lastDate:last?.date,days,orderCount:co.length,totalRev};
+  }).filter(c=>c.days===null||c.days>=30).sort((a,b)=>(b.days||999)-(a.days||999));
+
+  // クリニック別今月売上ランキング
+  const clinicThis=clinics.map(clinic=>{
+    const co=myOrders.filter(o=>o.clinic===clinic&&toMK(o.date)===thisMK);
+    let rev=0;
+    co.forEach(o=>{if(o.totalAmount)rev+=o.totalAmount;else o.products.forEach(p=>{if(p.amount)rev+=p.amount;});});
+    const allCo=myOrders.filter(o=>o.clinic===clinic).sort((a,b)=>b.id.localeCompare(a.id));
+    const lastDate=allCo[0]?parseJpDate(allCo[0].date):null;
+    const days=lastDate?daysBetween(lastDate,now):null;
+    return {clinic,orders:co.length,revenue:rev,days,totalOrders:allCo.length};
+  }).sort((a,b)=>b.revenue!==a.revenue?b.revenue-a.revenue:b.orders-a.orders);
+
+  const hasRevData=myOrders.some(o=>o.totalAmount||(o.products||[]).some(p=>p.amount));
+
+  return(
+    <div style={{padding:"20px",display:"flex",flexDirection:"column",gap:16}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-end"}}>
+        <div>
+          <div style={{fontSize:16,fontWeight:900,color:"#0f2744"}}>
+            {salesName?"こんにちは、"+salesName+"さん":"こんにちは"}
+          </div>
+          <div style={{fontSize:12,color:"#8a95a5",marginTop:2}}>担当 {clinics.length}クリニック の状況です</div>
+        </div>
       </div>
 
-      {/* サマリーカード */}
-      <div style={{ display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8 }}>
-        {[
-          { label:"担当クリニック", value:clinics.length, unit:"件", color:"#3aa876", bg:"#f0fdf6", icon:"🏥" },
-          { label:"対応中商品", value:allActiveProducts, unit:"件", color:"#d4a843", bg:"#fffbef", icon:"📦" },
-          { label:"要フォローアップ", value:followUpList.length, unit:"件", color:followUpList.length>0?"#e07d20":"#3aa876", bg:followUpList.length>0?"#fff8f0":"#f0fdf6", icon:"🔔" },
-        ].map(s => (
-          <div key={s.label} style={{ background:s.bg,borderRadius:12,padding:"12px 14px",border:`1.5px solid ${s.color}30` }}>
-            <div style={{ fontSize:10,color:s.color,fontWeight:700,marginBottom:3 }}>{s.icon} {s.label}</div>
-            <div style={{ fontSize:24,fontWeight:900,color:s.color }}>{s.value}<span style={{ fontSize:11,marginLeft:2 }}>{s.unit}</span></div>
+      {/* KPIカード */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8}}>
+        {/* 今月売上 */}
+        <div style={{background:"#f0fdf6",borderRadius:12,padding:"12px 14px",border:"1.5px solid #3aa87630",gridColumn: hasRevData?"auto":"1/3"}}>
+          <div style={{fontSize:10,color:GL,fontWeight:700,marginBottom:3}}>💴 今月の売上</div>
+          {hasRevData?(
+            <>
+              <div style={{fontSize:20,fontWeight:900,color:G}}>{fmtYen(thisM.revenue)}</div>
+              {revDiff!==null&&<div style={{fontSize:10.5,marginTop:3,color:revDiff>=0?"#1a7a50":"#e05050",fontWeight:700}}>{revDiff>=0?"▲":"▼"}{Math.abs(revDiff)}% vs 先月</div>}
+            </>
+          ):(
+            <div style={{fontSize:11,color:"#a0aab8",marginTop:4,lineHeight:1.5}}>CSVに金額データなし<br/>再インポートで反映</div>
+          )}
+        </div>
+        {/* 今月受注 */}
+        <div style={{background:"#fffbef",borderRadius:12,padding:"12px 14px",border:"1.5px solid #d4a84330"}}>
+          <div style={{fontSize:10,color:"#d4a843",fontWeight:700,marginBottom:3}}>📋 今月の受注</div>
+          <div style={{fontSize:20,fontWeight:900,color:"#b87f0a"}}>{thisM.orders}<span style={{fontSize:11,marginLeft:2}}>件</span></div>
+          {lastM.orders>0&&<div style={{fontSize:10.5,marginTop:3,color:"#8a6010"}}>先月 {lastM.orders}件</div>}
+        </div>
+        {/* 対応中 */}
+        <div style={{background:"#fff8f0",borderRadius:12,padding:"12px 14px",border:"1.5px solid #e07d2030"}}>
+          <div style={{fontSize:10,color:"#e07d20",fontWeight:700,marginBottom:3}}>📦 対応中商品</div>
+          <div style={{fontSize:20,fontWeight:900,color:"#c06010"}}>{myOrders.flatMap(o=>o.products).filter(p=>p.status<6).length}<span style={{fontSize:11,marginLeft:2}}>件</span></div>
+        </div>
+        {/* フォローアップ */}
+        <div style={{background:followUp.length>0?"#fff8f0":"#f0fdf6",borderRadius:12,padding:"12px 14px",border:`1.5px solid ${followUp.length>0?"#e07d2030":"#3aa87630"}`}}>
+          <div style={{fontSize:10,color:followUp.length>0?"#e07d20":GL,fontWeight:700,marginBottom:3}}>🔔 要フォロー</div>
+          <div style={{fontSize:20,fontWeight:900,color:followUp.length>0?"#c06010":G}}>{followUp.length}<span style={{fontSize:11,marginLeft:2}}>件</span></div>
+        </div>
+      </div>
+
+      {/* 月次売上グラフ */}
+      {hasRevData&&(
+        <div style={{background:"#fff",borderRadius:14,border:"1.5px solid #e4eaf3",padding:"16px",boxShadow:"0 2px 8px rgba(10,30,53,0.05)"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+            <div style={{fontSize:13,fontWeight:800,color:"#0f2744"}}>📊 月次売上推移</div>
+            <div style={{fontSize:11,color:"#8a95a5"}}>過去6ヶ月</div>
           </div>
-        ))}
+          <div style={{display:"flex",gap:3,alignItems:"flex-end",height:100}}>
+            {trend.map((d,i)=>(
+              <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
+                <div style={{fontSize:8.5,fontWeight:700,color:"#0f2744",minHeight:12,textAlign:"center"}}>{d.revenue>0?("¥"+(d.revenue>=10000?Math.round(d.revenue/10000)+"万":"")):"" }</div>
+                <div style={{width:"100%",background:d.revenue>0?GL:"#e4eaf3",borderRadius:"3px 3px 0 0",height:Math.max(3,Math.round((d.revenue/maxRev)*72))+"px",transition:"height 0.3s"}}/>
+                <div style={{fontSize:8.5,color:"#a0aab8",textAlign:"center",lineHeight:1.2}}>{d.month.replace("年","/").replace("月","")}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* 月次受注グラフ（売上データなし時） */}
+      {!hasRevData&&(
+        <div style={{background:"#fff",borderRadius:14,border:"1.5px solid #e4eaf3",padding:"16px",boxShadow:"0 2px 8px rgba(10,30,53,0.05)"}}>
+          <div style={{fontSize:13,fontWeight:800,color:"#0f2744",marginBottom:12}}>📊 月次受注推移</div>
+          <MiniBar data={trend} valueKey="orders" labelKey="month" color={GL} height={72}/>
+          <div style={{marginTop:8,padding:"8px 12px",background:"#fffbef",borderRadius:8,border:"1px solid #e8c95a",fontSize:11.5,color:"#7a6020"}}>
+            💡 売上金額を表示するにはCSVを再インポートしてください（単価・商品金額列が必要です）
+          </div>
+        </div>
+      )}
+
+      {/* クリニック別サマリーテーブル */}
+      <div style={{background:"#fff",borderRadius:14,border:"1.5px solid #e4eaf3",padding:"16px",boxShadow:"0 2px 8px rgba(10,30,53,0.05)"}}>
+        <div style={{fontSize:13,fontWeight:800,color:"#0f2744",marginBottom:12}}>🏥 クリニック別状況（今月）</div>
+        <div style={{border:"1px solid #f0f4f9",borderRadius:10,overflow:"hidden"}}>
+          <div style={{display:"grid",gridTemplateColumns:`2fr ${hasRevData?"1fr ":""}1fr 1fr 1fr`,background:"#0f2744",padding:"7px 12px",gap:8}}>
+            {["クリニック", ...(hasRevData?["今月売上"]:[]), "今月受注", "累計受注", "最終注文"].map(h=>(
+              <div key={h} style={{fontSize:11,fontWeight:700,color:"rgba(255,255,255,0.85)"}}>{h}</div>
+            ))}
+          </div>
+          {clinicThis.map((c,i)=>(
+            <div key={c.clinic} onClick={()=>onSelectClinic(c.clinic)}
+              style={{display:"grid",gridTemplateColumns:`2fr ${hasRevData?"1fr ":""}1fr 1fr 1fr`,padding:"9px 12px",gap:8,cursor:"pointer",background:i%2===0?"#fff":"#f9fafc",borderBottom:"1px solid #f0f4f9",transition:"background 0.1s"}}
+              onMouseEnter={e=>e.currentTarget.style.background="#f0fdf6"}
+              onMouseLeave={e=>e.currentTarget.style.background=i%2===0?"#fff":"#f9fafc"}>
+              <div>
+                <div style={{fontSize:12.5,fontWeight:700,color:"#0f2744",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.clinic}</div>
+                {(c.days===null||c.days>=30)&&<div style={{fontSize:10,color:"#e07d20",fontWeight:700,marginTop:1}}>🔔 要フォロー（{c.days===null?"未注文":c.days+"日"}）</div>}
+              </div>
+              {hasRevData&&<div style={{fontSize:12.5,fontWeight:700,color:c.revenue>0?G:"#a0aab8"}}>{fmtYen(c.revenue)}</div>}
+              <div style={{fontSize:12.5,color:c.orders>0?"#0f2744":"#a0aab8",fontWeight:c.orders>0?700:400}}>{c.orders>0?c.orders+"件":"—"}</div>
+              <div style={{fontSize:12.5,color:"#4a5568"}}>{c.totalOrders}件</div>
+              <div style={{fontSize:11,color:c.days===null||c.days>=30?"#e07d20":"#8a95a5"}}>{c.days===null?"未注文":c.days+"日前"}</div>
+            </div>
+          ))}
+        </div>
       </div>
 
       {/* フォローアップアラート */}
-      {followUpList.length > 0 && (
-        <div style={{ background:"#fff",borderRadius:14,border:"1.5px solid #f0c090",padding:"16px",boxShadow:"0 2px 8px rgba(10,30,53,0.05)" }}>
-          <div style={{ fontSize:13,fontWeight:800,color:"#e07d20",marginBottom:10 }}>🔔 フォローアップ推奨（{followUpList.length}件）</div>
-          {followUpList.map(c => (
-            <div key={c.clinic} style={{ display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:"1px solid #f8f0e8" }}>
+      {followUp.length>0&&(
+        <div style={{background:"#fff",borderRadius:14,border:"1.5px solid #f0c090",padding:"16px",boxShadow:"0 2px 8px rgba(10,30,53,0.05)"}}>
+          <div style={{fontSize:13,fontWeight:800,color:"#e07d20",marginBottom:10}}>🔔 フォローアップ推奨（{followUp.length}件）</div>
+          {followUp.map(c=>(
+            <div key={c.clinic} onClick={()=>onSelectClinic(c.clinic)}
+              style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:"1px solid #fdf0e0",cursor:"pointer"}}
+              onMouseEnter={e=>e.currentTarget.style.background="#fffbef"}
+              onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
               <div>
-                <div style={{ fontSize:13,fontWeight:700,color:"#1a2a3a" }}>{c.clinic}</div>
-                <div style={{ fontSize:11,color:"#a0aab8",marginTop:1 }}>
-                  {c.lastOrderDate ? `最終注文：${c.lastOrderDate}` : "注文履歴なし"}
-                  {c.orderCount > 0 ? ` / 累計${c.orderCount}件` : ""}
+                <div style={{fontSize:13,fontWeight:700,color:"#1a2a3a"}}>{c.clinic}</div>
+                <div style={{fontSize:11,color:"#a0aab8",marginTop:2}}>
+                  {c.lastDate?`最終注文：${c.lastDate}`:"注文履歴なし"}
+                  {hasRevData&&c.totalRev>0&&<span style={{marginLeft:8,color:"#4a7cc7"}}>累計 {fmtYen(c.totalRev)}</span>}
                 </div>
               </div>
-              <div style={{ textAlign:"right" }}>
-                <div style={{ fontSize:16,fontWeight:900,color:c.days===null||c.days>=60?"#e05050":"#e07d20" }}>
-                  {c.days===null?"未注文":c.days+"日"}
-                </div>
-                <div style={{ fontSize:10,color:"#a0aab8" }}>{c.days===null?"":"未注文"}</div>
+              <div style={{textAlign:"right"}}>
+                <div style={{fontSize:16,fontWeight:900,color:c.days===null||c.days>=60?"#e05050":"#e07d20"}}>{c.days===null?"未注文":c.days+"日"}</div>
+                <div style={{fontSize:10,color:"#4a7cc7",marginTop:2}}>詳細を見る →</div>
               </div>
             </div>
           ))}
-        </div>
-      )}
-
-      {/* 月次受注トレンド */}
-      <div style={{ background:"#fff",borderRadius:14,border:"1.5px solid #e4eaf3",padding:"16px",boxShadow:"0 2px 8px rgba(10,30,53,0.05)" }}>
-        <div style={{ fontSize:13,fontWeight:800,color:"#0f2744",marginBottom:12 }}>📊 月次受注トレンド（担当クリニック合計）</div>
-        <div style={{ display:"flex",gap:4,alignItems:"flex-end",height:80,marginBottom:8 }}>
-          {monthlyTrend.map((m,i) => (
-            <div key={i} style={{ flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:3 }}>
-              <div style={{ fontSize:10,fontWeight:700,color:"#0f2744" }}>{m.orders||""}</div>
-              <div style={{ width:"100%",background:m.orders>0?"#3aa876":"#e4eaf3",borderRadius:"4px 4px 0 0",height:Math.max(4,(m.orders/maxOrders)*60)+"px",transition:"height 0.3s" }}/>
-              <div style={{ fontSize:9,color:"#a0aab8",textAlign:"center",lineHeight:1.2 }}>{m.month.replace("年","/").replace("月","")}</div>
-            </div>
-          ))}
-        </div>
-        <div style={{ fontSize:11,color:"#a0aab8",textAlign:"center" }}>※ 棒グラフの数値は受注件数</div>
-      </div>
-
-      {/* 今月の活発クリニック */}
-      {thisMonthClinicCounts.length > 0 && (
-        <div style={{ background:"#fff",borderRadius:14,border:"1.5px solid #e4eaf3",padding:"16px",boxShadow:"0 2px 8px rgba(10,30,53,0.05)" }}>
-          <div style={{ fontSize:13,fontWeight:800,color:"#0f2744",marginBottom:10 }}>📋 今月の受注状況</div>
-          {thisMonthClinicCounts.map(c => (
-            <div key={c.clinic} style={{ display:"flex",justifyContent:"space-between",alignItems:"center",padding:"7px 0",borderBottom:"1px solid #f4f6fb" }}>
-              <div style={{ fontSize:12.5,fontWeight:600,color:"#1a2a3a" }}>{c.clinic}</div>
-              <div style={{ display:"flex",gap:10,fontSize:12 }}>
-                <span style={{ color:"#4a7cc7",fontWeight:700 }}>{c.count}注文</span>
-                <span style={{ color:"#8a95a5" }}>{c.products}商品</span>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {followUpList.length === 0 && thisMonthClinicCounts.length === 0 && (
-        <div style={{ textAlign:"center",padding:"40px",color:"#a0aab8" }}>
-          <div style={{ fontSize:32,marginBottom:8 }}>✨</div>
-          <div style={{ fontSize:13,fontWeight:700 }}>全クリニック対応中です</div>
         </div>
       )}
     </div>
@@ -296,99 +322,138 @@ function OverviewDashboard({ clinics, orders, salesName }) {
 }
 
 // ── クリニック詳細 ────────────────────────────────────────────────────────
-function ClinicDetail({ clinic, orders }) {
-  const clinicOrders = orders.filter(o => o.clinic === clinic).sort((a,b) => b.id.localeCompare(a.id));
-  const allProducts = clinicOrders.flatMap(o => o.products);
-  const inProgress = allProducts.filter(p => p.status < 6);
+function ClinicDetail({clinic,orders}){
+  const now=new Date();
+  const co=orders.filter(o=>o.clinic===clinic).sort((a,b)=>b.id.localeCompare(a.id));
 
-  const now = new Date();
-  const lastOrder = clinicOrders[0];
-  const lastDate = lastOrder ? parseJpDate(lastOrder.date) : null;
-  const daysSinceLast = lastDate ? daysBetween(lastDate, now) : null;
-
-  // 月次サマリー（過去6ヶ月）
-  const monthKeys = [];
-  for (let i=5; i>=0; i--) {
-    const d = new Date(now.getFullYear(), now.getMonth()-i, 1);
+  // 月次キー（過去6ヶ月）
+  const monthKeys=[];
+  for(let i=5;i>=0;i--){
+    const d=new Date(now.getFullYear(),now.getMonth()-i,1);
     monthKeys.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`);
   }
-  const monthlyStats = monthKeys.map(mk => {
-    const mo = clinicOrders.filter(o => toMonthKey(o.date) === mk);
-    const products = mo.flatMap(o => o.products);
-    return { month: formatMonth(mk), orders: mo.length, products: products.length };
-  });
-  const maxO = Math.max(...monthlyStats.map(m => m.orders), 1);
 
-  // よく注文する商品 TOP5
-  const productCount = {};
-  allProducts.forEach(p => {
-    const name = p.name.split("（")[0].trim();
-    productCount[name] = (productCount[name]||0) + 1;
+  // 月次データ
+  const hasRevData=co.some(o=>o.totalAmount||(o.products||[]).some(p=>p.amount));
+  const monthlyData=monthKeys.map(mk=>{
+    const mo=co.filter(o=>toMK(o.date)===mk);
+    let rev=0;
+    mo.forEach(o=>{if(o.totalAmount)rev+=o.totalAmount;else o.products.forEach(p=>{if(p.amount)rev+=p.amount;});});
+    return {month:fmtMK(mk),orders:mo.length,revenue:rev};
   });
-  const topProducts = Object.entries(productCount).sort((a,b)=>b[1]-a[1]).slice(0,5);
 
-  return (
-    <div style={{ padding:"20px",display:"flex",flexDirection:"column",gap:16 }}>
+  // 累計売上
+  let totalRevenue=0;
+  co.forEach(o=>{if(o.totalAmount)totalRevenue+=o.totalAmount;else o.products.forEach(p=>{if(p.amount)totalRevenue+=p.amount;});});
+
+  // 最終注文からの日数
+  const lastDate=co[0]?parseJpDate(co[0].date):null;
+  const daysSinceLast=lastDate?daysBetween(lastDate,now):null;
+  const inProgress=co.flatMap(o=>o.products).filter(p=>p.status<6).length;
+
+  // よく注文する商品
+  const productCount={};
+  co.forEach(o=>o.products.forEach(p=>{
+    const name=p.name.split("（")[0].trim();
+    if(!productCount[name])productCount[name]={count:0,revenue:0};
+    productCount[name].count++;
+    if(p.amount)productCount[name].revenue+=p.amount;
+  }));
+  const topProducts=Object.entries(productCount).sort((a,b)=>b[1].count-a[1].count).slice(0,5);
+
+  return(
+    <div style={{padding:"20px",display:"flex",flexDirection:"column",gap:16}}>
       {/* ヘッダー */}
-      <div style={{ background:"linear-gradient(135deg,#0f3d20,#1a5a30)",borderRadius:14,padding:"18px 20px",color:"#fff" }}>
-        <div style={{ fontSize:11,color:"rgba(255,255,255,0.5)",marginBottom:4 }}>CLINIC DETAIL</div>
-        <div style={{ fontSize:20,fontWeight:900,marginBottom:6 }}>{clinic}</div>
-        <div style={{ display:"flex",gap:8,flexWrap:"wrap" }}>
-          <span style={{ padding:"3px 10px",borderRadius:20,fontSize:11.5,fontWeight:700,background:"rgba(255,255,255,0.12)",color:"#fff" }}>累計 {clinicOrders.length}注文</span>
-          {inProgress.length > 0 && <span style={{ padding:"3px 10px",borderRadius:20,fontSize:11.5,fontWeight:700,background:"rgba(212,168,67,0.3)",color:"#ffd878",border:"1px solid rgba(212,168,67,0.4)" }}>対応中 {inProgress.length}件</span>}
-          {daysSinceLast !== null && <span style={{ padding:"3px 10px",borderRadius:20,fontSize:11.5,fontWeight:700,background:daysSinceLast>=30?"rgba(224,125,32,0.3)":"rgba(255,255,255,0.1)",color:daysSinceLast>=30?"#ffb060":"rgba(255,255,255,0.7)" }}>最終注文 {daysSinceLast}日前</span>}
+      <div style={{background:`linear-gradient(135deg,#0a2818,#0f3d20)`,borderRadius:14,padding:"18px 20px",color:"#fff"}}>
+        <div style={{fontSize:11,color:"rgba(255,255,255,0.5)",marginBottom:4}}>CLINIC DETAIL</div>
+        <div style={{fontSize:20,fontWeight:900,marginBottom:8}}>{clinic}</div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          <span style={{padding:"3px 10px",borderRadius:20,fontSize:11.5,fontWeight:700,background:"rgba(255,255,255,0.12)",color:"#fff"}}>累計 {co.length}注文</span>
+          {hasRevData&&totalRevenue>0&&<span style={{padding:"3px 10px",borderRadius:20,fontSize:11.5,fontWeight:700,background:"rgba(93,216,138,0.25)",color:GLL}}>累計売上 {fmtYen(totalRevenue)}</span>}
+          {inProgress>0&&<span style={{padding:"3px 10px",borderRadius:20,fontSize:11.5,fontWeight:700,background:"rgba(212,168,67,0.3)",color:"#ffd878",border:"1px solid rgba(212,168,67,0.4)"}}>対応中 {inProgress}件</span>}
+          {daysSinceLast!==null&&<span style={{padding:"3px 10px",borderRadius:20,fontSize:11.5,fontWeight:700,background:daysSinceLast>=30?"rgba(224,125,32,0.3)":"rgba(255,255,255,0.1)",color:daysSinceLast>=30?"#ffb060":"rgba(255,255,255,0.7)"}}>最終注文 {daysSinceLast}日前</span>}
         </div>
       </div>
 
-      {/* 月次発注グラフ */}
-      <div style={{ background:"#fff",borderRadius:14,border:"1.5px solid #e4eaf3",padding:"16px",boxShadow:"0 2px 8px rgba(10,30,53,0.05)" }}>
-        <div style={{ fontSize:13,fontWeight:800,color:"#0f2744",marginBottom:12 }}>📊 月次発注推移</div>
-        <div style={{ display:"flex",gap:4,alignItems:"flex-end",height:80,marginBottom:8 }}>
-          {monthlyStats.map((m,i) => (
-            <div key={i} style={{ flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:3 }}>
-              <div style={{ fontSize:10,fontWeight:700,color:"#0f2744" }}>{m.orders||""}</div>
-              <div style={{ width:"100%",background:m.orders>0?"#3aa876":"#e4eaf3",borderRadius:"4px 4px 0 0",height:Math.max(4,(m.orders/maxO)*60)+"px",transition:"height 0.3s" }}/>
-              <div style={{ fontSize:9,color:"#a0aab8",textAlign:"center",lineHeight:1.2 }}>{m.month.replace("年","/").replace("月","")}</div>
+      {/* 月次グラフ */}
+      <div style={{background:"#fff",borderRadius:14,border:"1.5px solid #e4eaf3",padding:"16px",boxShadow:"0 2px 8px rgba(10,30,53,0.05)"}}>
+        <div style={{fontSize:13,fontWeight:800,color:"#0f2744",marginBottom:12}}>
+          {hasRevData?"📊 月次売上推移":"📊 月次発注推移"}
+        </div>
+        {hasRevData?(
+          <>
+            <div style={{display:"flex",gap:3,alignItems:"flex-end",height:100}}>
+              {monthlyData.map((d,i)=>{
+                const maxV=Math.max(...monthlyData.map(x=>x.revenue),1);
+                return(
+                  <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
+                    <div style={{fontSize:8.5,fontWeight:700,color:"#0f2744",minHeight:12,textAlign:"center"}}>{d.revenue>0?("¥"+(d.revenue>=10000?Math.round(d.revenue/10000)+"万":d.revenue)):""}</div>
+                    <div style={{width:"100%",background:d.revenue>0?GL:"#e4eaf3",borderRadius:"3px 3px 0 0",height:Math.max(3,Math.round((d.revenue/maxV)*72))+"px",transition:"height 0.3s"}}/>
+                    <div style={{fontSize:8.5,color:"#a0aab8",textAlign:"center",lineHeight:1.2}}>{d.month.replace("年","/").replace("月","")}</div>
+                  </div>
+                );
+              })}
             </div>
-          ))}
-        </div>
-        <div style={{ display:"flex",gap:12,fontSize:11,color:"#8a95a5",justifyContent:"center",marginTop:4 }}>
-          {monthlyStats.slice(-3).map((m,i)=>(
-            <span key={i}>{m.month.replace("年","/").replace("月","")}: {m.orders}注文・{m.products}商品</span>
-          ))}
-        </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginTop:12}}>
+              {monthlyData.slice(-3).map((d,i)=>(
+                <div key={i} style={{textAlign:"center",padding:"8px",background:"#f8fafd",borderRadius:8,border:"1px solid #e4eaf3"}}>
+                  <div style={{fontSize:10,color:"#8a95a5",marginBottom:2}}>{d.month}</div>
+                  <div style={{fontSize:13,fontWeight:800,color:GL}}>{fmtYen(d.revenue)}</div>
+                  <div style={{fontSize:10.5,color:"#a0aab8"}}>{d.orders}注文</div>
+                </div>
+              ))}
+            </div>
+          </>
+        ):(
+          <>
+            <MiniBar data={monthlyData} valueKey="orders" labelKey="month" color={GL} height={72}/>
+            <div style={{marginTop:8,padding:"8px 12px",background:"#fffbef",borderRadius:8,border:"1px solid #e8c95a",fontSize:11.5,color:"#7a6020"}}>
+              💡 売上金額を表示するにはCSVを再インポートしてください
+            </div>
+          </>
+        )}
       </div>
 
       {/* よく注文する商品 */}
-      {topProducts.length > 0 && (
-        <div style={{ background:"#fff",borderRadius:14,border:"1.5px solid #e4eaf3",padding:"16px",boxShadow:"0 2px 8px rgba(10,30,53,0.05)" }}>
-          <div style={{ fontSize:13,fontWeight:800,color:"#0f2744",marginBottom:10 }}>🏆 よく注文される商品</div>
-          {topProducts.map(([name,count],i) => (
-            <div key={i} style={{ display:"flex",alignItems:"center",gap:8,padding:"6px 0",borderBottom:i<topProducts.length-1?"1px solid #f4f6fb":"none" }}>
-              <div style={{ width:20,height:20,borderRadius:6,background:i===0?"#d4a843":i===1?"#8a9ab5":i===2?"#b87040":"#e4eaf3",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:800,color:"#fff",flexShrink:0 }}>{i+1}</div>
-              <div style={{ flex:1,fontSize:12.5,color:"#1a2a3a",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{name}</div>
-              <div style={{ fontSize:12,fontWeight:700,color:"#4a7cc7",flexShrink:0 }}>{count}回</div>
+      {topProducts.length>0&&(
+        <div style={{background:"#fff",borderRadius:14,border:"1.5px solid #e4eaf3",padding:"16px",boxShadow:"0 2px 8px rgba(10,30,53,0.05)"}}>
+          <div style={{fontSize:13,fontWeight:800,color:"#0f2744",marginBottom:10}}>🏆 よく注文される商品</div>
+          {topProducts.map(([name,data],i)=>(
+            <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 0",borderBottom:i<topProducts.length-1?"1px solid #f4f6fb":"none"}}>
+              <div style={{width:20,height:20,borderRadius:6,background:i===0?"#d4a843":i===1?"#8a9ab5":i===2?"#b87040":"#e4eaf3",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:800,color:"#fff",flexShrink:0}}>{i+1}</div>
+              <div style={{flex:1,fontSize:12.5,color:"#1a2a3a",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{name}</div>
+              <div style={{display:"flex",gap:10,flexShrink:0}}>
+                <span style={{fontSize:12,fontWeight:700,color:"#4a7cc7"}}>{data.count}回</span>
+                {hasRevData&&data.revenue>0&&<span style={{fontSize:12,color:GL,fontWeight:700}}>{fmtYen(data.revenue)}</span>}
+              </div>
             </div>
           ))}
         </div>
       )}
 
       {/* 対応中注文 */}
-      {inProgress.length > 0 && (
-        <div style={{ background:"#fff",borderRadius:14,border:"1.5px solid #e4eaf3",padding:"16px",boxShadow:"0 2px 8px rgba(10,30,53,0.05)" }}>
-          <div style={{ fontSize:13,fontWeight:800,color:"#0f2744",marginBottom:10 }}>📦 現在の対応中商品</div>
-          {clinicOrders.filter(o=>o.products.some(p=>p.status<6)).map(order=>(
-            <div key={order.id} style={{ marginBottom:10,padding:"10px 12px",background:"#f8fafd",borderRadius:10,border:"1.5px solid #e4eaf3" }}>
-              <div style={{ fontSize:12,fontWeight:700,color:"#0f2744",marginBottom:6 }}>
-                {order.id} <span style={{ fontSize:10.5,fontWeight:400,color:"#a0aab8",marginLeft:6 }}>{order.date}</span>
-                {order.date && <span style={{ fontSize:10.5,color:"#c0c8d4",marginLeft:4 }}>（{daysBetween(parseJpDate(order.date),now)}日経過）</span>}
+      {inProgress>0&&(
+        <div style={{background:"#fff",borderRadius:14,border:"1.5px solid #e4eaf3",padding:"16px",boxShadow:"0 2px 8px rgba(10,30,53,0.05)"}}>
+          <div style={{fontSize:13,fontWeight:800,color:"#0f2744",marginBottom:10}}>📦 現在の対応中商品</div>
+          {co.filter(o=>o.products.some(p=>p.status<6)).map(order=>(
+            <div key={order.id} style={{marginBottom:10,padding:"10px 12px",background:"#f8fafd",borderRadius:10,border:"1.5px solid #e4eaf3"}}>
+              <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
+                <div>
+                  <span style={{fontSize:12,fontWeight:700,color:"#0f2744"}}>{order.id}</span>
+                  <span style={{fontSize:10.5,color:"#a0aab8",marginLeft:8}}>{order.date}</span>
+                  {parseJpDate(order.date)&&<span style={{fontSize:10.5,color:"#c0c8d4",marginLeft:4}}>（{daysBetween(parseJpDate(order.date),now)}日経過）</span>}
+                </div>
+                {hasRevData&&order.totalAmount>0&&<span style={{fontSize:12,fontWeight:700,color:GL}}>{fmtYen(order.totalAmount)}</span>}
               </div>
               {order.products.filter(p=>p.status<6).map((p,i)=>{
-                const s = STATUS_STAGES[p.status]||STATUS_STAGES[0];
-                return (
-                  <div key={i} style={{ display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:11.5,padding:"3px 0" }}>
-                    <span style={{ color:"#4a5568",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{p.name.split("（")[0].trim()}</span>
-                    <span style={{ flexShrink:0,padding:"1px 7px",borderRadius:20,fontSize:10,fontWeight:700,background:s.color+"18",color:s.color,marginLeft:6 }}>{s.short}</span>
+                const s=STATUS_STAGES[p.status]||STATUS_STAGES[0];
+                return(
+                  <div key={i} style={{display:"flex",justifyContent:"space-between",fontSize:11.5,padding:"3px 0"}}>
+                    <span style={{color:"#4a5568",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.name.split("（")[0].trim()}</span>
+                    <div style={{display:"flex",gap:8,flexShrink:0}}>
+                      {hasRevData&&p.amount>0&&<span style={{color:"#8a95a5"}}>{fmtYen(p.amount)}</span>}
+                      <span style={{padding:"1px 7px",borderRadius:20,fontSize:10,fontWeight:700,background:s.color+"18",color:s.color}}>{s.short}</span>
+                    </div>
                   </div>
                 );
               })}
@@ -397,123 +462,155 @@ function ClinicDetail({ clinic, orders }) {
         </div>
       )}
 
-      {/* 最近の注文履歴 */}
-      <div style={{ background:"#fff",borderRadius:14,border:"1.5px solid #e4eaf3",padding:"16px",boxShadow:"0 2px 8px rgba(10,30,53,0.05)" }}>
-        <div style={{ fontSize:13,fontWeight:800,color:"#0f2744",marginBottom:10 }}>🗓 最近の注文履歴</div>
-        {clinicOrders.slice(0,10).map(order=>{
-          const active = order.products.filter(p=>p.status<6).length;
-          return (
-            <div key={order.id} style={{ display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:"1px solid #f4f6fb" }}>
+      {/* 注文履歴 */}
+      <div style={{background:"#fff",borderRadius:14,border:"1.5px solid #e4eaf3",padding:"16px",boxShadow:"0 2px 8px rgba(10,30,53,0.05)"}}>
+        <div style={{fontSize:13,fontWeight:800,color:"#0f2744",marginBottom:10}}>🗓 注文履歴</div>
+        {co.slice(0,10).map(order=>{
+          const active=order.products.filter(p=>p.status<6).length;
+          let rev=0;
+          if(order.totalAmount)rev=order.totalAmount;
+          else order.products.forEach(p=>{if(p.amount)rev+=p.amount;});
+          return(
+            <div key={order.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:"1px solid #f4f6fb"}}>
               <div>
-                <div style={{ fontSize:12.5,fontWeight:700,color:"#0f2744" }}>{order.id}</div>
-                <div style={{ fontSize:11,color:"#a0aab8",marginTop:1 }}>{order.date} · {order.products.length}商品</div>
+                <div style={{fontSize:12.5,fontWeight:700,color:"#0f2744"}}>{order.id}</div>
+                <div style={{fontSize:11,color:"#a0aab8",marginTop:1}}>{order.date} · {order.products.length}商品</div>
               </div>
-              <div>
+              <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                {hasRevData&&rev>0&&<span style={{fontSize:12,fontWeight:700,color:GL}}>{fmtYen(rev)}</span>}
                 {active>0
-                  ? <span style={{ padding:"2px 8px",borderRadius:20,fontSize:11,fontWeight:700,background:"#fff8e8",color:"#b87f0a",border:"1px solid #e8c95a" }}>対応中 {active}</span>
-                  : <span style={{ padding:"2px 8px",borderRadius:20,fontSize:11,fontWeight:700,background:"#e8f4ee",color:"#1a7a50" }}>✅ 完了</span>
+                  ?<span style={{padding:"2px 8px",borderRadius:20,fontSize:11,fontWeight:700,background:"#fff8e8",color:"#b87f0a",border:"1px solid #e8c95a"}}>対応中 {active}</span>
+                  :<span style={{padding:"2px 8px",borderRadius:20,fontSize:11,fontWeight:700,background:"#e8f4ee",color:"#1a7a50"}}>✅ 完了</span>
                 }
               </div>
             </div>
           );
         })}
-        {clinicOrders.length > 10 && <div style={{ fontSize:11,color:"#a0aab8",textAlign:"center",marginTop:8 }}>他 {clinicOrders.length-10} 件...</div>}
+        {co.length>10&&<div style={{fontSize:11,color:"#a0aab8",textAlign:"center",marginTop:8}}>他 {co.length-10}件...</div>}
       </div>
     </div>
   );
 }
 
 // ── メイン ────────────────────────────────────────────────────────────────
-function MainScreen({ user }) {
-  const [orders, setOrders] = useState([]);
-  const [assignedClinics, setAssignedClinics] = useState([]);
-  const [salesName, setSalesName] = useState("");
-  const [selectedClinic, setSelectedClinic] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [isMobile, setIsMobile] = useState(window.innerWidth < 900);
+function MainScreen({user}){
+  const [orders,setOrders]=useState([]);
+  const [assignedClinics,setAssignedClinics]=useState([]);
+  const [salesName,setSalesName]=useState("");
+  const [selectedClinic,setSelectedClinic]=useState(null);
+  const [loading,setLoading]=useState(true);
+  const [isMobile,setIsMobile]=useState(window.innerWidth<900);
 
-  useEffect(() => {
-    const handler = () => setIsMobile(window.innerWidth < 900);
-    window.addEventListener('resize', handler);
-    return () => window.removeEventListener('resize', handler);
-  }, []);
+  useEffect(()=>{
+    const h=()=>setIsMobile(window.innerWidth<900);
+    window.addEventListener('resize',h);
+    return()=>window.removeEventListener('resize',h);
+  },[]);
 
-  useEffect(() => {
-    const load = async () => {
-      let t=0; while(!window._sfb&&t<30){await new Promise(r=>setTimeout(r,200));t++;}
-      const [orderData, salesBindings] = await Promise.all([
-        window._sfb.loadOrders(),
-        window._sfb.loadSalesBindings(),
-      ]);
+  useEffect(()=>{
+    const load=async()=>{
+      let t=0;while(!window._sfb&&t<30){await new Promise(r=>setTimeout(r,200));t++;}
+      const [orderData,salesBindings]=await Promise.all([window._sfb.loadOrders(),window._sfb.loadSalesBindings()]);
       setOrders(orderData);
-      const myBinding = salesBindings.find(b => b.email === user.email);
-      if (myBinding) {
-        setAssignedClinics(Array.isArray(myBinding.clinics) ? myBinding.clinics : []);
-        setSalesName(myBinding.name || "");
+      const myBinding=salesBindings.find(b=>b.email===user.email);
+      if(myBinding){
+        setAssignedClinics(Array.isArray(myBinding.clinics)?myBinding.clinics:[]);
+        setSalesName(myBinding.name||"");
       }
       setLoading(false);
     };
     load();
-  }, []);
+  },[]);
 
-  const myOrders = useMemo(() => orders.filter(o => assignedClinics.includes(o.clinic)), [orders, assignedClinics]);
+  const myOrders=useMemo(()=>orders.filter(o=>assignedClinics.includes(o.clinic)),[orders,assignedClinics]);
 
-  if (loading) return (
-    <div style={{ minHeight:"100vh",background:"linear-gradient(160deg,#0a2818,#0f3d20)",display:"flex",alignItems:"center",justifyContent:"center",color:"rgba(255,255,255,0.5)",fontSize:14 }}>読み込み中...</div>
+  if(loading)return(
+    <div style={{minHeight:"100vh",background:"linear-gradient(160deg,#0a2818,#0f3d20)",display:"flex",alignItems:"center",justifyContent:"center",color:"rgba(255,255,255,0.5)",fontSize:14}}>読み込み中...</div>
   );
 
-  return (
-    <div style={{ display:"flex",flexDirection:"column",height:"100vh",overflow:"hidden" }}>
-      {/* ヘッダー */}
-      <div style={{ background:"linear-gradient(160deg,#0a2818 0%,#0f3d20 55%,#1a5a30 100%)",padding:"14px 20px",flexShrink:0 }}>
-        <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center" }}>
-          <div>
-            <div style={{ fontSize:9.5,letterSpacing:"0.2em",color:"#5dd88a",fontWeight:700,textTransform:"uppercase" }}>Sales Management</div>
-            <div style={{ fontSize:16,fontWeight:900,color:"#fff" }}>営業管理システム</div>
-            <div style={{ fontSize:10.5,color:"rgba(255,255,255,0.4)",marginTop:2 }}>{user.email}{salesName?" / "+salesName:""} · 担当 {assignedClinics.length}クリニック</div>
+  // 左パネルのクリニックカード
+  const ClinicItem=({clinic})=>{
+    const co=myOrders.filter(o=>o.clinic===clinic);
+    const now=new Date();
+    const last=co.sort((a,b)=>b.id.localeCompare(a.id))[0];
+    const days=last?daysBetween(parseJpDate(last.date),now):null;
+    const inProg=co.flatMap(o=>o.products).filter(p=>p.status<6).length;
+    const isSelected=selectedClinic===clinic;
+    const needFollow=days===null||days>=30;
+    // 今月売上
+    const thisMK=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}`;
+    let thisRevenue=0;
+    co.filter(o=>toMK(o.date)===thisMK).forEach(o=>{
+      if(o.totalAmount)thisRevenue+=o.totalAmount;
+      else o.products.forEach(p=>{if(p.amount)thisRevenue+=p.amount;});
+    });
+    const hasRev=co.some(o=>o.totalAmount||(o.products||[]).some(p=>p.amount));
+    return(
+      <div onClick={()=>setSelectedClinic(clinic)} style={{background:isSelected?"#0a2818":"#fff",borderRadius:12,border:`1.5px solid ${isSelected?GL:needFollow?"#f0c090":"#e4eaf3"}`,marginBottom:7,overflow:"hidden",cursor:"pointer",boxShadow:isSelected?"0 4px 16px rgba(10,61,32,0.3)":"0 1px 4px rgba(10,30,53,0.04)",transition:"all 0.15s"}}>
+        <div style={{padding:"10px 12px"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:3}}>
+            <div style={{fontSize:12.5,fontWeight:800,color:isSelected?"#fff":"#0f2744",flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{clinic}</div>
+            <div style={{display:"flex",gap:3,flexShrink:0,marginLeft:4}}>
+              {inProg>0&&<span style={{padding:"1px 5px",borderRadius:20,fontSize:9.5,fontWeight:700,background:isSelected?"rgba(212,168,67,0.4)":"#fff8e8",color:isSelected?"#ffd878":"#b87f0a"}}>対応{inProg}</span>}
+              {needFollow&&<span style={{padding:"1px 5px",borderRadius:20,fontSize:9.5,fontWeight:700,background:isSelected?"rgba(224,125,32,0.4)":"#fff8f0",color:isSelected?"#ffb060":"#e07d20"}}>🔔</span>}
+            </div>
           </div>
-          <button onClick={()=>window._sfb.signOut()} style={{ padding:"6px 12px",borderRadius:8,border:"1px solid rgba(255,255,255,0.2)",background:"transparent",color:"rgba(255,255,255,0.6)",fontSize:11.5,cursor:"pointer" }}>ログアウト</button>
+          {hasRev&&thisRevenue>0&&<div style={{fontSize:11.5,fontWeight:700,color:isSelected?GLL:GL,marginBottom:1}}>今月 {fmtYen(thisRevenue)}</div>}
+          <div style={{fontSize:10.5,color:isSelected?"rgba(255,255,255,0.45)":"#a0aab8"}}>
+            {last?`${days}日前 / 累計${co.length}件`:"注文なし"}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  return(
+    <div style={{display:"flex",flexDirection:"column",height:"100vh",overflow:"hidden"}}>
+      {/* ヘッダー */}
+      <div style={{background:"linear-gradient(160deg,#0a2818,#0f3d20)",padding:"12px 20px",flexShrink:0}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div>
+            <div style={{fontSize:9,letterSpacing:"0.2em",color:GLL,fontWeight:700,textTransform:"uppercase"}}>Sales Management System</div>
+            <div style={{fontSize:16,fontWeight:900,color:"#fff"}}>営業管理システム</div>
+            <div style={{fontSize:10.5,color:"rgba(255,255,255,0.4)",marginTop:1}}>{user.email}{salesName?" / "+salesName:""} · 担当 {assignedClinics.length}クリニック</div>
+          </div>
+          <button onClick={()=>window._sfb.signOut()} style={{padding:"6px 12px",borderRadius:8,border:"1px solid rgba(255,255,255,0.2)",background:"transparent",color:"rgba(255,255,255,0.6)",fontSize:11.5,cursor:"pointer"}}>ログアウト</button>
         </div>
       </div>
 
-      {/* 2ペインレイアウト */}
-      <div style={{ flex:1,display:"flex",overflow:"hidden",background:"#f0f4f9" }}>
-        {/* 左：クリニック一覧 */}
-        <div style={{ width:isMobile?0:300,flexShrink:0,background:"#f0f4f9",borderRight:"1.5px solid #e4eaf3",display:isMobile?"none":"flex",flexDirection:"column",overflow:"hidden" }}>
-          <div style={{ padding:"12px 12px 8px",borderBottom:"1px solid #e4eaf3",flexShrink:0,background:"#fff" }}>
-            <div style={{ fontSize:12,fontWeight:800,color:"#0f2744",marginBottom:2 }}>🏥 担当クリニック</div>
-            <button onClick={()=>setSelectedClinic(null)}
-              style={{ width:"100%",padding:"6px",borderRadius:8,border:"1.5px solid",cursor:"pointer",fontSize:11.5,fontWeight:700,marginTop:6,
-                borderColor:!selectedClinic?"#3aa876":"#dde4ef",
-                background:!selectedClinic?"#3aa876":"#fff",
-                color:!selectedClinic?"#fff":"#6a7a8a" }}>
-              📊 全体ダッシュボード
-            </button>
+      {/* 2ペイン */}
+      <div style={{flex:1,display:"flex",overflow:"hidden",background:"#f0f4f9"}}>
+        {/* 左 */}
+        {!isMobile&&(
+          <div style={{width:240,flexShrink:0,background:"#f0f4f9",borderRight:"1.5px solid #e4eaf3",display:"flex",flexDirection:"column",overflow:"hidden"}}>
+            <div style={{padding:"10px 10px 6px",borderBottom:"1px solid #e4eaf3",flexShrink:0,background:"#fff"}}>
+              <button onClick={()=>setSelectedClinic(null)} style={{width:"100%",padding:"7px 10px",borderRadius:8,border:"1.5px solid",cursor:"pointer",fontSize:12,fontWeight:700,borderColor:!selectedClinic?GL:"#dde4ef",background:!selectedClinic?GL:"#fff",color:!selectedClinic?"#fff":"#6a7a8a"}}>
+                📊 全体ダッシュボード
+              </button>
+            </div>
+            <div style={{flex:1,overflowY:"auto",padding:"8px 8px"}}>
+              {assignedClinics.length===0
+                ?<div style={{textAlign:"center",padding:"40px 0",color:"#a0aab8",fontSize:12}}>担当クリニックが未設定です</div>
+                :assignedClinics.map(c=><ClinicItem key={c} clinic={c}/>)
+              }
+            </div>
           </div>
-          <div style={{ flex:1,overflowY:"auto",padding:"10px 10px" }}>
-            {assignedClinics.length === 0 ? (
-              <div style={{ textAlign:"center",padding:"40px 0",color:"#a0aab8",fontSize:12 }}>担当クリニックが設定されていません<br/>管理者に連絡してください</div>
-            ) : assignedClinics.map(clinic => (
-              <ClinicCard key={clinic} clinic={clinic} orders={myOrders} isSelected={selectedClinic===clinic} onClick={()=>setSelectedClinic(clinic)}/>
-            ))}
-          </div>
-        </div>
-
-        {/* 右：詳細 or ダッシュボード */}
-        <div style={{ flex:1,overflowY:"auto",background:"#f0f4f9" }}>
+        )}
+        {/* 右 */}
+        <div style={{flex:1,overflowY:"auto"}}>
           {selectedClinic
-            ? <ClinicDetail clinic={selectedClinic} orders={myOrders} />
-            : <OverviewDashboard clinics={assignedClinics} orders={myOrders} salesName={salesName} />
+            ?<ClinicDetail clinic={selectedClinic} orders={myOrders}/>
+            :<OverviewDashboard clinics={assignedClinics} orders={myOrders} salesName={salesName} onSelectClinic={setSelectedClinic}/>
           }
         </div>
       </div>
 
-      {/* モバイル：下タブ */}
-      {isMobile && (
-        <div style={{ position:"fixed",bottom:0,left:0,right:0,background:"#fff",borderTop:"1.5px solid #e4eaf3",display:"flex",zIndex:50 }}>
-          <button onClick={()=>setSelectedClinic(null)} style={{ flex:1,padding:"10px",border:"none",background:!selectedClinic?"#0f3d20":"#fff",color:!selectedClinic?"#fff":"#4a5568",fontSize:11.5,fontWeight:700,cursor:"pointer" }}>📊 全体</button>
+      {/* モバイル下タブ */}
+      {isMobile&&(
+        <div style={{position:"fixed",bottom:0,left:0,right:0,background:"#fff",borderTop:"1.5px solid #e4eaf3",display:"flex",zIndex:50,overflowX:"auto"}}>
+          <button onClick={()=>setSelectedClinic(null)} style={{flexShrink:0,padding:"9px 14px",border:"none",background:!selectedClinic?"#0a2818":"#fff",color:!selectedClinic?"#fff":"#4a5568",fontSize:11.5,fontWeight:700,cursor:"pointer"}}>📊 全体</button>
           {assignedClinics.map(c=>(
-            <button key={c} onClick={()=>setSelectedClinic(c)} style={{ flex:1,padding:"10px",border:"none",background:selectedClinic===c?"#0f3d20":"#fff",color:selectedClinic===c?"#fff":"#4a5568",fontSize:11,fontWeight:700,cursor:"pointer",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{c}</button>
+            <button key={c} onClick={()=>setSelectedClinic(c)} style={{flexShrink:0,padding:"9px 14px",border:"none",background:selectedClinic===c?"#0a2818":"#fff",color:selectedClinic===c?"#fff":"#4a5568",fontSize:11,fontWeight:700,cursor:"pointer",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:140}}>{c}</button>
           ))}
         </div>
       )}
@@ -521,20 +618,19 @@ function MainScreen({ user }) {
   );
 }
 
-function App() {
-  const [user, setUser] = useState(null);
-  const [authReady, setAuthReady] = useState(false);
-  useEffect(() => {
-    const wait = async () => {
-      let t=0; while(!window._sfb&&t<30){await new Promise(r=>setTimeout(r,200));t++;}
-      window._sfb.onAuthStateChanged(u => { setUser(u); setAuthReady(true); });
+function App(){
+  const [user,setUser]=useState(null);
+  const [authReady,setAuthReady]=useState(false);
+  useEffect(()=>{
+    const wait=async()=>{
+      let t=0;while(!window._sfb&&t<30){await new Promise(r=>setTimeout(r,200));t++;}
+      window._sfb.onAuthStateChanged(u=>{setUser(u);setAuthReady(true);});
     };
     wait();
-  }, []);
-  if (!authReady) return <div style={{ minHeight:"100vh",background:"linear-gradient(160deg,#0a2818,#0f3d20)",display:"flex",alignItems:"center",justifyContent:"center",color:"rgba(255,255,255,0.5)",fontSize:14 }}>読み込み中...</div>;
-  return user ? <MainScreen user={user}/> : <LoginScreen/>;
+  },[]);
+  if(!authReady)return<div style={{minHeight:"100vh",background:"linear-gradient(160deg,#0a2818,#0f3d20)",display:"flex",alignItems:"center",justifyContent:"center",color:"rgba(255,255,255,0.5)",fontSize:14}}>読み込み中...</div>;
+  return user?<MainScreen user={user}/>:<LoginScreen/>;
 }
-
 ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
 </script>
 </body>
