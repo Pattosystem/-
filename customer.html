@@ -506,19 +506,53 @@ function DashboardPanel({ displayOrders, allOrders, currentMonth, onSelectOrder 
       </div>
 
       {/* サマリーカード */}
-      <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:8 }}>
-        {[
-          { label:"対応中商品", value:inProgress, color:"#d4a843", bg:"#fffbef", icon:"📦" },
-          { label:"もうすぐ到着", value:soon, color:"#3aa876", bg:"#f0fdf6", icon:"🚚" },
-          { label:"一部発送済み", value:partial, color:"#e07d20", bg:"#fff8f0", icon:"🔶" },
-          { label:"納品完了", value:completed, color:"#6b8cba", bg:"#f4f6fb", icon:"✅" },
-        ].map(s => (
-          <div key={s.label} style={{ background:s.bg,borderRadius:12,padding:"14px 16px",border:`1.5px solid ${s.color}30` }}>
-            <div style={{ fontSize:10.5,color:s.color,fontWeight:700,marginBottom:4 }}>{s.icon} {s.label}</div>
-            <div style={{ fontSize:26,fontWeight:900,color:s.color }}>{s.value}<span style={{ fontSize:12,marginLeft:3 }}>件</span></div>
+      {(() => {
+        // カードごとに対応商品リストを作成
+        const inProgressList = allProducts.filter(p => p.status < 6 && p.status !== 7);
+        const soonList       = allProducts.filter(p => p.status >= 4 && p.status < 6);
+        const partialList    = allProducts.filter(p => p.status === 7);
+        const completedList  = allProducts.filter(p => p.status === 6);
+
+        const SummaryCard = ({ label, value, color, bg, icon, items }) => {
+          const SHOW = 4; // 折りたたみなしで表示する件数
+          const showItems = items.slice(0, SHOW);
+          const rest = items.length - SHOW;
+          return (
+            <div style={{ background:bg, borderRadius:12, padding:"13px 14px", border:`1.5px solid ${color}30`, display:"flex", flexDirection:"column" }}>
+              <div style={{ fontSize:10.5, color:color, fontWeight:700, marginBottom:3 }}>{icon} {label}</div>
+              <div style={{ fontSize:24, fontWeight:900, color:color, marginBottom: items.length > 0 ? 8 : 0 }}>
+                {value}<span style={{ fontSize:11, marginLeft:3 }}>件</span>
+              </div>
+              {showItems.length > 0 && (
+                <div style={{ borderTop:`1px solid ${color}20`, paddingTop:7, display:"flex", flexDirection:"column", gap:4 }}>
+                  {showItems.map((p, i) => (
+                    <div key={i} style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline", gap:6 }}>
+                      <div style={{ fontSize:10, color:"#4a5568", lineHeight:1.4, flex:1, minWidth:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                        {p.name}
+                      </div>
+                      <div style={{ fontSize:10.5, fontWeight:700, color:color, flexShrink:0, whiteSpace:"nowrap" }}>
+                        {p.qty}
+                      </div>
+                    </div>
+                  ))}
+                  {rest > 0 && (
+                    <div style={{ fontSize:10, color:"#a0aab8", marginTop:2 }}>他 {rest} 商品...</div>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        };
+
+        return (
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
+            <SummaryCard label="対応中商品" value={inProgress} color="#d4a843" bg="#fffbef" icon="📦" items={inProgressList} />
+            <SummaryCard label="もうすぐ到着" value={soon} color="#3aa876" bg="#f0fdf6" icon="🚚" items={soonList} />
+            <SummaryCard label="一部発送済み" value={partial} color="#e07d20" bg="#fff8f0" icon="🔶" items={partialList} />
+            <SummaryCard label="納品完了" value={completed} color="#6b8cba" bg="#f4f6fb" icon="✅" items={completedList} />
           </div>
-        ))}
-      </div>
+        );
+      })()}
 
       {/* リードタイム統計（全期間） */}
       {leadTimes.length > 0 && (
