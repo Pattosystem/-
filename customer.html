@@ -240,6 +240,177 @@ function LoginScreen() {
   );
 }
 
+// ── グローバルリクエストモーダル ──────────────────────────────────────────
+const PROGRESS_STAGES_DEF = [
+  { key:"受付待ち", color:"#8a9ab5", bg:"#f4f6fb", icon:"📋" },
+  { key:"確認中",  color:"#4a7cc7", bg:"#f0f6ff", icon:"👀" },
+  { key:"対応中",  color:"#d4a843", bg:"#fffbef", icon:"🔧" },
+  { key:"完了",    color:"#3aa876", bg:"#f0fdf6", icon:"✅" },
+];
+
+function GlobalRequestModal({ user, myOrders, myRequests, onSent, onClose }) {
+  const [tab, setTab] = useState("new");      // "new" | "history"
+  const [category, setCategory] = useState("その他");
+  const [relatedOrder, setRelatedOrder] = useState("");
+  const [message, setMessage] = useState("");
+  const [sending, setSending] = useState(false);
+  const [sent, setSent] = useState(false);
+
+  const CATEGORIES = ["納期確認", "商品に関する質問", "注文変更・キャンセル", "請求・支払い", "その他"];
+
+  // 注文番号に紐づくクリニック名
+  const clinicOf = (orderId) => myOrders.find(o => o.id === orderId)?.clinic || (myOrders[0]?.clinic || "");
+
+  const handleSend = async () => {
+    if (!message.trim()) return;
+    setSending(true);
+    const clinic = relatedOrder ? clinicOf(relatedOrder) : (myOrders[0]?.clinic || "");
+    try {
+      await window._firebase.sendRequest(relatedOrder || "", clinic, user.email, message.trim(), category);
+      setSent(true); setMessage(""); setRelatedOrder(""); setCategory("その他");
+      onSent();
+      setTimeout(() => setSent(false), 3000);
+    } catch(e) { alert("送信に失敗しました。もう一度お試しください。"); }
+    setSending(false);
+  };
+
+  const allRequests = [...myRequests].sort((a,b) => b.createdAt.localeCompare(a.createdAt));
+
+  const tabStyle = (active) => ({
+    flex:1, padding:"10px 0", border:"none", cursor:"pointer", fontSize:13, fontWeight:700,
+    background: active ? "#fff" : "transparent",
+    color: active ? "#0f2744" : "#8a95a5",
+    borderBottom: active ? "2px solid #4a7cc7" : "2px solid transparent",
+  });
+
+  return (
+    <div style={{ position:"fixed",inset:0,zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16 }}>
+      <div onClick={onClose} style={{ position:"absolute",inset:0,background:"rgba(0,0,0,0.5)" }}/>
+      <div style={{ position:"relative",width:"100%",maxWidth:520,background:"#fff",borderRadius:16,overflow:"hidden",boxShadow:"0 8px 40px rgba(0,0,0,0.25)",maxHeight:"90vh",display:"flex",flexDirection:"column" }}>
+        {/* ヘッダー */}
+        <div style={{ background:"linear-gradient(160deg,#0a1e35,#0f2744)",padding:"18px 20px",flexShrink:0 }}>
+          <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center" }}>
+            <div style={{ fontSize:15,fontWeight:800,color:"#fff" }}>📩 担当者へリクエスト</div>
+            <button onClick={onClose} style={{ border:"none",background:"rgba(255,255,255,0.15)",color:"#fff",borderRadius:20,padding:"5px 12px",fontSize:12,cursor:"pointer",fontWeight:700 }}>✕ 閉じる</button>
+          </div>
+          <div style={{ fontSize:11,color:"rgba(255,255,255,0.45)",marginTop:4 }}>{user.email}</div>
+        </div>
+        {/* タブ */}
+        <div style={{ display:"flex",background:"#f8fafd",borderBottom:"1px solid #edf0f6",flexShrink:0 }}>
+          <button style={tabStyle(tab==="new")} onClick={()=>setTab("new")}>新規リクエスト</button>
+          <button style={tabStyle(tab==="history")} onClick={()=>setTab("history")}>
+            履歴
+            {allRequests.filter(r=>r.status!=="replied").length > 0 &&
+              <span style={{ marginLeft:5,padding:"1px 6px",borderRadius:20,fontSize:10.5,background:"#e07d20",color:"#fff" }}>
+                {allRequests.filter(r=>r.status!=="replied").length}
+              </span>
+            }
+          </button>
+        </div>
+
+        <div style={{ flex:1,overflowY:"auto",padding:"20px" }}>
+          {tab === "new" ? (
+            <div style={{ display:"flex",flexDirection:"column",gap:14 }}>
+              {/* カテゴリ */}
+              <div>
+                <div style={{ fontSize:11.5,color:"#8a95a5",marginBottom:7,fontWeight:600 }}>カテゴリ</div>
+                <div style={{ display:"flex",gap:5,flexWrap:"wrap" }}>
+                  {CATEGORIES.map(c => (
+                    <button key={c} onClick={()=>setCategory(c)}
+                      style={{ padding:"5px 12px",borderRadius:20,border:"1.5px solid",cursor:"pointer",fontSize:12,fontWeight:700,
+                        borderColor:category===c?"#4a7cc7":"#dde4ef",
+                        background:category===c?"#4a7cc7":"#fff",
+                        color:category===c?"#fff":"#6a7a8a" }}>
+                      {c}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {/* 関連注文（任意） */}
+              {myOrders.length > 0 && (
+                <div>
+                  <div style={{ fontSize:11.5,color:"#8a95a5",marginBottom:7,fontWeight:600 }}>関連する注文番号（任意）</div>
+                  <select value={relatedOrder} onChange={e=>setRelatedOrder(e.target.value)}
+                    style={{ width:"100%",padding:"9px 12px",borderRadius:9,border:"1.5px solid #dde4ef",fontSize:13,outline:"none",background:"#fff",color:"#1a2a3a" }}>
+                    <option value="">指定なし</option>
+                    {myOrders.slice(0,20).map(o => (
+                      <option key={o.id} value={o.id}>{o.id}（{o.date}）</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              {/* メッセージ */}
+              <div>
+                <div style={{ fontSize:11.5,color:"#8a95a5",marginBottom:7,fontWeight:600 }}>内容 <span style={{ color:"#e05050" }}>*</span></div>
+                <textarea value={message} onChange={e=>setMessage(e.target.value)} rows={5}
+                  placeholder="ご要望・ご質問・お問い合わせ内容をご記入ください"
+                  style={{ width:"100%",padding:"10px 12px",borderRadius:9,border:"1.5px solid #dde4ef",fontSize:13,outline:"none",resize:"vertical",lineHeight:1.7,color:"#1a2a3a" }}/>
+              </div>
+              {sent && (
+                <div style={{ padding:"12px 14px",background:"#f0fdf6",border:"1.5px solid #3aa876",borderRadius:10,fontSize:13,fontWeight:700,color:"#1a7a50",textAlign:"center" }}>
+                  ✅ リクエストを送信しました
+                </div>
+              )}
+              <button onClick={handleSend} disabled={sending||!message.trim()}
+                style={{ width:"100%",padding:"13px",borderRadius:10,border:"none",background:"#4a7cc7",color:"#fff",fontWeight:800,fontSize:14,cursor:"pointer",opacity:(sending||!message.trim())?0.5:1 }}>
+                {sending?"送信中...":"送信する"}
+              </button>
+            </div>
+          ) : (
+            <div style={{ display:"flex",flexDirection:"column",gap:10 }}>
+              {allRequests.length === 0 && (
+                <div style={{ textAlign:"center",padding:"40px 0",color:"#a0aab8" }}>
+                  <div style={{ fontSize:32,marginBottom:8 }}>📭</div>
+                  <div style={{ fontSize:13 }}>リクエストはまだありません</div>
+                </div>
+              )}
+              {allRequests.map((r,i) => {
+                const prog = PROGRESS_STAGES_DEF.find(s => s.key === (r.progress||"受付待ち")) || PROGRESS_STAGES_DEF[0];
+                const progIdx = PROGRESS_STAGES_DEF.findIndex(s => s.key === prog.key);
+                return (
+                  <div key={i} style={{ background:"#f8fafd",borderRadius:12,border:"1.5px solid #e4eaf3",overflow:"hidden" }}>
+                    <div style={{ padding:"10px 14px",borderBottom:"1px solid #edf0f6" }}>
+                      <div style={{ display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:6 }}>
+                        <div style={{ display:"flex",gap:5,flexWrap:"wrap",alignItems:"center" }}>
+                          {r.orderId&&<span style={{ fontSize:11,fontWeight:700,color:"#4a7cc7" }}>{r.orderId}</span>}
+                          <span style={{ padding:"1px 8px",borderRadius:20,fontSize:10.5,fontWeight:700,background:"#f0f4ff",color:"#4a5568",border:"1px solid #dde4ef" }}>{r.category||"その他"}</span>
+                          <span style={{ padding:"1px 8px",borderRadius:20,fontSize:10.5,fontWeight:700,background:prog.bg,color:prog.color,border:`1px solid ${prog.color}40` }}>{prog.icon} {prog.key}</span>
+                        </div>
+                        <span style={{ fontSize:10,color:"#a0aab8",flexShrink:0,marginLeft:6 }}>{r.createdAt}</span>
+                      </div>
+                      {/* 進捗バー */}
+                      <div style={{ display:"flex",gap:2 }}>
+                        {PROGRESS_STAGES_DEF.map((s,si) => (
+                          <div key={si} style={{ flex:1,height:3,borderRadius:3,background:si<=progIdx?s.color:"#e4eaf3" }}/>
+                        ))}
+                      </div>
+                    </div>
+                    <div style={{ padding:"10px 14px" }}>
+                      <div style={{ fontSize:12.5,color:"#4a5568",lineHeight:1.6,marginBottom:r.reply?10:0 }}>{r.message}</div>
+                      {r.reply && (
+                        <div>
+                          <div style={{ fontSize:11,color:"#8a95a5",marginBottom:5,fontWeight:600 }}>💬 担当者からの返信</div>
+                          <div style={{ padding:"10px 12px",background:"#f0f6ff",borderRadius:9,border:"1px solid #d0e0f4",fontSize:12.5,color:"#1a3a5c",lineHeight:1.7 }}>{r.reply}</div>
+                          <div style={{ fontSize:10,color:"#a0aab8",marginTop:4,textAlign:"right" }}>返信：{r.repliedAt}</div>
+                        </div>
+                      )}
+                      {!r.reply && (
+                        <div style={{ padding:"7px 10px",background:"#fffbef",borderRadius:8,border:"1px solid #e8c95a",fontSize:11.5,color:"#7a6020",marginTop:6 }}>
+                          🕐 担当者が確認中です
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── アカウント設定モーダル ────────────────────────────────────────────────
 function AccountSettingsModal({ user, onClose }) {
   const [tab, setTab] = useState("password");
@@ -839,6 +1010,7 @@ function MainScreen({ user }) {
   const [selectedClinic, setSelectedClinic] = useState("all");
   const [loading, setLoading] = useState(true);
   const [showAccount, setShowAccount] = useState(false);
+  const [showRequestModal, setShowRequestModal] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 900);
   const [lastUpdated, setLastUpdated] = useState(null);
   const [updating, setUpdating] = useState(false);
@@ -923,15 +1095,6 @@ function MainScreen({ user }) {
   // ── ヘッダー ──
   const Header = () => (
     <div style={{ flexShrink:0 }}>
-      {/* Bcartへのリンクバナー */}
-      <a href="https://pitto.i15.bcart.jp" target="_blank" rel="noopener noreferrer"
-        style={{ display:"flex",alignItems:"center",justifyContent:"center",gap:10,padding:"9px 20px",
-          background:"linear-gradient(135deg,#d4a843,#e8c050)",textDecoration:"none",
-          borderBottom:"1px solid rgba(0,0,0,0.1)" }}>
-        <span style={{ fontSize:14 }}>🛒</span>
-        <span style={{ fontSize:12.5,fontWeight:800,color:"#0a1e35" }}>受発注サイト PITTO へ</span>
-        <span style={{ fontSize:11,color:"rgba(10,30,53,0.6)",fontWeight:600 }}>pitto.i15.bcart.jp →</span>
-      </a>
     <div style={{ background:"linear-gradient(160deg,#0a1e35 0%,#0f2744 55%,#1a3d6e 100%)",padding:"16px 20px 18px" }}>
       <div style={{ display:"flex",justifyContent:"space-between",alignItems:"flex-start" }}>
         <div>
@@ -943,7 +1106,15 @@ function MainScreen({ user }) {
           </div>
         </div>
         <div style={{ display:"flex",flexDirection:"column",gap:5,alignItems:"flex-end" }}>
-          <div style={{ display:"flex",gap:6 }}>
+          <div style={{ display:"flex",gap:6,flexWrap:"wrap",justifyContent:"flex-end" }}>
+            <a href="https://pitto.i15.bcart.jp" target="_blank" rel="noopener noreferrer"
+              style={{ padding:"6px 12px",borderRadius:8,border:"1px solid rgba(93,216,138,0.5)",background:"rgba(93,216,138,0.12)",color:"#7df0b0",fontSize:11.5,cursor:"pointer",fontWeight:700,textDecoration:"none",display:"flex",alignItems:"center",gap:4 }}>
+              🛒 PITTO
+            </a>
+            <button onClick={()=>setShowRequestModal(true)}
+              style={{ padding:"6px 12px",borderRadius:8,border:"1px solid rgba(74,124,199,0.5)",background:"rgba(74,124,199,0.12)",color:"#90b8f8",fontSize:11.5,cursor:"pointer",fontWeight:700 }}>
+              📩 リクエスト
+            </button>
             <button onClick={()=>window._firebase.signOut()} style={{ padding:"6px 12px",borderRadius:8,border:"1px solid rgba(255,255,255,0.2)",background:"transparent",color:"rgba(255,255,255,0.6)",fontSize:11.5,cursor:"pointer" }}>ログアウト</button>
             <button onClick={()=>setShowAccount(true)} style={{ padding:"6px 12px",borderRadius:8,border:"1px solid rgba(212,168,67,0.4)",background:"rgba(212,168,67,0.12)",color:"#d4a843",fontSize:11.5,cursor:"pointer",fontWeight:700 }}>⚙️ 設定</button>
           </div>
@@ -1102,6 +1273,15 @@ function MainScreen({ user }) {
         </div>
       )}
       {showAccount && <AccountSettingsModal user={user} onClose={()=>setShowAccount(false)}/>}
+      {showRequestModal && (
+        <GlobalRequestModal
+          user={user}
+          myOrders={myOrders}
+          myRequests={myRequests}
+          onSent={loadData}
+          onClose={()=>setShowRequestModal(false)}
+        />
+      )}
     </div>
   );
 }
