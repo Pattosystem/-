@@ -10,6 +10,7 @@
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
   import { getFirestore, collection, getDocs, getDocsFromServer, onSnapshot, doc, getDoc, setDoc, query, where } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+  import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
   import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged, sendPasswordResetEmail, reauthenticateWithCredential, EmailAuthProvider, updatePassword, verifyBeforeUpdateEmail } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
   const firebaseConfig = {
@@ -24,8 +25,21 @@
   const app = initializeApp(firebaseConfig);
   const db = getFirestore(app);
   const auth = getAuth(app);
+  const storage = getStorage(app);
 
   window._firebase = {
+    uploadFiles: async (files, requestId) => {
+      const urls = [];
+      for (const file of files) {
+        const ext = file.name.split('.').pop();
+        const path = `requests/${requestId}/${Date.now()}_${file.name}`;
+        const storageRef = ref(storage, path);
+        await uploadBytes(storageRef, file);
+        const url = await getDownloadURL(storageRef);
+        urls.push({ name: file.name, url, size: file.size });
+      }
+      return urls;
+    },
     signIn: (email, pw) => signInWithEmailAndPassword(auth, email, pw),
     signOut: () => signOut(auth),
     onAuthStateChanged: (cb) => onAuthStateChanged(auth, cb),
@@ -87,7 +101,7 @@
         return raw.data || {};
       } catch(e) { console.error("loadBindings error:", e); return {}; }
     },
-    sendRequest: async (orderId, clinic, email, message, category) => {
+    sendRequest: async (orderId, clinic, email, message, category, attachments) => {
       const id = `req_${email.replace(/[@.]/g,"_")}_${Date.now()}`;
       await setDoc(doc(db, "requests", id), {
         id, orderId: orderId||"", clinic, email, message,
@@ -95,10 +109,12 @@
         status: "unread",
         progress: "受付待ち",
         reply: "",
+        attachments: attachments || [],
+        replyAttachments: [],
         createdAt: new Date().toLocaleString("ja-JP", {year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"}),
         repliedAt: ""
       });
-      return true;
+      return id;
     },
     loadMyRequests: async (email) => {
       const snap = await getDocs(collection(db, "requests"));
@@ -249,28 +265,50 @@ const PROGRESS_STAGES_DEF = [
 ];
 
 function GlobalRequestModal({ user, myOrders, myRequests, onSent, onClose }) {
-  const [tab, setTab] = useState("new");      // "new" | "history"
+  const [tab, setTab] = useState("new");
   const [category, setCategory] = useState("その他");
   const [relatedOrder, setRelatedOrder] = useState("");
   const [message, setMessage] = useState("");
+  const [files, setFiles] = useState([]);
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState("");
+  const fileRef = useRef();
 
   const CATEGORIES = ["納期確認", "商品に関する質問", "注文変更・キャンセル", "請求・支払い", "その他"];
 
-  // 注文番号に紐づくクリニック名
   const clinicOf = (orderId) => myOrders.find(o => o.id === orderId)?.clinic || (myOrders[0]?.clinic || "");
+
+  const handleFileChange = (e) => {
+    const selected = Array.from(e.target.files);
+    const valid = selected.filter(f => f.size <= 10*1024*1024); // 10MB制限
+    if (valid.length < selected.length) alert("10MB以上のファイルは添付できません");
+    setFiles(prev => [...prev, ...valid]);
+    e.target.value = "";
+  };
+
+  const removeFile = (i) => setFiles(prev => prev.filter((_,idx) => idx !== i));
+
+  const fmtSize = (bytes) => bytes < 1024*1024 ? Math.round(bytes/1024)+"KB" : (bytes/1024/1024).toFixed(1)+"MB";
 
   const handleSend = async () => {
     if (!message.trim()) return;
     setSending(true);
     const clinic = relatedOrder ? clinicOf(relatedOrder) : (myOrders[0]?.clinic || "");
     try {
-      await window._firebase.sendRequest(relatedOrder || "", clinic, user.email, message.trim(), category);
-      setSent(true); setMessage(""); setRelatedOrder(""); setCategory("その他");
+      // 先にリクエストIDを生成してファイルアップロード
+      let attachments = [];
+      if (files.length > 0) {
+        setUploadProgress("ファイルをアップロード中...");
+        const reqId = `req_${user.email.replace(/[@.]/g,"_")}_${Date.now()}`;
+        attachments = await window._firebase.uploadFiles(files, reqId);
+      }
+      setUploadProgress("送信中...");
+      await window._firebase.sendRequest(relatedOrder || "", clinic, user.email, message.trim(), category, attachments);
+      setSent(true); setMessage(""); setRelatedOrder(""); setCategory("その他"); setFiles([]); setUploadProgress("");
       onSent();
       setTimeout(() => setSent(false), 3000);
-    } catch(e) { alert("送信に失敗しました。もう一度お試しください。"); }
+    } catch(e) { alert("送信に失敗しました。もう一度お試しください。"); setUploadProgress(""); }
     setSending(false);
   };
 
@@ -346,6 +384,28 @@ function GlobalRequestModal({ user, myOrders, myRequests, onSent, onClose }) {
                   placeholder="ご要望・ご質問・お問い合わせ内容をご記入ください"
                   style={{ width:"100%",padding:"10px 12px",borderRadius:9,border:"1.5px solid #dde4ef",fontSize:13,outline:"none",resize:"vertical",lineHeight:1.7,color:"#1a2a3a" }}/>
               </div>
+              {/* ファイル添付 */}
+              <div>
+                <div style={{ fontSize:11.5,color:"#8a95a5",marginBottom:7,fontWeight:600 }}>添付ファイル（任意・10MBまで）</div>
+                <input ref={fileRef} type="file" multiple onChange={handleFileChange} style={{ display:"none" }}
+                  accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.png,.jpg,.jpeg,.gif,.zip,.csv"/>
+                <button onClick={()=>fileRef.current.click()}
+                  style={{ padding:"8px 14px",borderRadius:8,border:"1.5px dashed #b0c4de",background:"#f8fafd",fontSize:12.5,cursor:"pointer",color:"#4a7cc7",fontWeight:700,width:"100%" }}>
+                  📎 ファイルを選択
+                </button>
+                {files.length > 0 && (
+                  <div style={{ marginTop:8,display:"flex",flexDirection:"column",gap:5 }}>
+                    {files.map((f,i) => (
+                      <div key={i} style={{ display:"flex",alignItems:"center",gap:8,padding:"6px 10px",background:"#f0f6ff",borderRadius:8,border:"1px solid #d0ddf0" }}>
+                        <span style={{ fontSize:14 }}>📄</span>
+                        <span style={{ flex:1,fontSize:12,color:"#1a2a3a",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{f.name}</span>
+                        <span style={{ fontSize:11,color:"#8a95a5",flexShrink:0 }}>{fmtSize(f.size)}</span>
+                        <button onClick={()=>removeFile(i)} style={{ border:"none",background:"none",color:"#e05050",fontSize:14,cursor:"pointer",padding:0,flexShrink:0 }}>✕</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
               {sent && (
                 <div style={{ padding:"12px 14px",background:"#f0fdf6",border:"1.5px solid #3aa876",borderRadius:10,fontSize:13,fontWeight:700,color:"#1a7a50",textAlign:"center" }}>
                   ✅ リクエストを送信しました
@@ -353,7 +413,7 @@ function GlobalRequestModal({ user, myOrders, myRequests, onSent, onClose }) {
               )}
               <button onClick={handleSend} disabled={sending||!message.trim()}
                 style={{ width:"100%",padding:"13px",borderRadius:10,border:"none",background:"#4a7cc7",color:"#fff",fontWeight:800,fontSize:14,cursor:"pointer",opacity:(sending||!message.trim())?0.5:1 }}>
-                {sending?"送信中...":"送信する"}
+                {sending ? (uploadProgress||"送信中...") : "送信する"}
               </button>
             </div>
           ) : (
@@ -394,9 +454,37 @@ function GlobalRequestModal({ user, myOrders, myRequests, onSent, onClose }) {
                           <div style={{ fontSize:10,color:"#a0aab8",marginTop:4,textAlign:"right" }}>返信：{r.repliedAt}</div>
                         </div>
                       )}
+                      {/* お客様の添付ファイル */}
+                      {r.attachments && r.attachments.length > 0 && (
+                        <div style={{ marginTop:8 }}>
+                          <div style={{ fontSize:11,color:"#8a95a5",marginBottom:4,fontWeight:600 }}>📎 添付ファイル</div>
+                          {r.attachments.map((f,fi) => (
+                            <a key={fi} href={f.url} target="_blank" rel="noopener noreferrer"
+                              style={{ display:"flex",alignItems:"center",gap:6,padding:"5px 9px",background:"#f0f6ff",borderRadius:7,border:"1px solid #d0ddf0",textDecoration:"none",marginBottom:3 }}>
+                              <span style={{ fontSize:13 }}>📄</span>
+                              <span style={{ fontSize:12,color:"#1a6abf",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{f.name}</span>
+                              <span style={{ fontSize:10,color:"#8a95a5",flexShrink:0 }}>↓ DL</span>
+                            </a>
+                          ))}
+                        </div>
+                      )}
                       {!r.reply && (
                         <div style={{ padding:"7px 10px",background:"#fffbef",borderRadius:8,border:"1px solid #e8c95a",fontSize:11.5,color:"#7a6020",marginTop:6 }}>
                           🕐 担当者が確認中です
+                        </div>
+                      )}
+                      {/* 担当者の返信添付ファイル */}
+                      {r.replyAttachments && r.replyAttachments.length > 0 && (
+                        <div style={{ marginTop:8 }}>
+                          <div style={{ fontSize:11,color:"#8a95a5",marginBottom:4,fontWeight:600 }}>📎 担当者からの添付ファイル</div>
+                          {r.replyAttachments.map((f,fi) => (
+                            <a key={fi} href={f.url} target="_blank" rel="noopener noreferrer"
+                              style={{ display:"flex",alignItems:"center",gap:6,padding:"5px 9px",background:"#e8f4ee",borderRadius:7,border:"1px solid #b0d8b8",textDecoration:"none",marginBottom:3 }}>
+                              <span style={{ fontSize:13 }}>📄</span>
+                              <span style={{ fontSize:12,color:"#1a6abf",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{f.name}</span>
+                              <span style={{ fontSize:10,color:"#8a95a5",flexShrink:0 }}>↓ DL</span>
+                            </a>
+                          ))}
                         </div>
                       )}
                     </div>
