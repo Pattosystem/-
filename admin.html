@@ -123,7 +123,11 @@
     },
     replyRequest: async (id, reply) => {
       const now = new Date().toLocaleString("ja-JP", {year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"});
-      await updateDoc(doc(db, "requests", id), { reply, status: "replied", repliedAt: now });
+      await updateDoc(doc(db, "requests", id), { reply, status: "replied", progress: "完了", repliedAt: now });
+      return true;
+    },
+    updateRequestProgress: async (id, progress) => {
+      await updateDoc(doc(db, "requests", id), { progress, status: progress==="完了"?"replied":"read" });
       return true;
     },
     markRequestRead: async (id) => {
@@ -1552,15 +1556,29 @@ function RequestManager(props) {
           <div style={{ padding:"14px 16px" }}>
             <div style={{ display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10 }}>
               <div>
-                <div style={{ display:"flex",alignItems:"center",gap:8,marginBottom:4,flexWrap:"wrap" }}>
-                  <span style={{ fontSize:15,fontWeight:900,color:"#0f2744" }}>{r.orderId}</span>
+                <div style={{ display:"flex",alignItems:"center",gap:6,marginBottom:4,flexWrap:"wrap" }}>
+                  <span style={{ fontSize:14,fontWeight:900,color:"#0f2744" }}>{r.orderId||"—"}</span>
+                  {r.category&&<span style={{ padding:"2px 8px",borderRadius:20,fontSize:11,fontWeight:700,background:"#f0f4ff",color:"#4a5568",border:"1px solid #dde4ef" }}>{r.category}</span>}
                   <span style={{ padding:"3px 9px",borderRadius:20,fontSize:11,fontWeight:700,background:r.status==="replied"?"#e8f0fa":"#fff8e8",color:r.status==="replied"?"#0f2744":"#b87f0a",border:r.status==="replied"?"1px solid #c0d0e8":"1px solid #e8c95a" }}>{r.status==="replied"?"✅ 返信済み":"🚨 未返信"}</span>
                 </div>
                 <div style={{ fontSize:11.5,color:"#8a95a5" }}>{r.clinic}　{r.email}</div>
               </div>
               <div style={{ fontSize:11,color:"#a0aab8",textAlign:"right" }}>{r.createdAt}</div>
             </div>
-            <div style={{ padding:"10px 14px",background:"#fff8f0",borderRadius:9,border:"1px solid #f0c090",fontSize:13,color:"#5a3010",marginBottom:10 }}>📬 {r.message}</div>
+            {/* 進捗ステータス更新 */}
+            <div style={{ display:"flex",gap:5,marginBottom:10,flexWrap:"wrap" }}>
+              <span style={{ fontSize:11,color:"#8a95a5",alignSelf:"center" }}>進捗：</span>
+              {["受付待ち","確認中","対応中","完了"].map(p => (
+                <button key={p} onClick={async()=>{ await window._firebase.updateRequestProgress(r.id, p); setRequests(prev=>prev.map(req=>req.id===r.id?{...req,progress:p}:req)); }}
+                  style={{ padding:"3px 10px",borderRadius:20,border:"1.5px solid",cursor:"pointer",fontSize:11,fontWeight:700,
+                    borderColor:(r.progress||"受付待ち")===p?"#4a7cc7":"#dde4ef",
+                    background:(r.progress||"受付待ち")===p?"#4a7cc7":"#fff",
+                    color:(r.progress||"受付待ち")===p?"#fff":"#6a7a8a" }}>
+                  {p}
+                </button>
+              ))}
+            </div>
+            <div style={{ padding:"10px 14px",background:"#f8fafd",borderRadius:9,border:"1px solid #e4eaf3",fontSize:13,color:"#4a5568",marginBottom:10 }}>📬 {r.message}</div>
             {r.reply && (<div style={{ padding:"10px 14px",background:"#f0f6ff",borderRadius:9,border:"1px solid #d0e0f4",fontSize:13,color:"#1a3a5c",marginBottom:4 }}>💬 {r.reply}</div>)}
             {r.repliedAt && <div style={{ fontSize:11,color:"#a0aab8",marginBottom:8,textAlign:"right" }}>返信日時：{r.repliedAt}</div>}
             {r.status !== "replied" && !replyDone[r.id] && (
