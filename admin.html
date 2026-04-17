@@ -11,6 +11,7 @@
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
   import { getFirestore, collection, getDocs, getDocsFromServer, doc, getDoc, setDoc, deleteDoc, updateDoc, writeBatch } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
   import { getAuth, sendPasswordResetEmail } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+  import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
 
   const firebaseConfig = {
     apiKey: "AIzaSyDNg5KsLABnwJbN5EpvWjpLnkstFzXA1HE",
@@ -24,6 +25,7 @@
   const app = initializeApp(firebaseConfig);
   const db = getFirestore(app);
   const auth = getAuth(app);
+  const storage = getStorage(app);
   const API_KEY = "AIzaSyDNg5KsLABnwJbN5EpvWjpLnkstFzXA1HE";
 
   window._firebase = {
@@ -121,10 +123,24 @@
       snap.forEach(d => list.push(d.data()));
       return list.sort((a,b) => b.createdAt.localeCompare(a.createdAt));
     },
-    replyRequest: async (id, reply) => {
+    replyRequest: async (id, reply, replyAttachments) => {
       const now = new Date().toLocaleString("ja-JP", {year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"});
-      await updateDoc(doc(db, "requests", id), { reply, status: "replied", progress: "完了", repliedAt: now });
+      await updateDoc(doc(db, "requests", id), {
+        reply, status: "replied", progress: "完了", repliedAt: now,
+        replyAttachments: replyAttachments || []
+      });
       return true;
+    },
+    uploadFiles: async (files, requestId) => {
+      const urls = [];
+      for (const file of files) {
+        const path = `requests/${requestId}/reply_${Date.now()}_${file.name}`;
+        const storageRef = ref(storage, path);
+        await uploadBytes(storageRef, file);
+        const url = await getDownloadURL(storageRef);
+        urls.push({ name: file.name, url, size: file.size });
+      }
+      return urls;
     },
     updateRequestProgress: async (id, progress) => {
       await updateDoc(doc(db, "requests", id), { progress, status: progress==="完了"?"replied":"read" });
@@ -1513,8 +1529,10 @@ function RequestManager(props) {
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
   const [replyText, setReplyText] = useState({});
+  const [replyFiles, setReplyFiles] = useState({});  // {requestId: File[]}
   const [replying, setReplying] = useState({});
   const [replyDone, setReplyDone] = useState({});
+  const replyFileRefs = {};
   const waitFB = async () => { let t=0; while(!window._firebase&&t<30){await new Promise(r=>setTimeout(r,200));t++;} };
   useEffect(() => {
     const load = async () => {
@@ -1527,14 +1545,22 @@ function RequestManager(props) {
     };
     load();
   }, []);
+  const fmtSize = (bytes) => bytes < 1024*1024 ? Math.round(bytes/1024)+"KB" : (bytes/1024/1024).toFixed(1)+"MB";
+
   const handleReply = async (id) => {
     const text = replyText[id];
     if (!text || !text.trim()) return;
     setReplying(p => ({...p, [id]: true}));
     try {
-      await window._firebase.replyRequest(id, text.trim());
-      setRequests(prev => prev.map(r => r.id === id ? {...r, reply: text.trim(), status: "replied"} : r));
+      const files = replyFiles[id] || [];
+      let attachments = [];
+      if (files.length > 0) {
+        attachments = await window._firebase.uploadFiles(files, id);
+      }
+      await window._firebase.replyRequest(id, text.trim(), attachments);
+      setRequests(prev => prev.map(r => r.id === id ? {...r, reply: text.trim(), status: "replied", replyAttachments: attachments} : r));
       setReplyDone(p => ({...p, [id]: true}));
+      setReplyFiles(p => ({...p, [id]: []}));
     } catch(e) { alert("送信に失敗しました"); }
     setReplying(p => ({...p, [id]: false}));
   };
@@ -1578,13 +1604,67 @@ function RequestManager(props) {
                 </button>
               ))}
             </div>
-            <div style={{ padding:"10px 14px",background:"#f8fafd",borderRadius:9,border:"1px solid #e4eaf3",fontSize:13,color:"#4a5568",marginBottom:10 }}>📬 {r.message}</div>
+            <div style={{ padding:"10px 14px",background:"#f8fafd",borderRadius:9,border:"1px solid #e4eaf3",fontSize:13,color:"#4a5568",marginBottom:6 }}>📬 {r.message}</div>
+            {/* お客様の添付ファイル */}
+            {r.attachments && r.attachments.length > 0 && (
+              <div style={{ marginBottom:10 }}>
+                <div style={{ fontSize:11,color:"#8a95a5",marginBottom:4,fontWeight:600 }}>📎 お客様の添付ファイル</div>
+                {r.attachments.map((f,fi) => (
+                  <a key={fi} href={f.url} target="_blank" rel="noopener noreferrer"
+                    style={{ display:"flex",alignItems:"center",gap:6,padding:"5px 9px",background:"#f0f6ff",borderRadius:7,border:"1px solid #d0ddf0",textDecoration:"none",marginBottom:3 }}>
+                    <span style={{ fontSize:13 }}>📄</span>
+                    <span style={{ fontSize:12,color:"#1a6abf",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{f.name}</span>
+                    <span style={{ fontSize:10,color:"#8a95a5" }}>↓ DL</span>
+                  </a>
+                ))}
+              </div>
+            )}
             {r.reply && (<div style={{ padding:"10px 14px",background:"#f0f6ff",borderRadius:9,border:"1px solid #d0e0f4",fontSize:13,color:"#1a3a5c",marginBottom:4 }}>💬 {r.reply}</div>)}
+            {/* 管理者の添付ファイル */}
+            {r.replyAttachments && r.replyAttachments.length > 0 && (
+              <div style={{ marginBottom:4 }}>
+                {r.replyAttachments.map((f,fi) => (
+                  <a key={fi} href={f.url} target="_blank" rel="noopener noreferrer"
+                    style={{ display:"flex",alignItems:"center",gap:6,padding:"5px 9px",background:"#e8f4ee",borderRadius:7,border:"1px solid #b0d8b8",textDecoration:"none",marginBottom:3 }}>
+                    <span style={{ fontSize:13 }}>📄</span>
+                    <span style={{ fontSize:12,color:"#1a6abf",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{f.name}</span>
+                    <span style={{ fontSize:10,color:"#8a95a5" }}>↓ DL</span>
+                  </a>
+                ))}
+              </div>
+            )}
             {r.repliedAt && <div style={{ fontSize:11,color:"#a0aab8",marginBottom:8,textAlign:"right" }}>返信日時：{r.repliedAt}</div>}
             {r.status !== "replied" && !replyDone[r.id] && (
               <div style={{ marginTop:8 }}>
                 <div style={{ fontSize:11.5,color:"#8a95a5",marginBottom:6 }}>返信メッセージを入力</div>
                 <textarea value={replyText[r.id]||""} onChange={e=>setReplyText(p=>({...p,[r.id]:e.target.value}))} placeholder="例：〇〇の商品は現在通関中で、約3〜5日でお届け予定です。" rows={3} style={{ width:"100%",padding:"10px 12px",borderRadius:9,border:"1.5px solid #dde4ef",fontSize:13,outline:"none",resize:"vertical",boxSizing:"border-box",marginBottom:8 }}/>
+                {/* 添付ファイル */}
+                <div style={{ marginBottom:8 }}>
+                  <input type="file" multiple id={`replyFile_${r.id}`}
+                    accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.png,.jpg,.jpeg,.gif,.zip,.csv"
+                    onChange={e=>{
+                      const files=Array.from(e.target.files).filter(f=>f.size<=10*1024*1024);
+                      setReplyFiles(p=>({...p,[r.id]:[...(p[r.id]||[]),...files]}));
+                      e.target.value="";
+                    }} style={{ display:"none" }}/>
+                  <label htmlFor={`replyFile_${r.id}`}
+                    style={{ display:"inline-flex",alignItems:"center",gap:6,padding:"6px 12px",borderRadius:8,border:"1.5px dashed #b0c4de",background:"#f8fafd",fontSize:12,cursor:"pointer",color:"#4a7cc7",fontWeight:700 }}>
+                    📎 ファイルを添付
+                  </label>
+                  {(replyFiles[r.id]||[]).length > 0 && (
+                    <div style={{ marginTop:6,display:"flex",flexDirection:"column",gap:4 }}>
+                      {(replyFiles[r.id]||[]).map((f,fi) => (
+                        <div key={fi} style={{ display:"flex",alignItems:"center",gap:6,padding:"5px 9px",background:"#f0f6ff",borderRadius:7,border:"1px solid #d0ddf0" }}>
+                          <span style={{ fontSize:12 }}>📄</span>
+                          <span style={{ flex:1,fontSize:11.5,color:"#1a2a3a",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{f.name}</span>
+                          <span style={{ fontSize:10.5,color:"#8a95a5" }}>{fmtSize(f.size)}</span>
+                          <button onClick={()=>setReplyFiles(p=>({...p,[r.id]:(p[r.id]||[]).filter((_,i)=>i!==fi)}))}
+                            style={{ border:"none",background:"none",color:"#e05050",fontSize:13,cursor:"pointer",padding:0 }}>✕</button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
                 <button onClick={()=>handleReply(r.id)} disabled={replying[r.id]} style={{ width:"100%",padding:"11px",borderRadius:9,border:"none",background:"#0f2744",color:"#fff",fontWeight:800,fontSize:13,cursor:"pointer",opacity:replying[r.id]?0.7:1 }}>{replying[r.id]?"送信中...":"返信を送る"}</button>
               </div>
             )}
