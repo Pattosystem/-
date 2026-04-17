@@ -87,11 +87,13 @@
         return raw.data || {};
       } catch(e) { console.error("loadBindings error:", e); return {}; }
     },
-    sendRequest: async (orderId, clinic, email, message) => {
-      const id = `${orderId}_${Date.now()}`;
+    sendRequest: async (orderId, clinic, email, message, category) => {
+      const id = `req_${email.replace(/[@.]/g,"_")}_${Date.now()}`;
       await setDoc(doc(db, "requests", id), {
-        id, orderId, clinic, email, message,
+        id, orderId: orderId||"", clinic, email, message,
+        category: category || "その他",
         status: "unread",
+        progress: "受付待ち",
         reply: "",
         createdAt: new Date().toLocaleString("ja-JP", {year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"}),
         repliedAt: ""
@@ -421,58 +423,133 @@ function GroupedProductList({ products, orderDate }) {
   );
 }
 
-// ── 急ぎリクエスト ────────────────────────────────────────────────────────
-function UrgentRequest({ order, user, myRequests, onSent }) {
+// ── リクエスト ────────────────────────────────────────────────────────────
+const PROGRESS_STAGES = [
+  { key:"受付待ち",  color:"#8a9ab5", bg:"#f4f6fb", icon:"📋" },
+  { key:"確認中",   color:"#4a7cc7", bg:"#f0f6ff", icon:"👀" },
+  { key:"対応中",   color:"#d4a843", bg:"#fffbef", icon:"🔧" },
+  { key:"完了",     color:"#3aa876", bg:"#f0fdf6", icon:"✅" },
+];
+const CATEGORIES = ["納期確認", "商品に関する質問", "注文変更・キャンセル", "請求・支払い", "その他"];
+
+function RequestPanel({ order, user, myRequests, onSent }) {
   const [open, setOpen] = useState(false);
+  const [category, setCategory] = useState("納期確認");
+  const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
-  const [sent, setSent] = useState(false);
-  const orderRequests = myRequests.filter(r => r.orderId === order.id);
+
+  // この注文のリクエスト（最新順）
+  const orderRequests = myRequests
+    .filter(r => r.orderId === order.id)
+    .sort((a,b) => b.createdAt.localeCompare(a.createdAt));
+
   const handleSend = async () => {
+    if (!message.trim()) return;
     setSending(true);
     try {
-      await window._firebase.sendRequest(order.id, order.clinic, user.email, "具体的な納期の詳細を希望します");
-      setSent(true); setOpen(false); onSent();
+      await window._firebase.sendRequest(order.id, order.clinic, user.email, message.trim(), category);
+      setMessage(""); setCategory("納期確認"); setOpen(false); onSent();
     } catch(e) { alert("送信に失敗しました。もう一度お試しください。"); }
     setSending(false);
   };
+
+  const progressOf = (r) => {
+    const p = PROGRESS_STAGES.find(s => s.key === (r.progress || "受付待ち")) || PROGRESS_STAGES[0];
+    return p;
+  };
+
   return (
-    <div>
-      {orderRequests.map((r,i) => (
-        <div key={i} style={{ background:"#fff",borderRadius:14,border:"1.5px solid #e4eaf3",padding:"16px 18px",boxShadow:"0 2px 10px rgba(10,30,53,0.05)" }}>
-          <div style={{ display:"flex",alignItems:"center",gap:8,marginBottom:10 }}>
-            <span style={{ fontSize:13,fontWeight:800,color:"#0f2744" }}>📬 リクエスト送信済み</span>
-            <span style={{ fontSize:11,color:"#a0aab8" }}>{r.createdAt}</span>
-          </div>
-          <div style={{ padding:"10px 14px",background:"#f8fafd",borderRadius:9,fontSize:13,color:"#4a5568",marginBottom:r.reply?10:0 }}>{r.message}</div>
-          {r.reply ? (
-            <div>
-              <div style={{ fontSize:11.5,color:"#8a95a5",margin:"10px 0 6px",fontWeight:600 }}>💬 担当者からの返信</div>
-              <div style={{ padding:"12px 14px",background:"#f0f6ff",borderRadius:9,border:"1px solid #d0e0f4",fontSize:13,color:"#1a3a5c",lineHeight:1.7 }}>{r.reply}</div>
-              <div style={{ fontSize:11,color:"#a0aab8",marginTop:6,textAlign:"right" }}>返信日時：{r.repliedAt}</div>
-            </div>
-          ) : (
-            <div style={{ padding:"10px 14px",background:"#fffbef",borderRadius:9,border:"1px solid #e8c95a",fontSize:12.5,color:"#7a6020",marginTop:10 }}>🕐 担当者が確認中です。しばらくお待ちください。</div>
-          )}
-        </div>
-      ))}
-      {!sent && orderRequests.length === 0 && (
-        <div>
-          {!open ? (
-            <button onClick={()=>setOpen(true)} style={{ width:"100%",padding:"14px",borderRadius:12,border:"2px solid #e07d20",background:"#fff",color:"#e07d20",fontWeight:800,fontSize:14,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8 }}>🚨 急ぎのリクエストを送る</button>
-          ) : (
-            <div style={{ background:"#fff",borderRadius:14,border:"2px solid #e07d20",padding:"18px",boxShadow:"0 4px 16px rgba(224,125,32,0.15)" }}>
-              <div style={{ fontSize:14,fontWeight:800,color:"#e07d20",marginBottom:8 }}>🚨 急ぎのリクエスト</div>
-              <div style={{ padding:"12px 14px",background:"#fff8f0",borderRadius:9,border:"1px solid #f0c090",fontSize:13,color:"#5a3010",lineHeight:1.7,marginBottom:14 }}>以下の内容で担当者に送信します：<br/><strong>「具体的な納期の詳細を希望します」</strong></div>
-              <div style={{ fontSize:12,color:"#8a95a5",marginBottom:14,lineHeight:1.6 }}>注文番号：{order.id}　{order.clinic}</div>
-              <div style={{ display:"flex",gap:8 }}>
-                <button onClick={()=>setOpen(false)} style={{ flex:1,padding:"11px",borderRadius:9,border:"1.5px solid #dde4ef",background:"#fff",fontSize:14,cursor:"pointer",color:"#666" }}>キャンセル</button>
-                <button onClick={handleSend} disabled={sending} style={{ flex:2,padding:"11px",borderRadius:9,border:"none",background:"#e07d20",color:"#fff",fontWeight:800,fontSize:14,cursor:"pointer",opacity:sending?0.7:1 }}>{sending?"送信中...":"送信する"}</button>
+    <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+      {/* 送信済みリクエスト一覧 */}
+      {orderRequests.map((r,i) => {
+        const prog = progressOf(r);
+        const progIdx = PROGRESS_STAGES.findIndex(s => s.key === prog.key);
+        return (
+          <div key={i} style={{ background:"#fff",borderRadius:14,border:"1.5px solid #e4eaf3",overflow:"hidden",boxShadow:"0 2px 10px rgba(10,30,53,0.05)" }}>
+            {/* リクエストヘッダー */}
+            <div style={{ padding:"12px 16px",borderBottom:"1px solid #f0f4f9" }}>
+              <div style={{ display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:6 }}>
+                <div style={{ display:"flex",alignItems:"center",gap:6,flexWrap:"wrap" }}>
+                  <span style={{ padding:"2px 9px",borderRadius:20,fontSize:11,fontWeight:700,background:"#f0f4ff",color:"#4a5568",border:"1px solid #dde4ef" }}>{r.category||"その他"}</span>
+                  <span style={{ padding:"2px 9px",borderRadius:20,fontSize:11,fontWeight:700,background:prog.bg,color:prog.color,border:`1px solid ${prog.color}40` }}>{prog.icon} {prog.key}</span>
+                </div>
+                <span style={{ fontSize:10.5,color:"#a0aab8",flexShrink:0,marginLeft:8 }}>{r.createdAt}</span>
+              </div>
+              {/* 進捗バー */}
+              <div style={{ display:"flex",gap:3,marginTop:6 }}>
+                {PROGRESS_STAGES.map((s,si) => (
+                  <div key={si} style={{ flex:1,height:4,borderRadius:4,background:si<=progIdx?s.color:"#e4eaf3",transition:"background 0.3s" }}/>
+                ))}
+              </div>
+              <div style={{ display:"flex",justifyContent:"space-between",marginTop:3 }}>
+                {PROGRESS_STAGES.map((s,si) => (
+                  <div key={si} style={{ fontSize:8.5,color:si<=progIdx?s.color:"#c0c8d4",fontWeight:si===progIdx?700:400 }}>{s.key}</div>
+                ))}
               </div>
             </div>
-          )}
+            {/* メッセージ */}
+            <div style={{ padding:"10px 16px" }}>
+              <div style={{ padding:"10px 12px",background:"#f8fafd",borderRadius:9,fontSize:13,color:"#4a5568",lineHeight:1.7,marginBottom:r.reply?10:0 }}>{r.message}</div>
+              {r.reply ? (
+                <div>
+                  <div style={{ fontSize:11.5,color:"#8a95a5",margin:"8px 0 5px",fontWeight:600 }}>💬 担当者からの返信</div>
+                  <div style={{ padding:"12px 14px",background:"#f0f6ff",borderRadius:9,border:"1px solid #d0e0f4",fontSize:13,color:"#1a3a5c",lineHeight:1.7 }}>{r.reply}</div>
+                  <div style={{ fontSize:10.5,color:"#a0aab8",marginTop:5,textAlign:"right" }}>返信：{r.repliedAt}</div>
+                </div>
+              ) : (
+                <div style={{ padding:"8px 12px",background:"#fffbef",borderRadius:9,border:"1px solid #e8c95a",fontSize:12,color:"#7a6020",marginTop:8 }}>
+                  🕐 担当者が確認中です。しばらくお待ちください。
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })}
+
+      {/* 新規リクエスト */}
+      {!open ? (
+        <button onClick={()=>setOpen(true)}
+          style={{ width:"100%",padding:"13px",borderRadius:12,border:"2px solid #4a7cc7",background:"#fff",color:"#4a7cc7",fontWeight:800,fontSize:14,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8 }}>
+          📩 担当者へリクエストを送る
+        </button>
+      ) : (
+        <div style={{ background:"#fff",borderRadius:14,border:"2px solid #4a7cc7",padding:"18px",boxShadow:"0 4px 16px rgba(74,124,199,0.12)" }}>
+          <div style={{ fontSize:14,fontWeight:800,color:"#0f2744",marginBottom:14 }}>📩 担当者へリクエスト</div>
+          {/* カテゴリ選択 */}
+          <div style={{ marginBottom:12 }}>
+            <div style={{ fontSize:11.5,color:"#8a95a5",marginBottom:6 }}>カテゴリ</div>
+            <div style={{ display:"flex",gap:5,flexWrap:"wrap" }}>
+              {CATEGORIES.map(c => (
+                <button key={c} onClick={()=>setCategory(c)}
+                  style={{ padding:"5px 12px",borderRadius:20,border:"1.5px solid",cursor:"pointer",fontSize:12,fontWeight:700,
+                    borderColor:category===c?"#4a7cc7":"#dde4ef",
+                    background:category===c?"#4a7cc7":"#fff",
+                    color:category===c?"#fff":"#6a7a8a" }}>
+                  {c}
+                </button>
+              ))}
+            </div>
+          </div>
+          {/* メッセージ入力 */}
+          <div style={{ marginBottom:14 }}>
+            <div style={{ fontSize:11.5,color:"#8a95a5",marginBottom:6 }}>内容</div>
+            <textarea value={message} onChange={e=>setMessage(e.target.value)} rows={4}
+              placeholder="ご要望・ご質問をご記入ください"
+              style={{ width:"100%",padding:"10px 12px",borderRadius:9,border:"1.5px solid #dde4ef",fontSize:13,outline:"none",resize:"vertical",lineHeight:1.7,color:"#1a2a3a" }}/>
+          </div>
+          <div style={{ fontSize:11.5,color:"#8a95a5",marginBottom:14 }}>
+            注文番号：{order.id}　{order.clinic}
+          </div>
+          <div style={{ display:"flex",gap:8 }}>
+            <button onClick={()=>{setOpen(false);setMessage("");}}
+              style={{ flex:1,padding:"11px",borderRadius:9,border:"1.5px solid #dde4ef",background:"#fff",fontSize:14,cursor:"pointer",color:"#666" }}>キャンセル</button>
+            <button onClick={handleSend} disabled={sending||!message.trim()}
+              style={{ flex:2,padding:"11px",borderRadius:9,border:"none",background:"#4a7cc7",color:"#fff",fontWeight:800,fontSize:14,cursor:"pointer",opacity:(sending||!message.trim())?0.5:1 }}>
+              {sending?"送信中...":"送信する"}
+            </button>
+          </div>
         </div>
       )}
-      {sent && (<div style={{ padding:"14px 18px",background:"#f0fdf6",border:"1.5px solid #3aa876",borderRadius:12,fontSize:13.5,fontWeight:700,color:"#1a7a50",textAlign:"center" }}>✅ リクエストを送信しました。担当者からの返信をお待ちください。</div>)}
     </div>
   );
 }
@@ -744,7 +821,7 @@ function OrderDetailPanel({ order, user, myRequests, onSent, onClose, isMobile }
       <div style={{ flex:1,overflowY:"auto",padding:"16px 16px 32px" }}>
         <GroupedProductList products={order.products} orderDate={order.date} />
         <div style={{ marginTop:14 }}>
-          <UrgentRequest order={order} user={user} myRequests={myRequests} onSent={onSent} />
+          <RequestPanel order={order} user={user} myRequests={myRequests} onSent={onSent} />
         </div>
       </div>
     </div>
@@ -845,7 +922,17 @@ function MainScreen({ user }) {
 
   // ── ヘッダー ──
   const Header = () => (
-    <div style={{ background:"linear-gradient(160deg,#0a1e35 0%,#0f2744 55%,#1a3d6e 100%)",padding:"16px 20px 18px",flexShrink:0 }}>
+    <div style={{ flexShrink:0 }}>
+      {/* Bcartへのリンクバナー */}
+      <a href="https://pitto.i15.bcart.jp" target="_blank" rel="noopener noreferrer"
+        style={{ display:"flex",alignItems:"center",justifyContent:"center",gap:10,padding:"9px 20px",
+          background:"linear-gradient(135deg,#d4a843,#e8c050)",textDecoration:"none",
+          borderBottom:"1px solid rgba(0,0,0,0.1)" }}>
+        <span style={{ fontSize:14 }}>🛒</span>
+        <span style={{ fontSize:12.5,fontWeight:800,color:"#0a1e35" }}>受発注サイト PITTO へ</span>
+        <span style={{ fontSize:11,color:"rgba(10,30,53,0.6)",fontWeight:600 }}>pitto.i15.bcart.jp →</span>
+      </a>
+    <div style={{ background:"linear-gradient(160deg,#0a1e35 0%,#0f2744 55%,#1a3d6e 100%)",padding:"16px 20px 18px" }}>
       <div style={{ display:"flex",justifyContent:"space-between",alignItems:"flex-start" }}>
         <div>
           <div style={{ fontSize:10,letterSpacing:"0.2em",color:"#d4a843",fontWeight:700,marginBottom:3,textTransform:"uppercase" }}>Import Status Tracking</div>
@@ -874,6 +961,7 @@ function MainScreen({ user }) {
           </div>
         </div>
       </div>
+    </div>
     </div>
   );
 
