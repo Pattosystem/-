@@ -1012,12 +1012,8 @@ function parseSalesCSV(text) {
       } else {
         if(c==='"'){inQ=true;}
         else if(c===','){row.push(cur.trim());cur="";}
-        else if(c==='
-'||(c==='
-'&&next==='
-')){
-          if(c==='
-')i++;
+        else if(c==='\n'||(c==='\r'&&next==='\n')){
+          if(c==='\r')i++;
           row.push(cur.trim());cur="";
           if(row.some(f=>f!==""))rows.push(row);
           row=[];
@@ -1032,8 +1028,7 @@ function parseSalesCSV(text) {
   if (allRows.length < 2) return [];
   const headers = allRows[0];
 
-  // 受注CSVのみ対応（Bカート発送IDが先頭なら物流CSVなのでスキップ）
-  if (headers[0] === "Bカート発送ID") return null; // null = 物流CSV
+  if (headers[0] === "Bカート発送ID") return null;
 
   const idx = {
     orderNo:    headers.indexOf("受注番号"),
@@ -1058,8 +1053,7 @@ function parseSalesCSV(text) {
     const orderNo = row[idx.orderNo] || ""; if (!orderNo) continue;
     const cat = idx.category >= 0 ? (row[idx.category]||"") : "";
     if (cat && cat !== "商品") continue;
-    const itemName = (row[idx.itemName]||"").replace(/
-/g," ").trim();
+    const itemName = (row[idx.itemName]||"").replace(/\n/g," ").trim();
     if (!itemName || itemName === "送料" || itemName === "決済手数料") continue;
 
     if (!orderMap[orderNo]) {
@@ -1083,8 +1077,7 @@ function parseSalesCSV(text) {
     const unitPriceVal = idx.unitPrice >= 0 ? parseInt((row[idx.unitPrice]||"0").replace(/[^0-9]/g,""),10)||0 : 0;
     const lineAmountVal = idx.lineAmount >= 0 ? parseInt((row[idx.lineAmount]||"0").replace(/[^0-9]/g,""),10)||0 : 0;
     const amount = lineAmountVal || (unitPriceVal * qtyNum);
-    const rawSpec = (row[idx.spec]||"").replace(/
-/g," ").trim();
+    const rawSpec = (row[idx.spec]||"").replace(/\n/g," ").trim();
     const spec = rawSpec.includes("<") ? "" : rawSpec;
     const displayName = spec ? `${itemName}（${spec}）` : itemName;
 
