@@ -9,7 +9,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-  import { getFirestore, collection, getDocsFromServer, doc, getDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+  import { getFirestore, collection, getDocs, getDocsFromServer, doc, getDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
   import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
   const firebaseConfig = {
     apiKey:"AIzaSyDNg5KsLABnwJbN5EpvWjpLnkstFzXA1HE",
@@ -38,6 +38,12 @@
         if(raw.json) return JSON.parse(raw.json);
         return [];
       }catch(e){return [];}
+    },
+    loadSalesOrders:async()=>{
+      try{
+        const snap=await getDocsFromServer(collection(db,"sales_orders"));
+        const list=[]; snap.forEach(d=>list.push(d.data())); return list;
+      }catch(e){console.error("loadSalesOrders:",e);return [];}
     },
   };
 </script>
@@ -510,13 +516,17 @@ function MainScreen({user}){
   useEffect(()=>{
     const load=async()=>{
       let t=0;while(!window._sfb&&t<30){await new Promise(r=>setTimeout(r,200));t++;}
-      const [orderData,salesBindings]=await Promise.all([window._sfb.loadOrders(),window._sfb.loadSalesBindings()]);
-      setOrders(orderData);
+      const [salesBindings, salesOrderData]=await Promise.all([
+        window._sfb.loadSalesBindings(),
+        window._sfb.loadSalesOrders(),
+      ]);
       const myBinding=salesBindings.find(b=>b.email===user.email);
       if(myBinding){
         setAssignedClinics(Array.isArray(myBinding.clinics)?myBinding.clinics:[]);
         setSalesName(myBinding.name||"");
       }
+      // orders = sales_ordersから取得（物流データは使わない）
+      setOrders(salesOrderData);
       setLoading(false);
     };
     load();
