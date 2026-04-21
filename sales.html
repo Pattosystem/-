@@ -3,2108 +3,644 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>輸入状況 管理ダッシュボード</title>
+<title>営業管理システム</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-  import { getFirestore, collection, getDocs, getDocsFromServer, doc, getDoc, setDoc, deleteDoc, updateDoc, writeBatch } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
-  import { getAuth, sendPasswordResetEmail } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-  import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
-
+  import { getFirestore, collection, getDocs, getDocsFromServer, doc, getDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+  import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
   const firebaseConfig = {
-    apiKey: "AIzaSyDNg5KsLABnwJbN5EpvWjpLnkstFzXA1HE",
-    authDomain: "order-tracking-92681.firebaseapp.com",
-    projectId: "order-tracking-92681",
-    storageBucket: "order-tracking-92681.firebasestorage.app",
-    messagingSenderId: "988787355455",
-    appId: "1:988787355455:web:c7ce248d9fe2178636ed8a"
+    apiKey:"AIzaSyDNg5KsLABnwJbN5EpvWjpLnkstFzXA1HE",
+    authDomain:"order-tracking-92681.firebaseapp.com",
+    projectId:"order-tracking-92681",
+    storageBucket:"order-tracking-92681.firebasestorage.app",
+    messagingSenderId:"988787355455",
+    appId:"1:988787355455:web:c7ce248d9fe2178636ed8a"
   };
-
   const app = initializeApp(firebaseConfig);
   const db = getFirestore(app);
   const auth = getAuth(app);
-  const storage = getStorage(app);
-  const API_KEY = "AIzaSyDNg5KsLABnwJbN5EpvWjpLnkstFzXA1HE";
-
-  window._firebase = {
-    loadAnnotations: async () => {
-      try {
-        const d = await getDoc(doc(db, "appdata", "annotations"));
-        return d.exists() ? (d.data().data || {}) : {};
-      } catch(e) { return {}; }
+  window._sfb = {
+    signIn:(e,p)=>signInWithEmailAndPassword(auth,e,p),
+    signOut:()=>signOut(auth),
+    onAuthStateChanged:(cb)=>onAuthStateChanged(auth,cb),
+    loadOrders:async()=>{
+      const snap=await getDocsFromServer(collection(db,"orders"));
+      const list=[]; snap.forEach(d=>list.push(d.data())); return list;
     },
-    saveAnnotations: async (orders) => {
-      const data = {};
-      orders.forEach(o => {
-        if (o.paymentStatus || o.paymentDate || (o.shipInstructions||[]).length > 0) {
-          data[o.id] = {
-            paymentStatus:    o.paymentStatus    || "",
-            paymentDate:      o.paymentDate      || "",
-            shipInstructions: o.shipInstructions || [],
-          };
-        }
-      });
-      await setDoc(doc(db, "appdata", "annotations"), {
-        data, savedAt: new Date().toISOString(), count: Object.keys(data).length
-      });
-      return true;
-    },
-    loadOrders: async () => {
-      try {
-        const snap = await getDocsFromServer(collection(db, "orders"));
-        const list = [];
-        snap.forEach(d => list.push(d.data()));
-        list.sort((a, b) => String(b.id) > String(a.id) ? -1 : 1);
-        list.reverse();
-        console.log("📦 サーバーから取得:", list.length, "件 / 先頭:", list[0]?.id);
-        return list;
-      } catch(e) {
-        console.error("loadOrders error:", e);
+    loadSalesBindings:async()=>{
+      try{
+        const d=await getDoc(doc(db,"appdata","sales_bindings"));
+        if(!d.exists()) return [];
+        const raw=d.data();
+        if(raw.json) return JSON.parse(raw.json);
         return [];
-      }
+      }catch(e){return [];}
     },
-    saveOrders: async (orders) => {
-      const snap = await getDocs(collection(db, "orders"));
-      for (let i = 0; i < snap.docs.length; i += 50) {
-        const batch = writeBatch(db);
-        snap.docs.slice(i, i+50).forEach(d => batch.delete(d.ref));
-        await batch.commit();
-      }
-      for (let i = 0; i < orders.length; i += 50) {
-        const batch = writeBatch(db);
-        orders.slice(i, i+50).forEach(o => batch.set(doc(db, "orders", String(o.id)), o));
-        await batch.commit();
-      }
-      await window._firebase.saveAnnotations(orders);
-      const verify = await getDocs(collection(db, "orders"));
-      console.log("✅ 保存完了:", verify.size, "/", orders.length, "件");
-      if (verify.size !== orders.length) {
-        throw new Error("保存件数不一致: " + verify.size + "/" + orders.length);
-      }
-      return true;
+    loadSalesOrders:async()=>{
+      try{
+        const snap=await getDocsFromServer(collection(db,"sales_orders"));
+        const list=[]; snap.forEach(d=>list.push(d.data())); return list;
+      }catch(e){console.error("loadSalesOrders:",e);return [];}
     },
-    createClinicAccount: async (email, password) => {
-      const res = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${API_KEY}`, {
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({ email, password, returnSecureToken: false })
-      });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error.message);
-      return true;
-    },
-    sendPasswordReset: (email) => sendPasswordResetEmail(auth, email),
-    changeUserPassword: async (email, currentPassword, newPassword) => {
-      const signInRes = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${API_KEY}`, {
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({ email, password: currentPassword, returnSecureToken: true })
-      });
-      const signInData = await signInRes.json();
-      if (signInData.error) {
-        const msg = signInData.error.message || "";
-        if (msg.includes("INVALID_PASSWORD") || msg.includes("INVALID_LOGIN_CREDENTIALS")) throw new Error("WRONG_PASSWORD");
-        throw new Error(msg);
-      }
-      const updateRes = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:update?key=${API_KEY}`, {
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({ idToken: signInData.idToken, password: newPassword, returnSecureToken: false })
-      });
-      const updateData = await updateRes.json();
-      if (updateData.error) throw new Error(updateData.error.message);
-      return true;
-    },
-    loadRequests: async () => {
-      const snap = await getDocs(collection(db, "requests"));
-      const list = [];
-      snap.forEach(d => list.push(d.data()));
-      return list.sort((a,b) => b.createdAt.localeCompare(a.createdAt));
-    },
-    replyRequest: async (id, reply, replyAttachments) => {
-      const now = new Date().toLocaleString("ja-JP", {year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"});
-      await updateDoc(doc(db, "requests", id), {
-        reply, status: "replied", progress: "完了", repliedAt: now,
-        replyAttachments: replyAttachments || []
-      });
-      return true;
-    },
-    uploadFiles: async (files, requestId) => {
-      const urls = [];
-      for (const file of files) {
-        const path = `requests/${requestId}/reply_${Date.now()}_${file.name}`;
-        const storageRef = ref(storage, path);
-        await uploadBytes(storageRef, file);
-        const url = await getDownloadURL(storageRef);
-        urls.push({ name: file.name, url, size: file.size });
-      }
-      return urls;
-    },
-    updateRequestProgress: async (id, progress) => {
-      await updateDoc(doc(db, "requests", id), { progress, status: progress==="完了"?"replied":"read" });
-      return true;
-    },
-    markRequestRead: async (id) => {
-      await updateDoc(doc(db, "requests", id), { status: "read" });
-    },
-    loadShipPhotos: async () => {
-      try {
-        const snap = await getDocs(collection(db, "ship_photos"));
-        const list = [];
-        snap.forEach(d => list.push(d.data()));
-        return list.sort((a,b) => a.id - b.id);
-      } catch(e) { return []; }
-    },
-    loadAllData: async () => {
-      const [ordersSnap, requestsSnap] = await Promise.all([
-        getDocs(collection(db, "orders")),
-        getDocs(collection(db, "requests")),
-      ]);
-      const orders = [], requests = [];
-      ordersSnap.forEach(d => orders.push(d.data()));
-      requestsSnap.forEach(d => requests.push(d.data()));
-      return { orders, requests };
-    },
-    // 旧互換用（customer.htmlから利用）
-    loadBindings: async () => {
-      try {
-        const d = await getDoc(doc(db, "appdata", "bindings"));
-        if (!d.exists()) return {};
-        const raw = d.data();
-        const parseClinics = (val) => {
-          if (Array.isArray(val)) return val.filter(Boolean);
-          if (typeof val === "string" && val.includes("|")) return val.split("|").filter(Boolean);
-          if (typeof val === "string" && val) return [val];
-          return [];
-        };
-        if (raw.json) {
-          const list = JSON.parse(raw.json);
-          const obj = {};
-          list.forEach(item => { if(item.email) obj[item.email] = Array.isArray(item.clinics) ? item.clinics : []; });
-          return obj;
-        }
-        if (Array.isArray(raw.list)) {
-          const obj = {};
-          raw.list.forEach(item => { if(item.email) obj[item.email] = parseClinics(item.clinics); });
-          return obj;
-        }
-        return raw.data || {};
-      } catch(e) { console.error("loadBindings error:", e); return {}; }
-    },
-    // 管理画面用：name・registeredAt含む完全なリストを返す
-    loadBindingsFull: async () => {
-      try {
-        const d = await getDoc(doc(db, "appdata", "bindings"));
-        if (!d.exists()) return [];
-        const raw = d.data();
-        // 新形式: json文字列
-        if (raw.json) {
-          const list = JSON.parse(raw.json);
-          console.log("📂 loadBindingsFull json:", raw.json);
-          return list.map(item => ({
-            email: item.email || "",
-            name: item.name || "",
-            clinicName: item.clinicName || "",
-            clinics: Array.isArray(item.clinics) ? item.clinics : [],
-            password: item.password || "",
-            registeredAt: item.registeredAt || "",
-          }));
-        }
-        // 旧形式: list配列（clinicsがstring or array）
-        const parseClinics = (val) => {
-          if (Array.isArray(val)) return val.filter(Boolean);
-          if (typeof val === "string" && val.includes("|")) return val.split("|").filter(Boolean);
-          if (typeof val === "string" && val) return [val];
-          return [];
-        };
-        if (Array.isArray(raw.list)) {
-          return raw.list.map(item => ({
-            email: item.email || "",
-            name: item.name || "",
-            clinicName: item.clinicName || "",
-            clinics: parseClinics(item.clinics),
-            password: item.password || "",
-            registeredAt: item.registeredAt || "",
-          }));
-        }
-        return Object.entries(raw.data || {}).map(([email, clinics]) => ({
-          email, name: "", clinicName: "", clinics: parseClinics(clinics), password: "", registeredAt: ""
-        }));
-      } catch(e) { console.error("loadBindingsFull error:", e); return []; }
-    },
-    // name・registeredAt含む完全な形式で保存
-    saveBindingsFull: async (list) => {
-      // list全体をJSON文字列で保存（ネスト配列問題を完全回避）
-      const json = JSON.stringify(list);
-      console.log("💾 saveBindingsFull json:", json);
-      await setDoc(doc(db, "appdata", "bindings"), {
-        json, savedAt: new Date().toISOString(), count: list.length
-      });
-      // 旧互換用キャッシュも更新
-      const obj = {};
-      list.forEach(item => { if(item.email) obj[item.email] = Array.isArray(item.clinics) ? item.clinics : []; });
-      window._bindings = obj;
-      // 保存確認
-      const verify = await getDoc(doc(db, "appdata", "bindings"));
-      const saved = JSON.parse(verify.data().json || "[]");
-      console.log("✅ 保存確認:", saved.length, "件, 1件目clinics:", saved[0]?.clinics);
-      if (saved.length !== list.length) throw new Error(`件数不一致: ${saved.length}/${list.length}`);
-      return true;
-    },
-    // 営業アカウント管理
-    loadSalesBindings: async () => {
-      try {
-        const d = await getDoc(doc(db, "appdata", "sales_bindings"));
-        if (!d.exists()) return [];
-        const raw = d.data();
-        if (raw.json) {
-          return JSON.parse(raw.json).map(item => ({
-            email: item.email||"", name: item.name||"", clinics: Array.isArray(item.clinics)?item.clinics:[], password: item.password||"", registeredAt: item.registeredAt||""
-          }));
-        }
-        return [];
-      } catch(e) { console.error("loadSalesBindings error:", e); return []; }
-    },
-    saveSalesBindings: async (list) => {
-      const json = JSON.stringify(list);
-      await setDoc(doc(db, "appdata", "sales_bindings"), { json, savedAt: new Date().toISOString(), count: list.length });
-      return true;
-    },
-    // 営業用売上データ（sales_orders）
-    loadSalesOrders: async () => {
-      try {
-        const snap = await getDocsFromServer(collection(db, "sales_orders"));
-        const list = [];
-        snap.forEach(d => list.push(d.data()));
-        return list.sort((a,b) => b.id.localeCompare(a.id));
-      } catch(e) { console.error("loadSalesOrders error:", e); return []; }
-    },
-    saveSalesOrders: async (orders) => {
-      // 既存を全削除してから書き直し（50件バッチ）
-      const snap = await getDocs(collection(db, "sales_orders"));
-      for (let i = 0; i < snap.docs.length; i += 50) {
-        const batch = writeBatch(db);
-        snap.docs.slice(i, i+50).forEach(d => batch.delete(d.ref));
-        await batch.commit();
-      }
-      for (let i = 0; i < orders.length; i += 50) {
-        const batch = writeBatch(db);
-        orders.slice(i, i+50).forEach(o => batch.set(doc(db, "sales_orders", String(o.id)), o));
-        await batch.commit();
-      }
-      return true;
-    },
-    createSalesAccount: async (email, password) => {
-      const res = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${API_KEY}`, {
-        method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({ email, password, returnSecureToken: false })
-      });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error.message);
-      return true;
-    },
-    restoreAllData: async (data) => {
-      if (data.annotations) {
-        await setDoc(doc(db, "appdata", "annotations"), {
-          data: data.annotations,
-          savedAt: new Date().toISOString(),
-          restoredFrom: data.exportedAt || ""
-        });
-      } else if (data.orders) {
-        await window._firebase.saveAnnotations(data.orders);
-      }
-      if (data.requests && data.requests.length > 0) {
-        const reqSnap = await getDocs(collection(db, "requests"));
-        for (let i = 0; i < reqSnap.docs.length; i += 50) {
-          const batch = writeBatch(db);
-          reqSnap.docs.slice(i, i+50).forEach(d => batch.delete(d.ref));
-          await batch.commit();
-        }
-        for (let i = 0; i < data.requests.length; i += 50) {
-          const batch = writeBatch(db);
-          data.requests.slice(i, i+50).forEach(r => batch.set(doc(db,"requests",r.id), r));
-          await batch.commit();
-        }
-      }
-      return true;
-    }
   };
 </script>
 <style>
-* { box-sizing:border-box; margin:0; padding:0; }
-body { background:#f0f4f9; font-family:'Hiragino Sans','Noto Sans JP','Yu Gothic',sans-serif; }
-@keyframes shake{0%,100%{transform:translateX(0)}20%{transform:translateX(-8px)}40%{transform:translateX(8px)}60%{transform:translateX(-5px)}80%{transform:translateX(5px)}}
-.drop-zone{border:2.5px dashed #b0c4de;border-radius:14px;padding:32px 20px;text-align:center;cursor:pointer;transition:all 0.2s;background:#f8fafd;}
-.drop-zone:hover,.drop-zone.drag-over{border-color:#d4a843;background:#fffbef;}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:#f0f4f9;font-family:'Hiragino Sans','Noto Sans JP','Yu Gothic',sans-serif;height:100vh;overflow:hidden;}
 </style>
 </head>
 <body>
 <div id="root"></div>
 <script type="text/babel">
-const { useState, useEffect, useRef } = React;
+const {useState,useEffect,useMemo} = React;
 
-const ADMIN_PASSWORD = "Lias0032";
+function parseJpDate(s){
+  if(!s)return null;
+  const m=s.match(/(\d{4})年(\d{2})月(\d{2})日/);
+  if(m)return new Date(parseInt(m[1]),parseInt(m[2])-1,parseInt(m[3]));
+  return null;
+}
+function daysBetween(d1,d2){if(!d1||!d2)return null;return Math.round((d2-d1)/(1000*60*60*24));}
+function toMK(d){const m=(d||"").match(/(\d{4})年(\d{2})月/);return m?`${m[1]}-${m[2]}`:""}
+function fmtMK(k){if(!k)return"";return k.replace("-","年")+"月";}
+function fmtYen(n){if(!n)return"—";return"¥"+n.toLocaleString();}
 
-const STATUS_STAGES = [
-  { id:0, label:"注文受付済み",        icon:"📋", color:"#8a9ab5", short:"受付済" },
-  { id:1, label:"海外発送準備中",       icon:"📦", color:"#6b8cba", short:"準備中" },
-  { id:2, label:"輸出国空港到着",       icon:"✈️", color:"#4a7cc7", short:"空港到着" },
-  { id:3, label:"日本へ航空輸送中",     icon:"🌏", color:"#d4a843", short:"輸送中" },
-  { id:4, label:"日本空港・通関待ち",   icon:"🛂", color:"#e07d20", short:"通関待ち" },
-  { id:5, label:"通関完了・国内配送中", icon:"🚚", color:"#3aa876", short:"配送中" },
-  { id:6, label:"お届け完了",           icon:"✅", color:"#0f2744", short:"完了" },
-  { id:7, label:"一部発送済み",         icon:"🔶", color:"#e07d20", short:"一部発送済" },
+const G="#2d7a4a", GL="#3aa876", GLL="#5dd88a";
+const STATUS_STAGES=[
+  {id:0,short:"受付済",color:"#8a9ab5"},{id:1,short:"準備中",color:"#6b8cba"},
+  {id:2,short:"空港到着",color:"#4a7cc7"},{id:3,short:"輸送中",color:"#d4a843"},
+  {id:4,short:"通関待ち",color:"#e07d20"},{id:5,short:"配送中",color:"#3aa876"},
+  {id:6,short:"完了",color:"#0f2744"},{id:7,short:"一部発送済",color:"#e07d20"},
 ];
 
-function nowStr(){ return new Date().toLocaleString("ja-JP",{year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"}); }
-function toMonthKey(d){ const m=(d||"").match(/(\d{4}年\d{2}月)/); return m?m[1]:"不明"; }
-function groupBy(arr,fn){ return arr.reduce((a,o)=>{ const k=fn(o); if(!a[k])a[k]=[]; a[k].push(o); return a; },{}); }
-
-function parseBcartCSV(text) {
-  function parseCSV(text) {
-    const rows = [];
-    let row = [], cur = "", inQ = false;
-    for (let i = 0; i < text.length; i++) {
-      const c = text[i];
-      const next = text[i+1];
-      if (inQ) {
-        if (c === '"' && next === '"') { cur += '"'; i++; }
-        else if (c === '"') { inQ = false; }
-        else { cur += c; }
-      } else {
-        if (c === '"') { inQ = true; }
-        else if (c === ',') { row.push(cur.trim()); cur = ""; }
-        else if (c === '\n' || (c === '\r' && next === '\n')) {
-          if (c === '\r') i++;
-          row.push(cur.trim()); cur = "";
-          if (row.some(f => f !== "")) rows.push(row);
-          row = [];
-        } else { cur += c; }
-      }
-    }
-    if (cur || row.length) { row.push(cur.trim()); if (row.some(f => f !== "")) rows.push(row); }
-    return rows;
-  }
-
-  const allRows = parseCSV(text);
-  if (allRows.length < 2) return [];
-  const headers = allRows[0];
-  const isLogistics = headers[0]==="Bカート発送ID";
-  const idx={
-    orderNo:    headers.indexOf("受注番号"),
-    company:    headers.indexOf("会社名"),
-    dateTime:   headers.indexOf("受注日時"),
-    itemName:   headers.indexOf("商品名"),
-    spec:       headers.indexOf("製品規格"),
-    qty:        headers.indexOf("受注数"),
-    unit:       headers.indexOf("単位"),
-    shipStatus: headers.indexOf("発送状況"),
-    shipDate:   headers.indexOf("発送日"),
-    delivDate:  headers.indexOf("納品日"),
-    category:   headers.indexOf("明細区分"),
-    unitPrice:  Math.max(headers.indexOf("単価"), headers.indexOf("販売単価")),
-    lineAmount: Math.max(headers.indexOf("商品金額"), headers.indexOf("小計")),
-    orderTotal: Math.max(headers.indexOf("受注金額"), headers.indexOf("合計金額")),
-  };
-  const orderMap={};
-  for(let i=1;i<allRows.length;i++){
-    const row=allRows[i];
-    const orderNo=row[idx.orderNo]||""; if(!orderNo) continue;
-    if(!isLogistics){
-      const cat=row[idx.category]||"";
-      if(cat&&cat!=="商品") continue;
-    }
-    const itemName=(row[idx.itemName]||"").replace(/\n/g," ").trim();
-    if(!itemName||itemName==="送料"||itemName==="決済手数料") continue;
-    if(!orderMap[orderNo]){
-      const rawDate=row[idx.dateTime]||"";
-      const d=rawDate?new Date(rawDate):null;
-      const dateStr=d?`${d.getFullYear()}年${String(d.getMonth()+1).padStart(2,"0")}月${String(d.getDate()).padStart(2,"0")}日`:"";
-      orderMap[orderNo]={ id:orderNo, date:dateStr, clinic:(row[idx.company]||"").trim(), updatedAt:nowStr(), products:[] };
-    }
-    const qtyNum=parseInt(row[idx.qty]||"0",10)||0;
-    const unit=row[idx.unit]||"";
-    const rawSpec=(row[idx.spec]||"").replace(/\n/g," ").trim();
-    const spec = rawSpec.includes("<") ? "" : rawSpec;
-    const displayName=spec?`${itemName}（${spec}）`:itemName;
-    const shipStatus=row[idx.shipStatus]||"";
-    const delivDate=row[idx.delivDate]||"";
-    const shipDate=row[idx.shipDate]||"";
-    const isDelivered=shipStatus==="発送済"&&delivDate;
-    if(isLogistics){
-      const existing=orderMap[orderNo].products.find(p=>p.name===displayName);
-      const record={ qty:qtyNum, unit, status:shipStatus, delivDate, shipDate };
-      if(existing){
-        existing.totalQtyNum=(existing.totalQtyNum||0)+qtyNum;
-        if(isDelivered) existing.deliveredQtyNum=(existing.deliveredQtyNum||0)+qtyNum;
-        existing.deliveryRecords.push(record);
-      } else {
-        orderMap[orderNo].products.push({
-          name: displayName, unit,
-          totalQtyNum: qtyNum,
-          deliveredQtyNum: isDelivered?qtyNum:0,
-          qty: "", status:0, eta:"約30日", note:"",
-          deliveryRecords:[record]
-        });
-      }
-    } else {
-      let autoStatus=0;
-      if(shipStatus==="発送済"&&delivDate) autoStatus=6;
-      else if(shipStatus==="発送済") autoStatus=5;
-      // 金額データ抽出
-      const unitPriceVal = idx.unitPrice>=0 ? parseInt((row[idx.unitPrice]||"0").replace(/[^0-9]/g,""),10)||0 : 0;
-      const lineAmountVal = idx.lineAmount>=0 ? parseInt((row[idx.lineAmount]||"0").replace(/[^0-9]/g,""),10)||0 : 0;
-      const amount = lineAmountVal || (unitPriceVal * qtyNum);
-      // 注文合計（初回行のみ）
-      if(idx.orderTotal>=0 && !orderMap[orderNo].totalAmount) {
-        orderMap[orderNo].totalAmount = parseInt((row[idx.orderTotal]||"0").replace(/[^0-9]/g,""),10)||0;
-      }
-      orderMap[orderNo].products.push({
-        name:displayName, qty:qtyNum&&unit?`${qtyNum}${unit}`:unit||"—",
-        status:autoStatus, eta:autoStatus===6?"—":autoStatus===5?"間もなくお届け":"約30日",
-        note:"", deliveryInfo:"", deliveryRecords:[],
-        unitPrice: unitPriceVal, amount: amount, qtyNum: qtyNum,
-      });
-    }
-  }
-  if(isLogistics){
-    Object.values(orderMap).forEach(order=>{
-      order.products.forEach(p=>{
-        const total=p.totalQtyNum||0;
-        const delivered=p.deliveredQtyNum||0;
-        p.qty=`${total}${p.unit}`;
-        if(delivered>=total&&total>0){ p.status=6; p.eta="—"; p.deliveryInfo=""; }
-        else if(delivered>0){ p.status=7; p.eta="—"; p.deliveryInfo=`${total}${p.unit}中 ${delivered}${p.unit}納品済み`; }
-        else { p.status=0; p.eta="約30日"; p.deliveryInfo=""; }
-        p.deliveryRecords.sort((a,b)=>{
-          if(a.status==="発送済"&&b.status!=="発送済") return -1;
-          if(a.status!=="発送済"&&b.status==="発送済") return 1;
-          return (b.delivDate||"").localeCompare(a.delivDate||"");
-        });
-      });
-    });
-  }
-  return Object.values(orderMap);
-}
-
 // ── ログイン ──────────────────────────────────────────────────────────────
-function LoginScreen({ onLogin }) {
-  const [pw,setPw]=useState(""); const [err,setErr]=useState(false); const [shake,setShake]=useState(false);
-  const go=()=>{ if(pw===ADMIN_PASSWORD){onLogin();}else{setErr(true);setShake(true);setTimeout(()=>setShake(false),500);} };
-  return (
-    <div style={{ minHeight:"100vh",background:"linear-gradient(160deg,#0a1e35,#0f2744,#1a3d6e)",display:"flex",alignItems:"center",justifyContent:"center",padding:24 }}>
-      <div style={{ background:"#fff",borderRadius:20,padding:"40px 32px",width:"100%",maxWidth:360,boxShadow:"0 24px 60px rgba(0,0,0,0.3)",animation:shake?"shake 0.4s ease":"none" }}>
-        <div style={{ textAlign:"center",marginBottom:28 }}>
-          <div style={{ width:56,height:56,borderRadius:16,background:"linear-gradient(135deg,#0f2744,#1a3d6e)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:26,margin:"0 auto 14px" }}>🔐</div>
-          <div style={{ fontSize:20,fontWeight:900,color:"#0f2744",marginBottom:4 }}>管理者ログイン</div>
-          <div style={{ fontSize:12.5,color:"#8a95a5" }}>輸入状況管理ダッシュボード</div>
-        </div>
-        <input type="password" value={pw} onChange={e=>{setPw(e.target.value);setErr(false);}} onKeyDown={e=>e.key==="Enter"&&go()} placeholder="パスワードを入力"
-          style={{ width:"100%",padding:"13px 14px",borderRadius:10,border:`1.5px solid ${err?"#e05050":"#dde4ef"}`,fontSize:16,outline:"none",color:"#0f2744",marginBottom:err?6:14 }}/>
-        {err&&<div style={{ color:"#e05050",fontSize:12,marginBottom:10 }}>パスワードが正しくありません</div>}
-        <button onClick={go} style={{ width:"100%",padding:14,borderRadius:10,border:"none",background:"linear-gradient(135deg,#0f2744,#1a3d6e)",color:"#fff",fontWeight:800,fontSize:15,cursor:"pointer" }}>ログイン</button>
-      </div>
-    </div>
-  );
-}
-
-// ── バックアップ管理 ──────────────────────────────────────────────────────────
-function BackupManager({ orders, downloadBackup }) {
-  const [restoreStatus, setRestoreStatus] = useState("");
-  const [restorePreview, setRestorePreview] = useState(null);
-  const [pendingData, setPendingData] = useState(null);
-  const fileRef = React.useRef();
-  const waitFB = async () => { let t=0; while(!window._firebase&&t<30){await new Promise(r=>setTimeout(r,200));t++;} };
-  const handleManualBackup = async () => { await downloadBackup(orders); };
-  const handleFileRead = (file) => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        const data = JSON.parse(e.target.result);
-        if (!data.orders) { setRestoreStatus("error"); return; }
-        setPendingData(data);
-        setRestorePreview({ exportedAt: data.exportedAt || "不明", orderCount: data.orders.length, requestCount: (data.requests||[]).length, version: data.version || 1 });
-        setRestoreStatus("preview");
-      } catch(e) { setRestoreStatus("parse_error"); }
-    };
-    reader.readAsText(file);
-  };
-  const handleRestore = async () => {
-    if (!pendingData) return;
-    setRestoreStatus("restoring");
+function LoginScreen(){
+  const [email,setEmail]=useState(""); const [pw,setPw]=useState("");
+  const [error,setError]=useState(""); const [loading,setLoading]=useState(false);
+  const waitFB=async()=>{let t=0;while(!window._sfb&&t<30){await new Promise(r=>setTimeout(r,200));t++;}};
+  const handleLogin=async()=>{
+    if(!email||!pw){setError("入力してください");return;}
+    setLoading(true);setError("");
     await waitFB();
-    try {
-      await window._firebase.restoreAllData(pendingData);
-      setRestoreStatus("success");
-      setPendingData(null); setRestorePreview(null);
-      setTimeout(() => { setRestoreStatus(""); window.location.reload(); }, 2000);
-    } catch(e) { setRestoreStatus("restore_error"); }
-  };
-  return (
-    <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
-      <div style={{ background:"#fff", borderRadius:14, border:"1.5px solid #e4eaf3", padding:"20px", boxShadow:"0 2px 10px rgba(10,30,53,0.05)" }}>
-        <div style={{ fontSize:14, fontWeight:800, color:"#0f2744", marginBottom:4 }}>💾 手動バックアップ</div>
-        <div style={{ fontSize:12, color:"#8a95a5", marginBottom:16, lineHeight:1.6 }}>現在のFirebaseデータ（注文・リクエスト・入金状況・出荷指示など全て）をJSONファイルとしてダウンロードします。</div>
-        <div style={{ padding:"10px 14px", background:"#f0f6ff", borderRadius:9, border:"1px solid #c0d8f0", fontSize:12.5, color:"#1a4a90", marginBottom:14 }}>💡 「Firebaseに保存」を押すたびに自動でもバックアップされます。</div>
-        <button onClick={handleManualBackup} style={{ width:"100%", padding:"12px", borderRadius:10, border:"none", background:"linear-gradient(135deg,#0f2744,#1a3d6e)", color:"#fff", fontWeight:800, fontSize:14, cursor:"pointer" }}>📥 今すぐバックアップをダウンロード</button>
-      </div>
-      <div style={{ background:"#fff", borderRadius:14, border:"1.5px solid #e4eaf3", padding:"20px", boxShadow:"0 2px 10px rgba(10,30,53,0.05)" }}>
-        <div style={{ fontSize:14, fontWeight:800, color:"#0f2744", marginBottom:4 }}>🔄 バックアップから復元</div>
-        <div style={{ fontSize:12, color:"#8a95a5", marginBottom:16, lineHeight:1.6 }}>以前ダウンロードしたJSONファイルを選択すると、Firebaseのデータを復元できます。<br/><strong style={{ color:"#e05050" }}>※ 現在のデータは上書きされます。必ず事前にバックアップを取ってください。</strong></div>
-        {restoreStatus === "" && (<><input ref={fileRef} type="file" accept=".json" onChange={e => { if(e.target.files[0]) handleFileRead(e.target.files[0]); }} style={{ display:"none" }}/><button onClick={() => fileRef.current.click()} style={{ width:"100%", padding:"12px", borderRadius:10, border:"1.5px solid #6b8cba", background:"#f4f6fb", color:"#0f2744", fontWeight:700, fontSize:14, cursor:"pointer" }}>📂 バックアップファイルを選択</button></>)}
-        {restoreStatus === "parse_error" && (<div style={{ padding:"12px", background:"#fff0f0", borderRadius:9, color:"#e05050", fontSize:13 }}>❌ ファイルの読み込みに失敗しました。<button onClick={() => setRestoreStatus("")} style={{ display:"block", marginTop:8, padding:"6px 12px", borderRadius:7, border:"1.5px solid #dde4ef", background:"#fff", cursor:"pointer", fontSize:12 }}>やり直す</button></div>)}
-        {restoreStatus === "preview" && restorePreview && (<div><div style={{ padding:"12px 14px", background:"#fffbef", border:"1.5px solid #e8c95a", borderRadius:10, marginBottom:12 }}><div style={{ fontSize:13, fontWeight:800, color:"#7a6020", marginBottom:8 }}>⚠️ 復元内容の確認</div><div style={{ fontSize:12, color:"#5a4010", lineHeight:1.8 }}><div>バックアップ日時：<strong>{restorePreview.exportedAt.replace("T"," ").slice(0,16)}</strong></div><div>注文データ：<strong>{restorePreview.orderCount}件</strong></div><div>リクエスト：<strong>{restorePreview.requestCount}件</strong></div></div></div><div style={{ display:"flex", gap:8 }}><button onClick={() => { setRestoreStatus(""); setPendingData(null); setRestorePreview(null); }} style={{ flex:1, padding:"11px", borderRadius:9, border:"1.5px solid #dde4ef", background:"#fff", fontSize:13, cursor:"pointer", color:"#666" }}>キャンセル</button><button onClick={handleRestore} style={{ flex:2, padding:"11px", borderRadius:9, border:"none", background:"#e05050", color:"#fff", fontWeight:800, fontSize:13, cursor:"pointer" }}>✅ この内容で復元する</button></div></div>)}
-        {restoreStatus === "restoring" && (<div style={{ padding:"16px", textAlign:"center", color:"#4a7cc7", fontSize:13, fontWeight:700 }}>🔄 復元中...</div>)}
-        {restoreStatus === "success" && (<div style={{ padding:"12px", background:"#f0fdf6", borderRadius:9, color:"#1a7a50", fontSize:13, fontWeight:700, textAlign:"center" }}>✅ 復元完了！画面を再読み込みします...</div>)}
-        {restoreStatus === "restore_error" && (<div style={{ padding:"12px", background:"#fff0f0", borderRadius:9, color:"#e05050", fontSize:13 }}>❌ 復元に失敗しました。</div>)}
-      </div>
-    </div>
-  );
-}
-
-// ── クリニック管理（統合版）────────────────────────────────────────────────
-function ClinicManager({ orders }) {
-  // rows: [{email, name, clinicName, clinics:[], password, registeredAt}]
-  const [rows, setRows] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [saveMsg, setSaveMsg] = useState("");
-  // 新規登録フォーム
-  const [addEmail, setAddEmail] = useState("");
-  const [addName, setAddName] = useState("");
-  const [addClinicName, setAddClinicName] = useState("");
-  const [addPassword, setAddPassword] = useState("");
-  const [addShowPw, setAddShowPw] = useState(false);
-  const [addClinics, setAddClinics] = useState([]);
-  const [creating, setCreating] = useState(false);
-  const [createMsg, setCreateMsg] = useState("");
-  // パスワードリセット
-  const [resetStatus, setResetStatus] = useState({});
-  // パスワード変更（行ごと）
-  const [pwEdit, setPwEdit] = useState({}); // {email: {open, newPw, showPw, status}}
-
-  const clinicNames = [...new Set(orders.map(o => o.clinic).filter(Boolean))].sort();
-  const waitFB = async () => { let t=0; while(!window._firebase&&t<30){await new Promise(r=>setTimeout(r,200));t++;} };
-
-  const load = async () => {
-    setLoading(true);
-    await waitFB();
-    try {
-      const list = await window._firebase.loadBindingsFull();
-      setRows(list);
-    } catch(e) { console.error(e); }
-    setLoading(false);
-  };
-  useEffect(() => { load(); }, []);
-
-  // 紐づけ保存
-  const handleSave = async () => {
-        setSaving(true); setSaveMsg("");
-    try {
-      await waitFB();
-      await window._firebase.saveBindingsFull(rows);
-      setSaveMsg("saved");
-      setTimeout(() => setSaveMsg(""), 3000);
-    } catch(e) {
-      console.error(e); setSaveMsg("error");
-      alert("保存エラー: " + e.message);
-    }
-    setSaving(false);
-  };
-
-  // 行操作
-  const removeRow = (email) => setRows(prev => prev.filter(r => r.email !== email));
-  const removeClinic = (email, clinic) => setRows(prev => prev.map(r => r.email === email ? {...r, clinics: r.clinics.filter(c => c !== clinic)} : r));
-  const addClinicToRow = (email, clinic) => { if (!clinic) return; setRows(prev => prev.map(r => r.email === email && !r.clinics.includes(clinic) ? {...r, clinics: [...r.clinics, clinic]} : r)); };
-  const updateField = (email, field, value) => setRows(prev => prev.map(r => r.email === email ? {...r, [field]: value} : r));
-
-  // パスワードリセットメール
-  const handleReset = async (email) => {
-    setResetStatus(p => ({...p, [email]: "sending"}));
-    await waitFB();
-    try {
-      await window._firebase.sendPasswordReset(email);
-      setResetStatus(p => ({...p, [email]: "sent"}));
-      setTimeout(() => setResetStatus(p => ({...p, [email]: ""})), 4000);
-    } catch(e) { setResetStatus(p => ({...p, [email]: "error"})); }
-  };
-
-  // パスワード直接変更
-  const handleChangePw = async (email) => {
-    const state = pwEdit[email] || {};
-    const newPw = state.newPw || "";
-    const manualCurrentPw = state.manualCurrentPw || "";
-    if (!newPw || newPw.length < 6) {
-      setPwEdit(p => ({...p, [email]: {...(p[email]||{}), status:"short"}}));
-      return;
-    }
-    const row = rows.find(r => r.email === email);
-    // 保存済みパスワード優先、なければ管理者入力の現行パスワードを使用
-    const currentPw = row?.password || manualCurrentPw;
-    if (!currentPw) {
-      setPwEdit(p => ({...p, [email]: {...(p[email]||{}), status:"need_current_pw"}}));
-      return;
-    }
-    setPwEdit(p => ({...p, [email]: {...(p[email]||{}), status:"changing"}}));
-    await waitFB();
-    try {
-      await window._firebase.changeUserPassword(email, currentPw, newPw);
-      // Firestoreのパスワードも更新
-      const newRows = rows.map(r => r.email === email ? {...r, password: newPw} : r);
-      setRows(newRows);
-      await window._firebase.saveBindingsFull(newRows);
-      setPwEdit(p => ({...p, [email]: {open:false, newPw:"", showPw:false, manualCurrentPw:"", status:"done"}}));
-      setTimeout(() => setPwEdit(p => ({...p, [email]: {}})), 3000);
-    } catch(e) {
-      const msg = e.message || "";
-      if (msg === "WRONG_PASSWORD") {
-        setPwEdit(p => ({...p, [email]: {...(p[email]||{}), status:"wrong_pw"}}));
-      } else {
-        setPwEdit(p => ({...p, [email]: {...(p[email]||{}), status:"error"}}));
-      }
-    }
-  };
-
-  // 新規アカウント作成
-  const handleCreate = async () => {
-    if (!addEmail.trim() || !addPassword.trim()) return;
-    if (addPassword.length < 6) { setCreateMsg("pw_short"); return; }
-    setCreating(true); setCreateMsg("");
-    await waitFB();
-    try {
-      await window._firebase.createClinicAccount(addEmail.trim(), addPassword.trim());
-      const today = new Date().toLocaleDateString("ja-JP",{year:"numeric",month:"2-digit",day:"2-digit"});
-      const newRow = { email: addEmail.trim(), name: addName.trim(), clinicName: addClinicName.trim(), clinics: addClinics, password: addPassword.trim(), registeredAt: today };
-      const newRows = [...rows.filter(r => r.email !== addEmail.trim()), newRow];
-      setRows(newRows);
-      await window._firebase.saveBindingsFull(newRows);
-      setCreateMsg("success");
-      setAddEmail(""); setAddName(""); setAddClinicName(""); setAddPassword(""); setAddClinics([]);
-    } catch(e) {
-      if (e.message.includes("EMAIL_EXISTS")) setCreateMsg("exists");
-      else { setCreateMsg("error"); console.error(e); }
-    }
-    setCreating(false);
-  };
-
-  const inp = { width:"100%", padding:"8px 10px", borderRadius:8, border:"1.5px solid #dde4ef", fontSize:12.5, outline:"none", color:"#1a2a3a", background:"#fff" };
-
-  return (
-    <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
-
-      {/* ── 売上CSV取込 ── */}
-      <div style={{ background:"#fff", borderRadius:14, border:"1.5px solid #e4eaf3", padding:"20px", boxShadow:"0 2px 10px rgba(10,30,53,0.05)" }}>
-        <div style={{ fontSize:14, fontWeight:800, color:"#0f2744", marginBottom:4 }}>📊 売上データ（受注CSV取込）</div>
-        <div style={{ fontSize:12, color:"#8a95a5", marginBottom:14, lineHeight:1.6 }}>
-          bcartの受注CSVを取り込むと、sales.htmlで営業担当者が売上を確認できます。物流CSVとは完全に分離して管理します。
-        </div>
-        {!csvLoading && salesOrders.length > 0 && (
-          <div style={{ marginBottom:14, padding:"12px 14px", background:"#f0fdf6", border:"1.5px solid #3aa87640", borderRadius:10 }}>
-            <div style={{ fontSize:12, fontWeight:700, color:"#1a7a50", marginBottom:8 }}>✅ 保存済み：{salesOrders.length}件の受注データ</div>
-            <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-              {Object.entries(salesSummary).slice(0,6).map(([clinic, data]) => (
-                <div key={clinic} style={{ padding:"5px 10px", background:"#fff", borderRadius:8, border:"1px solid #c0d8c0", fontSize:11.5 }}>
-                  <span style={{ fontWeight:700, color:"#0f2744" }}>{clinic}</span>
-                  <span style={{ color:"#3aa876", marginLeft:6, fontWeight:700 }}>{fmtYen(data.total)}</span>
-                  <span style={{ color:"#a0aab8", marginLeft:4 }}>({data.orders}件)</span>
-                </div>
-              ))}
-              {Object.keys(salesSummary).length > 6 && <span style={{ fontSize:11, color:"#a0aab8", alignSelf:"center" }}>他 {Object.keys(salesSummary).length-6} クリニック...</span>}
-            </div>
-          </div>
-        )}
-        <div style={{ marginBottom:10 }}>
-          <div style={{ fontSize:11.5, color:"#8a95a5", marginBottom:6 }}>文字コード</div>
-          <div style={{ display:"flex", gap:8 }}>
-            {[["shift_jis","Shift-JIS（標準）"],["utf-8","UTF-8"]].map(([v,l]) => (
-              <button key={v} onClick={() => setCsvEncoding(v)}
-                style={{ padding:"6px 14px", borderRadius:8, border:"1.5px solid", fontSize:12.5, cursor:"pointer",
-                  borderColor:csvEncoding===v?"#0f2744":"#dde4ef", background:csvEncoding===v?"#0f2744":"#fff",
-                  color:csvEncoding===v?"#fff":"#555", fontWeight:csvEncoding===v?700:400 }}>{l}</button>
-            ))}
-          </div>
-        </div>
-        {!csvPreview && (
-          <>
-            <input ref={csvFileRef} type="file" accept=".csv"
-              onChange={e => { if(e.target.files[0]) handleSalesCsvRead(e.target.files[0]); e.target.value=""; }}
-              style={{ display:"none" }}/>
-            <button onClick={() => csvFileRef.current.click()}
-              style={{ width:"100%", padding:"12px", borderRadius:10, border:"1.5px dashed #6b8cba", background:"#f4f6fb", color:"#0f2744", fontWeight:700, fontSize:14, cursor:"pointer" }}>
-              📂 受注CSVファイルを選択
-            </button>
-          </>
-        )}
-        {csvError && <div style={{ padding:"10px 14px", background:"#fff0f0", border:"1px solid #e0c0c0", borderRadius:9, fontSize:13, color:"#c05050", marginTop:10 }}>⚠ {csvError}</div>}
-        {csvPreview && (
-          <div>
-            <div style={{ padding:"10px 14px", background:"#f0fdf6", border:"1px solid #a0d8b8", borderRadius:9, marginBottom:12, fontSize:13, color:"#1a7a50", fontWeight:600 }}>
-              ✅ {csvPreview.length}件の受注データを読み込みました（既存データとマージして保存します）
-            </div>
-            <div style={{ maxHeight:200, overflowY:"auto", border:"1.5px solid #e4eaf3", borderRadius:10, marginBottom:12 }}>
-              <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
-                <thead><tr style={{ background:"#0f2744" }}>{["受注番号","日付","クリニック","売上金額","商品数"].map(h=>(
-                  <th key={h} style={{ padding:"6px 10px", color:"rgba(255,255,255,0.85)", fontWeight:700, textAlign:"left", whiteSpace:"nowrap" }}>{h}</th>
-                ))}</tr></thead>
-                <tbody>{csvPreview.map((o,i)=>(
-                  <tr key={i} style={{ borderBottom:"1px solid #f0f4f9", background:i%2===0?"#fff":"#f9fafc" }}>
-                    <td style={{ padding:"6px 10px", fontWeight:700, color:"#0f2744" }}>{o.id}</td>
-                    <td style={{ padding:"6px 10px", color:"#6a7a8a" }}>{o.date}</td>
-                    <td style={{ padding:"6px 10px", color:"#1a2a3a" }}>{o.clinic}</td>
-                    <td style={{ padding:"6px 10px", fontWeight:700, color:o.totalAmount>0?"#3aa876":"#a0aab8" }}>{fmtYen(o.totalAmount)}</td>
-                    <td style={{ padding:"6px 10px", color:"#6a7a8a" }}>{o.products.length}種</td>
-                  </tr>
-                ))}</tbody>
-              </table>
-            </div>
-            <div style={{ display:"flex", gap:8 }}>
-              <button onClick={() => { setCsvPreview(null); setCsvError(""); }}
-                style={{ flex:1, padding:"11px", borderRadius:9, border:"1.5px solid #dde4ef", background:"#fff", fontSize:13, cursor:"pointer", color:"#666" }}>やり直す</button>
-              <button onClick={handleSalesCsvSave} disabled={csvSaving}
-                style={{ flex:2, padding:"11px", borderRadius:9, border:"none",
-                  background:csvSaving?"#8a9ab5":"linear-gradient(135deg,#1a6a3a,#2a9a5a)",
-                  color:"#fff", fontWeight:800, fontSize:13, cursor:"pointer", opacity:csvSaving?0.7:1 }}>
-                {csvSaving?"保存中...":csvPreview.length+"件を保存する"}
-              </button>
-            </div>
-          </div>
-        )}
-        {csvMsg==="saved" && <div style={{ marginTop:10, padding:"8px 12px", background:"#f0fdf6", border:"1px solid #3aa876", borderRadius:8, fontSize:12, color:"#1a7a50", textAlign:"center" }}>✅ 売上データを保存しました。sales.htmlに反映されます。</div>}
-      </div>
-
-      {/* ── アカウント一覧 ── */}
-      <div style={{ background:"#fff", borderRadius:14, border:"1.5px solid #e4eaf3", padding:"20px", boxShadow:"0 2px 10px rgba(10,30,53,0.05)" }}>
-        <div style={{ fontSize:14, fontWeight:800, color:"#0f2744", marginBottom:4 }}>👥 登録済みアカウント一覧</div>
-        <div style={{ fontSize:12, color:"#8a95a5", marginBottom:16, lineHeight:1.6 }}>クリニック名・担当者名・パスワードの編集、紐づけ設定ができます。</div>
-
-        {loading ? (
-          <div style={{ textAlign:"center", padding:"20px", color:"#8a95a5" }}>読込中...</div>
-        ) : rows.length === 0 ? (
-          <div style={{ textAlign:"center", padding:"20px", color:"#a0aab8", fontSize:13 }}>まだ登録されていません</div>
-        ) : (
-          <div style={{ display:"flex", flexDirection:"column", gap:10, marginBottom:14 }}>
-            {rows.map(row => {
-              const pw = pwEdit[row.email] || {};
-              const rs = resetStatus[row.email] || "";
-              return (
-                <div key={row.email} style={{ border:"1.5px solid #e4eaf3", borderRadius:10, padding:"14px", background:"#fafbfd" }}>
-                  {/* 基本情報グリッド */}
-                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8, marginBottom:10 }}>
-                    <div>
-                      <div style={{ fontSize:10.5, color:"#8a95a5", marginBottom:3, fontWeight:600 }}>メールアドレス</div>
-                      <div style={{ fontSize:12.5, fontWeight:700, color:"#1a2a3a" }}>{row.email}</div>
-                      {row.registeredAt && <div style={{ fontSize:10, color:"#a0aab8", marginTop:2 }}>登録：{row.registeredAt}</div>}
-                    </div>
-                    <div>
-                      <div style={{ fontSize:10.5, color:"#8a95a5", marginBottom:3, fontWeight:600 }}>クリニック名</div>
-                      <input value={row.clinicName} onChange={e => updateField(row.email, "clinicName", e.target.value)} placeholder="クリニック名を入力" style={inp} />
-                    </div>
-                    <div>
-                      <div style={{ fontSize:10.5, color:"#8a95a5", marginBottom:3, fontWeight:600 }}>担当者名</div>
-                      <input value={row.name} onChange={e => updateField(row.email, "name", e.target.value)} placeholder="担当者名を入力" style={inp} />
-                    </div>
-                  </div>
-                  {/* 紐づけクリニック */}
-                  <div style={{ marginBottom:10 }}>
-                    <div style={{ fontSize:10.5, color:"#8a95a5", marginBottom:5, fontWeight:600 }}>紐づいたクリニック（注文データ）</div>
-                    <div style={{ display:"flex", gap:5, flexWrap:"wrap", alignItems:"center" }}>
-                      {row.clinics.length === 0 && <span style={{ fontSize:11, color:"#e05050", fontWeight:700, padding:"2px 7px", borderRadius:20, background:"#fff0f0", border:"1px solid #e0c0c0" }}>⚠ 未設定</span>}
-                      {row.clinics.map(c => (
-                        <div key={c} style={{ display:"flex", alignItems:"center", gap:3, padding:"3px 9px", borderRadius:20, background:"#e8f0ff", border:"1.5px solid #4a7cc7" }}>
-                          <span style={{ fontSize:11.5, color:"#0f2744", fontWeight:700 }}>{c}</span>
-                          <button onClick={() => removeClinic(row.email, c)} style={{ border:"none", background:"none", color:"#e05050", fontWeight:900, fontSize:13, cursor:"pointer", padding:0 }}>×</button>
-                        </div>
-                      ))}
-                      {clinicNames.filter(n => !row.clinics.includes(n)).length > 0 && (
-                        <select onChange={e => { if(e.target.value) addClinicToRow(row.email, e.target.value); e.target.value=""; }}
-                          style={{ padding:"3px 8px", borderRadius:20, border:"1.5px dashed #4a7cc7", fontSize:11, color:"#4a7cc7", background:"#fff", cursor:"pointer", outline:"none" }}>
-                          <option value="">＋ 追加</option>
-                          {clinicNames.filter(n => !row.clinics.includes(n)).map(n => <option key={n} value={n}>{n}</option>)}
-                        </select>
-                      )}
-                    </div>
-                  </div>
-                  {/* パスワード管理 */}
-                  <div style={{ background:"#f0f4f9", borderRadius:8, padding:"10px 12px", marginBottom:8 }}>
-                    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom: pw.open ? 10 : 0 }}>
-                      <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-                        <span style={{ fontSize:10.5, color:"#8a95a5", fontWeight:600 }}>パスワード</span>
-                        <span style={{ fontSize:12, color: row.password ? "#1a2a3a" : "#a0aab8", fontFamily:"monospace", letterSpacing:"0.1em" }}>
-                          {row.password ? "●".repeat(Math.min(row.password.length, 10)) : "（未設定）"}
-                        </span>
-                      </div>
-                      <div style={{ display:"flex", gap:6 }}>
-                        <button onClick={() => setPwEdit(p => ({...p, [row.email]: {...(p[row.email]||{}), open: !pw.open, status:""}}))}
-                          style={{ padding:"4px 10px", borderRadius:6, border:"1.5px solid #4a7cc7", background: pw.open?"#4a7cc7":"#f0f6ff", color: pw.open?"#fff":"#1a4a90", fontSize:11, cursor:"pointer", fontWeight:700 }}>
-                          {pw.open ? "✕ 閉じる" : "🔑 変更"}
-                        </button>
-                        {rs === "sent" ? (
-                          <span style={{ fontSize:11, color:"#1a7a50", fontWeight:700, padding:"4px 8px", background:"#f0fdf6", borderRadius:6 }}>✅ メール送信済み</span>
-                        ) : (
-                          <button onClick={() => handleReset(row.email)} disabled={rs==="sending"}
-                            style={{ padding:"4px 10px", borderRadius:6, border:"1.5px solid #8a9ab5", background:"#f4f6fb", fontSize:11, cursor:"pointer", color:"#4a5a6a", fontWeight:700, opacity:rs==="sending"?0.6:1 }}>
-                            {rs==="sending" ? "送信中..." : "📧 リセットメール"}
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                    {pw.open && (
-                      <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
-                        {/* パスワード未保存の場合：現行パスワード入力欄を表示 */}
-                        {!row.password && (
-                          <div>
-                            <div style={{ fontSize:10.5, color:"#e07d20", fontWeight:600, marginBottom:4 }}>
-                              ⚠ このアカウントのパスワードは管理画面に未保存です。現在のパスワードを入力してください
-                            </div>
-                            <div style={{ position:"relative" }}>
-                              <input
-                                type={pw.showCurrentPw ? "text" : "password"}
-                                value={pw.manualCurrentPw || ""}
-                                onChange={e => setPwEdit(p => ({...p, [row.email]: {...(p[row.email]||{}), manualCurrentPw: e.target.value, status:""}}))}
-                                placeholder="現在のパスワード"
-                                style={{ ...inp, paddingRight:36 }}
-                              />
-                              <button onClick={() => setPwEdit(p => ({...p, [row.email]: {...(p[row.email]||{}), showCurrentPw: !pw.showCurrentPw}}))}
-                                style={{ position:"absolute", right:8, top:"50%", transform:"translateY(-50%)", border:"none", background:"none", cursor:"pointer", fontSize:13, color:"#8a95a5" }}>
-                                {pw.showCurrentPw ? "🙈" : "👁"}
-                              </button>
-                            </div>
-                          </div>
-                        )}
-                        {/* 新パスワード + 変更ボタン */}
-                        <div style={{ display:"flex", gap:8, alignItems:"center" }}>
-                          <div style={{ flex:1, position:"relative" }}>
-                            <input
-                              type={pw.showPw ? "text" : "password"}
-                              value={pw.newPw || ""}
-                              onChange={e => setPwEdit(p => ({...p, [row.email]: {...(p[row.email]||{}), newPw: e.target.value, status:""}}))}
-                              placeholder="新しいパスワード（6文字以上）"
-                              style={{ ...inp, paddingRight:36 }}
-                            />
-                            <button onClick={() => setPwEdit(p => ({...p, [row.email]: {...(p[row.email]||{}), showPw: !pw.showPw}}))}
-                              style={{ position:"absolute", right:8, top:"50%", transform:"translateY(-50%)", border:"none", background:"none", cursor:"pointer", fontSize:13, color:"#8a95a5" }}>
-                              {pw.showPw ? "🙈" : "👁"}
-                            </button>
-                          </div>
-                          <button onClick={() => handleChangePw(row.email)} disabled={pw.status==="changing"}
-                            style={{ padding:"8px 14px", borderRadius:8, border:"none", background:"#0f2744", color:"#fff", fontWeight:700, fontSize:12.5, cursor:"pointer", whiteSpace:"nowrap", opacity:pw.status==="changing"?0.6:1 }}>
-                            {pw.status==="changing" ? "変更中..." : "変更する"}
-                          </button>
-                        </div>
-                        {pw.status === "done" && <div style={{ fontSize:12, color:"#1a7a50", fontWeight:700 }}>✅ パスワードを変更しました</div>}
-                        {pw.status === "short" && <div style={{ fontSize:12, color:"#e05050" }}>⚠ パスワードは6文字以上で入力してください</div>}
-                        {pw.status === "need_current_pw" && <div style={{ fontSize:12, color:"#e05050" }}>⚠ 現在のパスワードを入力してください</div>}
-                        {pw.status === "wrong_pw" && <div style={{ fontSize:12, color:"#e05050" }}>❌ 現在のパスワードが正しくありません。📧 リセットメールを使用してください</div>}
-                        {pw.status === "error" && <div style={{ fontSize:12, color:"#e05050" }}>❌ 変更に失敗しました</div>}
-                      </div>
-                    )}
-                    {pw.status === "done" && !pw.open && <div style={{ marginTop:4, fontSize:12, color:"#1a7a50", fontWeight:700 }}>✅ パスワードを変更しました</div>}
-                  </div>
-                  {/* 削除ボタン */}
-                  <div style={{ textAlign:"right" }}>
-                    <button onClick={() => removeRow(row.email)}
-                      style={{ padding:"4px 10px", borderRadius:6, border:"1.5px solid #e0c0c0", background:"#fff8f8", fontSize:11, cursor:"pointer", color:"#e05050", fontWeight:700 }}>
-                      アカウント削除
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        {/* 保存ボタン */}
-        {!loading && (
-          <button onClick={handleSave} disabled={saving}
-            style={{ width:"100%", padding:"13px", borderRadius:10, border:"none",
-              background: saveMsg==="saved"?"#3aa876":saveMsg==="error"?"#e05050":"linear-gradient(135deg,#0f2744,#1a3d6e)",
-              color:"#fff", fontWeight:800, fontSize:14, cursor:"pointer", opacity:saving?0.7:1 }}>
-            {saving?"保存中...":saveMsg==="saved"?"✅ 保存しました！":saveMsg==="error"?"❌ エラー":"💾 変更を保存する"}
-          </button>
-        )}
-        {saveMsg==="saved" && <div style={{ marginTop:8, padding:"8px 12px", background:"#f0fdf6", border:"1px solid #3aa876", borderRadius:8, fontSize:12, color:"#1a7a50", textAlign:"center" }}>Firebaseに保存しました。</div>}
-      </div>
-
-      {/* ── 新規アカウント登録 ── */}
-      <div style={{ background:"#fff", borderRadius:14, border:"1.5px solid #e4eaf3", padding:"20px", boxShadow:"0 2px 10px rgba(10,30,53,0.05)" }}>
-        <div style={{ fontSize:14, fontWeight:800, color:"#0f2744", marginBottom:4 }}>➕ 新規クリニックアカウントを登録</div>
-        <div style={{ fontSize:12, color:"#8a95a5", marginBottom:16, lineHeight:1.6 }}>メールアドレスとパスワードを設定してアカウントを作成します。登録後、紐づけ一覧に自動追加されます。</div>
-
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:10 }}>
-          <div>
-            <div style={{ fontSize:11.5, color:"#8a95a5", marginBottom:4 }}>メールアドレス <span style={{ color:"#e05050" }}>*</span></div>
-            <input value={addEmail} onChange={e=>{setAddEmail(e.target.value);setCreateMsg("");}} placeholder="clinic@example.com" type="email"
-              style={{ width:"100%", padding:"9px 11px", borderRadius:8, border:"1.5px solid #dde4ef", fontSize:13, outline:"none", color:"#1a2a3a" }} />
-          </div>
-          <div>
-            <div style={{ fontSize:11.5, color:"#8a95a5", marginBottom:4 }}>パスワード <span style={{ color:"#e05050" }}>*</span></div>
-            <div style={{ position:"relative" }}>
-              <input value={addPassword} onChange={e=>{setAddPassword(e.target.value);setCreateMsg("");}} placeholder="6文字以上" type={addShowPw?"text":"password"}
-                style={{ width:"100%", padding:"9px 36px 9px 11px", borderRadius:8, border:"1.5px solid #dde4ef", fontSize:13, outline:"none", color:"#1a2a3a" }} />
-              <button onClick={()=>setAddShowPw(p=>!p)} style={{ position:"absolute", right:8, top:"50%", transform:"translateY(-50%)", border:"none", background:"none", cursor:"pointer", fontSize:14, color:"#8a95a5" }}>
-                {addShowPw ? "🙈" : "👁"}
-              </button>
-            </div>
-          </div>
-        </div>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:10 }}>
-          <div>
-            <div style={{ fontSize:11.5, color:"#8a95a5", marginBottom:4 }}>クリニック名</div>
-            <input value={addClinicName} onChange={e=>setAddClinicName(e.target.value)} placeholder="例：〇〇クリニック"
-              style={{ width:"100%", padding:"9px 11px", borderRadius:8, border:"1.5px solid #dde4ef", fontSize:13, outline:"none", color:"#1a2a3a" }} />
-          </div>
-          <div>
-            <div style={{ fontSize:11.5, color:"#8a95a5", marginBottom:4 }}>担当者名</div>
-            <input value={addName} onChange={e=>setAddName(e.target.value)} placeholder="例：山田 太郎"
-              style={{ width:"100%", padding:"9px 11px", borderRadius:8, border:"1.5px solid #dde4ef", fontSize:13, outline:"none", color:"#1a2a3a" }} />
-          </div>
-        </div>
-        <div style={{ marginBottom:12 }}>
-          <div style={{ fontSize:11.5, color:"#8a95a5", marginBottom:4 }}>紐づけるクリニック（注文データ）</div>
-          {clinicNames.length === 0 ? (
-            <div style={{ padding:"10px", background:"#fff8e8", borderRadius:8, fontSize:12, color:"#7a6020", border:"1px solid #e8c95a" }}>⚠ 先にCSVを取込んで「Firebaseに保存」してください</div>
-          ) : (
-            <select onChange={e => { const v=e.target.value; if(v && !addClinics.includes(v)) setAddClinics(p=>[...p,v]); e.target.value=""; }}
-              style={{ width:"100%", padding:"9px 11px", borderRadius:8, border:"1.5px solid #dde4ef", fontSize:13, outline:"none", background:"#fff" }}>
-              <option value="">-- クリニックを選択（複数可） --</option>
-              {clinicNames.map(n => <option key={n} value={n}>{n}</option>)}
-            </select>
-          )}
-          {addClinics.length > 0 && (
-            <div style={{ display:"flex", gap:5, flexWrap:"wrap", marginTop:8 }}>
-              {addClinics.map(c => (
-                <div key={c} style={{ display:"flex", alignItems:"center", gap:4, padding:"4px 10px", borderRadius:20, background:"#e8f0ff", border:"1.5px solid #4a7cc7" }}>
-                  <span style={{ fontSize:12, color:"#0f2744", fontWeight:700 }}>{c}</span>
-                  <button onClick={() => setAddClinics(p=>p.filter(x=>x!==c))} style={{ border:"none", background:"none", color:"#e05050", fontWeight:900, fontSize:13, cursor:"pointer", padding:0 }}>×</button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {createMsg === "success" && <div style={{ padding:"10px 14px", background:"#f0fdf6", border:"1px solid #a0d8b8", borderRadius:9, fontSize:13, color:"#1a7a50", fontWeight:600, marginBottom:12 }}>✅ アカウントを作成しました。</div>}
-        {createMsg === "exists" && <div style={{ padding:"10px 14px", background:"#fffbef", border:"1px solid #e8c95a", borderRadius:9, fontSize:13, color:"#7a6020", marginBottom:12 }}>⚠ このメールアドレスはすでに登録されています。</div>}
-        {createMsg === "pw_short" && <div style={{ padding:"10px 14px", background:"#fff0f0", border:"1px solid #e0c0c0", borderRadius:9, fontSize:13, color:"#c05050", marginBottom:12 }}>⚠ パスワードは6文字以上で設定してください。</div>}
-        {createMsg === "error" && <div style={{ padding:"10px 14px", background:"#fff0f0", border:"1px solid #e0c0c0", borderRadius:9, fontSize:13, color:"#c05050", marginBottom:12 }}>❌ 登録に失敗しました。</div>}
-
-        <button onClick={handleCreate} disabled={creating || !addEmail.trim() || !addPassword.trim()}
-          style={{ width:"100%", padding:"12px", borderRadius:10, border:"none", background:"linear-gradient(135deg,#0f2744,#1a3d6e)", color:"#fff", fontWeight:800, fontSize:14, cursor:"pointer", opacity:(creating||!addEmail.trim()||!addPassword.trim())?0.5:1 }}>
-          {creating ? "登録中..." : "アカウントを作成する"}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// ── 営業アカウント管理 ─────────────────────────────────────────────────────
-// ── 受注CSV（売上）パーサー ─────────────────────────────────────────────
-function parseSalesCSV(text) {
-  function parseCSV(text) {
-    const rows = []; let row = [], cur = "", inQ = false;
-    for (let i = 0; i < text.length; i++) {
-      const c = text[i], next = text[i+1];
-      if (inQ) {
-        if (c==='"'&&next==='"'){cur+='"';i++;}
-        else if(c==='"'){inQ=false;}
-        else{cur+=c;}
-      } else {
-        if(c==='"'){inQ=true;}
-        else if(c===','){row.push(cur.trim());cur="";}
-        else if(c==='\n'||(c==='\r'&&next==='\n')){
-          if(c==='\r')i++;
-          row.push(cur.trim());cur="";
-          if(row.some(f=>f!==""))rows.push(row);
-          row=[];
-        }else{cur+=c;}
-      }
-    }
-    if(cur||row.length){row.push(cur.trim());if(row.some(f=>f!==""))rows.push(row);}
-    return rows;
-  }
-
-  const allRows = parseCSV(text);
-  if (allRows.length < 2) return [];
-  const headers = allRows[0];
-
-  if (headers[0] === "Bカート発送ID") return null;
-
-  const idx = {
-    orderNo:    headers.indexOf("受注番号"),
-    company:    headers.indexOf("会社名"),
-    dateTime:   headers.indexOf("受注日時"),
-    itemName:   headers.indexOf("商品名"),
-    spec:       headers.indexOf("製品規格"),
-    qty:        headers.indexOf("受注数"),
-    unit:       headers.indexOf("単位"),
-    category:   headers.indexOf("明細区分"),
-    unitPrice:  Math.max(headers.indexOf("単価"), headers.indexOf("販売単価")),
-    lineAmount: Math.max(headers.indexOf("商品金額"), headers.indexOf("小計")),
-    orderTotal: Math.max(headers.indexOf("受注総額"), headers.indexOf("受注金額"), headers.indexOf("合計金額")),
-    salesRep:   Math.max(headers.indexOf("★営業担当者"), headers.indexOf("営業担当者"), headers.indexOf("担当者")),
-  };
-
-  if (idx.orderNo < 0) return null;
-
-  const orderMap = {};
-  for (let i = 1; i < allRows.length; i++) {
-    const row = allRows[i];
-    const orderNo = row[idx.orderNo] || ""; if (!orderNo) continue;
-    const cat = idx.category >= 0 ? (row[idx.category]||"") : "";
-    if (cat && cat !== "商品") continue;
-    const itemName = (row[idx.itemName]||"").replace(/\n/g," ").trim();
-    if (!itemName || itemName === "送料" || itemName === "決済手数料") continue;
-
-    if (!orderMap[orderNo]) {
-      const rawDate = row[idx.dateTime] || "";
-      const d = rawDate ? new Date(rawDate) : null;
-      const dateStr = d ? `${d.getFullYear()}年${String(d.getMonth()+1).padStart(2,"0")}月${String(d.getDate()).padStart(2,"0")}日` : "";
-      const monthKey = d ? `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}` : "";
-      const orderTotalVal = idx.orderTotal >= 0 ? parseInt((row[idx.orderTotal]||"0").replace(/[^0-9]/g,""),10)||0 : 0;
-      const salesRep = idx.salesRep >= 0 ? (row[idx.salesRep]||"").trim() : "";
-      orderMap[orderNo] = {
-        id: orderNo, date: dateStr, monthKey,
-        clinic: (row[idx.company]||"").trim(),
-        totalAmount: orderTotalVal,
-        salesRep,
-        products: []
-      };
-    }
-
-    const qtyNum = parseInt(row[idx.qty]||"0",10)||0;
-    const unit = row[idx.unit]||"";
-    const unitPriceVal = idx.unitPrice >= 0 ? parseInt((row[idx.unitPrice]||"0").replace(/[^0-9]/g,""),10)||0 : 0;
-    const lineAmountVal = idx.lineAmount >= 0 ? parseInt((row[idx.lineAmount]||"0").replace(/[^0-9]/g,""),10)||0 : 0;
-    const amount = lineAmountVal || (unitPriceVal * qtyNum);
-    const rawSpec = (row[idx.spec]||"").replace(/\n/g," ").trim();
-    const spec = rawSpec.includes("<") ? "" : rawSpec;
-    const displayName = spec ? `${itemName}（${spec}）` : itemName;
-
-    orderMap[orderNo].products.push({
-      name: displayName, qty: `${qtyNum}${unit}`, qtyNum, unitPrice: unitPriceVal, amount
-    });
-  }
-  return Object.values(orderMap);
-}
-
-function SalesManager({ orders }) {
-  const [rows, setRows] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [saveMsg, setSaveMsg] = useState("");
-  const [addEmail, setAddEmail] = useState("");
-  const [addName, setAddName] = useState("");
-  const [addPassword, setAddPassword] = useState("");
-  const [addShowPw, setAddShowPw] = useState(false);
-  const [addClinics, setAddClinics] = useState([]);
-  const [creating, setCreating] = useState(false);
-  const [createMsg, setCreateMsg] = useState("");
-  const [resetStatus, setResetStatus] = useState({});
-  // 売上CSVアップロード
-  const [salesOrders, setSalesOrders] = useState([]);
-  const [csvLoading, setCsvLoading] = useState(true);
-  const [csvPreview, setCsvPreview] = useState(null);
-  const [csvError, setCsvError] = useState("");
-  const [csvSaving, setCsvSaving] = useState(false);
-  const [csvMsg, setCsvMsg] = useState("");
-  const [csvEncoding, setCsvEncoding] = useState("shift_jis");
-  const csvFileRef = useRef();
-
-  const clinicNames = [...new Set(orders.map(o => o.clinic).filter(Boolean))].sort();
-  const waitFB = async () => { let t=0; while(!window._firebase&&t<30){await new Promise(r=>setTimeout(r,200));t++;} };
-
-  const load = async () => {
-    setLoading(true);
-    await waitFB();
-    try { const list = await window._firebase.loadSalesBindings(); setRows(list); }
-    catch(e) { console.error(e); }
-    setLoading(false);
-  };
-  useEffect(() => { load(); }, []);
-
-  // 売上CSVをロード
-  useEffect(() => {
-    const loadSales = async () => {
-      setCsvLoading(true);
-      await new Promise(r => setTimeout(r, 200));
-      let t=0; while(!window._firebase&&t<30){await new Promise(r=>setTimeout(r,200));t++;}
-      try { const list = await window._firebase.loadSalesOrders(); setSalesOrders(list); }
-      catch(e) { console.error(e); }
-      setCsvLoading(false);
-    };
-    loadSales();
-  }, []);
-
-  // 売上CSVファイル読み込み
-  const handleSalesCsvRead = (file) => {
-    setCsvError(""); setCsvPreview(null);
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        const bytes = new Uint8Array(e.target.result);
-        let text;
-        try { text = new TextDecoder(csvEncoding).decode(bytes); }
-        catch { text = new TextDecoder("utf-8").decode(bytes); }
-        const parsed = parseSalesCSV(text);
-        if (parsed === null) { setCsvError("物流CSVではなく、受注CSVを選択してください。"); return; }
-        if (!parsed || parsed.length === 0) { setCsvError("受注データが見つかりませんでした。"); return; }
-        setCsvPreview(parsed);
-      } catch(err) { setCsvError("読み込みに失敗しました: " + err.message); }
-    };
-    reader.readAsArrayBuffer(file);
-  };
-
-  // 売上CSV保存
-  const handleSalesCsvSave = async () => {
-    if (!csvPreview) return;
-    setCsvSaving(true); setCsvMsg("");
-    try {
-      await waitFB();
-      // 既存データとマージ（受注番号をキーに上書き）
-      const map = {};
-      salesOrders.forEach(o => { map[o.id] = o; });
-      csvPreview.forEach(o => { map[o.id] = o; });
-      const merged = Object.values(map).sort((a,b) => b.id.localeCompare(a.id));
-      await window._firebase.saveSalesOrders(merged);
-      setSalesOrders(merged);
-      setCsvPreview(null);
-      setCsvMsg("saved");
-      setTimeout(() => setCsvMsg(""), 4000);
-    } catch(e) { console.error(e); setCsvMsg("error"); alert("保存エラー: " + e.message); }
-    setCsvSaving(false);
-  };
-
-  // 売上サマリー計算
-  const salesSummary = (() => {
-    const clinicMap = {};
-    salesOrders.forEach(o => {
-      if (!clinicMap[o.clinic]) clinicMap[o.clinic] = { total: 0, orders: 0, months: {} };
-      clinicMap[o.clinic].total += o.totalAmount || 0;
-      clinicMap[o.clinic].orders += 1;
-      const mk = o.monthKey || "";
-      if (mk) {
-        if (!clinicMap[o.clinic].months[mk]) clinicMap[o.clinic].months[mk] = 0;
-        clinicMap[o.clinic].months[mk] += o.totalAmount || 0;
-      }
-    });
-    return clinicMap;
-  })();
-
-  const fmtYen = (n) => n ? "¥" + n.toLocaleString() : "—";
-
-  const handleSave = async () => {
-    setSaving(true); setSaveMsg("");
-    try {
-      await waitFB();
-      await window._firebase.saveSalesBindings(rows);
-      setSaveMsg("saved");
-      setTimeout(() => setSaveMsg(""), 3000);
-    } catch(e) { console.error(e); setSaveMsg("error"); alert("保存エラー: " + e.message); }
-    setSaving(false);
-  };
-
-  const removeRow = (email) => setRows(prev => prev.filter(r => r.email !== email));
-  const removeClinic = (email, clinic) => setRows(prev => prev.map(r => r.email===email ? {...r, clinics:r.clinics.filter(c=>c!==clinic)} : r));
-  const addClinicToRow = (email, clinic) => { if(!clinic)return; setRows(prev => prev.map(r => r.email===email && !r.clinics.includes(clinic) ? {...r, clinics:[...r.clinics,clinic]} : r)); };
-  const updateField = (email, field, value) => setRows(prev => prev.map(r => r.email===email ? {...r,[field]:value} : r));
-
-  const handleReset = async (email) => {
-    setResetStatus(p => ({...p,[email]:"sending"}));
-    await waitFB();
-    try {
-      await window._firebase.sendPasswordReset(email);
-      setResetStatus(p => ({...p,[email]:"sent"}));
-      setTimeout(() => setResetStatus(p => ({...p,[email]:""})), 4000);
-    } catch(e) { setResetStatus(p => ({...p,[email]:"error"})); }
-  };
-
-  const handleCreate = async () => {
-    if (!addEmail.trim() || !addPassword.trim()) return;
-    if (addPassword.length < 6) { setCreateMsg("pw_short"); return; }
-    setCreating(true); setCreateMsg("");
-    await waitFB();
-    try {
-      const today = new Date().toLocaleDateString("ja-JP",{year:"numeric",month:"2-digit",day:"2-digit"});
-      const newRow = { email:addEmail.trim(), name:addName.trim(), clinics:addClinics, password:addPassword.trim(), registeredAt:today };
-      const newRows = [...rows.filter(r=>r.email!==addEmail.trim()), newRow];
-      try {
-        // 新規アカウント作成を試みる（既存の場合はスキップ）
-        await window._firebase.createSalesAccount(addEmail.trim(), addPassword.trim());
-      } catch(e) {
-        if (!e.message.includes("EMAIL_EXISTS")) throw e;
-        // 既存アカウントの場合はそのまま紐づけのみ登録
-      }
-      setRows(newRows);
-      await window._firebase.saveSalesBindings(newRows);
-      setCreateMsg("success_existing");
-      setAddEmail(""); setAddName(""); setAddPassword(""); setAddClinics([]);
-    } catch(e) {
-      setCreateMsg("error"); console.error(e);
-    }
-    setCreating(false);
-  };
-
-  const inp = { width:"100%", padding:"8px 10px", borderRadius:8, border:"1.5px solid #dde4ef", fontSize:12.5, outline:"none", color:"#1a2a3a", background:"#fff" };
-
-  return (
-    <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
-      <div style={{ background:"#fff", borderRadius:14, border:"1.5px solid #e4eaf3", padding:"20px", boxShadow:"0 2px 10px rgba(10,30,53,0.05)" }}>
-        <div style={{ fontSize:14, fontWeight:800, color:"#0f2744", marginBottom:4 }}>💼 登録済み営業アカウント</div>
-        <div style={{ fontSize:12, color:"#8a95a5", marginBottom:16, lineHeight:1.6 }}>
-          営業担当者のアカウントを管理します。担当クリニックを紐づけると <code>sales.html</code> でそのクリニックの状況を確認できます。
-        </div>
-
-        {loading ? <div style={{ textAlign:"center",padding:"20px",color:"#8a95a5" }}>読込中...</div>
-        : rows.length === 0 ? <div style={{ textAlign:"center",padding:"20px",color:"#a0aab8",fontSize:13 }}>まだ登録されていません</div>
-        : (
-          <div style={{ display:"flex", flexDirection:"column", gap:10, marginBottom:14 }}>
-            {rows.map(row => {
-              const rs = resetStatus[row.email] || "";
-              return (
-                <div key={row.email} style={{ border:"1.5px solid #e4eaf3", borderRadius:10, padding:"14px", background:"#fafbfd" }}>
-                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginBottom:10 }}>
-                    <div>
-                      <div style={{ fontSize:10.5, color:"#8a95a5", marginBottom:3, fontWeight:600 }}>メールアドレス</div>
-                      <div style={{ fontSize:12.5, fontWeight:700, color:"#1a2a3a" }}>{row.email}</div>
-                      {row.registeredAt && <div style={{ fontSize:10, color:"#a0aab8", marginTop:2 }}>登録：{row.registeredAt}</div>}
-                    </div>
-                    <div>
-                      <div style={{ fontSize:10.5, color:"#8a95a5", marginBottom:3, fontWeight:600 }}>担当者名</div>
-                      <input value={row.name} onChange={e=>updateField(row.email,"name",e.target.value)} placeholder="担当者名" style={inp} />
-                    </div>
-                  </div>
-                  <div style={{ marginBottom:10 }}>
-                    <div style={{ fontSize:10.5, color:"#8a95a5", marginBottom:5, fontWeight:600 }}>担当クリニック</div>
-                    <div style={{ display:"flex", gap:5, flexWrap:"wrap", alignItems:"center" }}>
-                      {row.clinics.length === 0 && <span style={{ fontSize:11,color:"#e05050",fontWeight:700,padding:"2px 7px",borderRadius:20,background:"#fff0f0",border:"1px solid #e0c0c0" }}>⚠ 未設定</span>}
-                      {row.clinics.map(c => (
-                        <div key={c} style={{ display:"flex",alignItems:"center",gap:3,padding:"3px 9px",borderRadius:20,background:"#e8f4ee",border:"1.5px solid #3aa876" }}>
-                          <span style={{ fontSize:11.5,color:"#0f2744",fontWeight:700 }}>{c}</span>
-                          <button onClick={()=>removeClinic(row.email,c)} style={{ border:"none",background:"none",color:"#e05050",fontWeight:900,fontSize:13,cursor:"pointer",padding:0 }}>×</button>
-                        </div>
-                      ))}
-                      {clinicNames.filter(n=>!row.clinics.includes(n)).length > 0 && (
-                        <select onChange={e=>{if(e.target.value)addClinicToRow(row.email,e.target.value);e.target.value="";}}
-                          style={{ padding:"3px 8px",borderRadius:20,border:"1.5px dashed #3aa876",fontSize:11,color:"#3aa876",background:"#fff",cursor:"pointer",outline:"none" }}>
-                          <option value="">＋ 追加</option>
-                          {clinicNames.filter(n=>!row.clinics.includes(n)).map(n=><option key={n} value={n}>{n}</option>)}
-                        </select>
-                      )}
-                    </div>
-                  </div>
-                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-                    <div style={{ display:"flex", gap:6 }}>
-                      {rs==="sent" ? <span style={{ fontSize:11,color:"#1a7a50",fontWeight:700,padding:"4px 8px",background:"#f0fdf6",borderRadius:6 }}>✅ メール送信済み</span>
-                      : <button onClick={()=>handleReset(row.email)} disabled={rs==="sending"} style={{ padding:"4px 10px",borderRadius:6,border:"1.5px solid #8a9ab5",background:"#f4f6fb",fontSize:11,cursor:"pointer",color:"#4a5a6a",fontWeight:700,opacity:rs==="sending"?0.6:1 }}>{rs==="sending"?"送信中...":"📧 PWリセット"}</button>}
-                    </div>
-                    <button onClick={()=>removeRow(row.email)} style={{ padding:"4px 10px",borderRadius:6,border:"1.5px solid #e0c0c0",background:"#fff8f8",fontSize:11,cursor:"pointer",color:"#e05050",fontWeight:700 }}>削除</button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        {!loading && (
-          <button onClick={handleSave} disabled={saving}
-            style={{ width:"100%",padding:"13px",borderRadius:10,border:"none",
-              background:saveMsg==="saved"?"#3aa876":saveMsg==="error"?"#e05050":"linear-gradient(135deg,#0f2744,#1a3d6e)",
-              color:"#fff",fontWeight:800,fontSize:14,cursor:"pointer",opacity:saving?0.7:1 }}>
-            {saving?"保存中...":saveMsg==="saved"?"✅ 保存しました！":saveMsg==="error"?"❌ エラー":"💾 変更を保存する"}
-          </button>
-        )}
-      </div>
-
-      {/* 新規登録 */}
-      <div style={{ background:"#fff", borderRadius:14, border:"1.5px solid #e4eaf3", padding:"20px", boxShadow:"0 2px 10px rgba(10,30,53,0.05)" }}>
-        <div style={{ fontSize:14, fontWeight:800, color:"#0f2744", marginBottom:16 }}>➕ 新規営業アカウントを登録</div>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:10 }}>
-          <div>
-            <div style={{ fontSize:11.5,color:"#8a95a5",marginBottom:4 }}>メールアドレス <span style={{ color:"#e05050" }}>*</span></div>
-            <input value={addEmail} onChange={e=>{setAddEmail(e.target.value);setCreateMsg("");}} placeholder="sales@example.com" type="email"
-              style={{ width:"100%",padding:"9px 11px",borderRadius:8,border:"1.5px solid #dde4ef",fontSize:13,outline:"none",color:"#1a2a3a" }} />
-          </div>
-          <div>
-            <div style={{ fontSize:11.5,color:"#8a95a5",marginBottom:4 }}>パスワード <span style={{ color:"#e05050" }}>*</span></div>
-            <div style={{ position:"relative" }}>
-              <input value={addPassword} onChange={e=>{setAddPassword(e.target.value);setCreateMsg("");}} placeholder="6文字以上" type={addShowPw?"text":"password"}
-                style={{ width:"100%",padding:"9px 36px 9px 11px",borderRadius:8,border:"1.5px solid #dde4ef",fontSize:13,outline:"none",color:"#1a2a3a" }} />
-              <button onClick={()=>setAddShowPw(p=>!p)} style={{ position:"absolute",right:8,top:"50%",transform:"translateY(-50%)",border:"none",background:"none",cursor:"pointer",fontSize:14,color:"#8a95a5" }}>{addShowPw?"🙈":"👁"}</button>
-            </div>
-          </div>
-        </div>
-        <div style={{ marginBottom:10 }}>
-          <div style={{ fontSize:11.5,color:"#8a95a5",marginBottom:4 }}>担当者名</div>
-          <input value={addName} onChange={e=>setAddName(e.target.value)} placeholder="例：田中 一郎"
-            style={{ width:"100%",padding:"9px 11px",borderRadius:8,border:"1.5px solid #dde4ef",fontSize:13,outline:"none",color:"#1a2a3a" }} />
-        </div>
-        <div style={{ marginBottom:12 }}>
-          <div style={{ fontSize:11.5,color:"#8a95a5",marginBottom:4 }}>担当クリニック</div>
-          <select onChange={e=>{const v=e.target.value;if(v&&!addClinics.includes(v))setAddClinics(p=>[...p,v]);e.target.value="";}}
-            style={{ width:"100%",padding:"9px 11px",borderRadius:8,border:"1.5px solid #dde4ef",fontSize:13,outline:"none",background:"#fff" }}>
-            <option value="">-- クリニックを選択（複数可） --</option>
-            {clinicNames.map(n=><option key={n} value={n}>{n}</option>)}
-          </select>
-          {addClinics.length > 0 && (
-            <div style={{ display:"flex",gap:5,flexWrap:"wrap",marginTop:8 }}>
-              {addClinics.map(c=>(
-                <div key={c} style={{ display:"flex",alignItems:"center",gap:4,padding:"4px 10px",borderRadius:20,background:"#e8f4ee",border:"1.5px solid #3aa876" }}>
-                  <span style={{ fontSize:12,color:"#0f2744",fontWeight:700 }}>{c}</span>
-                  <button onClick={()=>setAddClinics(p=>p.filter(x=>x!==c))} style={{ border:"none",background:"none",color:"#e05050",fontWeight:900,fontSize:13,cursor:"pointer",padding:0 }}>×</button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-        {createMsg==="success"&&<div style={{ padding:"10px 14px",background:"#f0fdf6",border:"1px solid #a0d8b8",borderRadius:9,fontSize:13,color:"#1a7a50",fontWeight:600,marginBottom:12 }}>✅ 営業アカウントを作成しました。</div>}
-        {createMsg==="success_existing"&&<div style={{ padding:"10px 14px",background:"#f0fdf6",border:"1px solid #a0d8b8",borderRadius:9,fontSize:13,color:"#1a7a50",fontWeight:600,marginBottom:12 }}>✅ 既存のアカウントを営業担当として登録しました。このメールアドレスは既にFirebaseに登録済みのため、パスワードは変更されていません。</div>}
-        {createMsg==="pw_short"&&<div style={{ padding:"10px 14px",background:"#fff0f0",border:"1px solid #e0c0c0",borderRadius:9,fontSize:13,color:"#c05050",marginBottom:12 }}>⚠ パスワードは6文字以上で設定してください。</div>}
-        {createMsg==="error"&&<div style={{ padding:"10px 14px",background:"#fff0f0",border:"1px solid #e0c0c0",borderRadius:9,fontSize:13,color:"#c05050",marginBottom:12 }}>❌ 登録に失敗しました。</div>}
-        <button onClick={handleCreate} disabled={creating||!addEmail.trim()||!addPassword.trim()}
-          style={{ width:"100%",padding:"12px",borderRadius:10,border:"none",background:"linear-gradient(135deg,#1a6a3a,#2a9a5a)",color:"#fff",fontWeight:800,fontSize:14,cursor:"pointer",opacity:(creating||!addEmail.trim()||!addPassword.trim())?0.5:1 }}>
-          {creating?"登録中...":"💼 営業アカウントを作成する"}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-
-// ── CSV インポート ────────────────────────────────────────────────────────
-function CsvImportModal({ onImport, onClose }) {
-  const [drag,setDrag]=useState(false); const [preview,setPreview]=useState(null); const [error,setError]=useState(""); const [encoding,setEncoding]=useState("shift_jis");
-  const fileRef=useRef();
-  const readFile=(file)=>{
-    setError("");
-    const reader=new FileReader();
-    reader.onload=(e)=>{
-      try{
-        const bytes=new Uint8Array(e.target.result);
-        let text; try{ text=new TextDecoder(encoding).decode(bytes); }catch{ text=new TextDecoder("utf-8").decode(bytes); }
-        const orders=parseBcartCSV(text);
-        if(orders.length===0){ setError("注文データが見つかりませんでした。"); return; }
-        setPreview(orders);
-      }catch(err){ setError("読み込みに失敗しました: "+err.message); }
-    };
-    reader.readAsArrayBuffer(file);
-  };
-  return (
-    <div style={{ position:"fixed",inset:0,background:"rgba(10,20,40,0.6)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:200,padding:16 }}>
-      <div style={{ background:"#fff",borderRadius:18,padding:"24px 22px",width:"100%",maxWidth:480,maxHeight:"85vh",overflowY:"auto",boxShadow:"0 20px 60px rgba(0,0,0,0.3)" }}>
-        <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20 }}>
-          <div style={{ fontSize:16,fontWeight:800,color:"#0f2744" }}>bcart CSVインポート</div>
-          <button onClick={onClose} style={{ background:"none",border:"none",fontSize:22,cursor:"pointer",color:"#8a95a5" }}>✕</button>
-        </div>
-        <div style={{ marginBottom:14 }}>
-          <div style={{ fontSize:11.5,color:"#8a95a5",marginBottom:6 }}>文字コード</div>
-          <div style={{ display:"flex",gap:8 }}>
-            {[["shift_jis","Shift-JIS（標準）"],["utf-8","UTF-8"]].map(([v,l])=>(
-              <button key={v} onClick={()=>setEncoding(v)} style={{ padding:"7px 14px",borderRadius:8,border:"1.5px solid",borderColor:encoding===v?"#0f2744":"#dde4ef",background:encoding===v?"#0f2744":"#fff",color:encoding===v?"#fff":"#555",fontSize:12.5,cursor:"pointer",fontWeight:encoding===v?700:400 }}>{l}</button>
-            ))}
-          </div>
-        </div>
-        {!preview&&(
-          <div className={`drop-zone${drag?" drag-over":""}`}
-            onDragOver={e=>{e.preventDefault();setDrag(true);}} onDragLeave={()=>setDrag(false)}
-            onDrop={e=>{e.preventDefault();setDrag(false);const f=e.dataTransfer.files[0];if(f)readFile(f);}}
-            onClick={()=>fileRef.current.click()}>
-            <div style={{ fontSize:36,marginBottom:10 }}>📂</div>
-            <div style={{ fontSize:14,fontWeight:700,color:"#0f2744",marginBottom:4 }}>CSVファイルをドラッグ＆ドロップ</div>
-            <div style={{ fontSize:12.5,color:"#8a95a5",marginBottom:12 }}>または</div>
-            <div style={{ display:"inline-block",padding:"9px 20px",borderRadius:9,background:"#0f2744",color:"#fff",fontSize:13,fontWeight:700,cursor:"pointer" }}>ファイルを選択</div>
-            <input ref={fileRef} type="file" accept=".csv" onChange={e=>{if(e.target.files[0])readFile(e.target.files[0]);}} style={{ display:"none" }}/>
-          </div>
-        )}
-        {error&&<div style={{ padding:"10px 14px",background:"#fff0f0",border:"1px solid #e0c0c0",borderRadius:10,color:"#c05050",fontSize:13,marginTop:12 }}>⚠ {error}</div>}
-        {preview&&(
-          <div>
-            <div style={{ padding:"10px 14px",background:"#f0fdf6",border:"1px solid #a0d8b8",borderRadius:10,marginBottom:14,fontSize:13,color:"#1a7a50",fontWeight:600 }}>✅ {preview.length}件の注文、合計{preview.reduce((s,o)=>s+o.products.length,0)}商品を読み込みました</div>
-            <div style={{ maxHeight:240,overflowY:"auto",border:"1.5px solid #e4eaf3",borderRadius:12,marginBottom:14 }}>
-              {preview.map((o,i)=>(
-                <div key={i} style={{ padding:"10px 14px",borderBottom:"1px solid #f0f4f9" }}>
-                  <div style={{ display:"flex",justifyContent:"space-between",marginBottom:4 }}>
-                    <span style={{ fontSize:13.5,fontWeight:800,color:"#0f2744" }}>{o.id}</span>
-                    <span style={{ fontSize:11,color:"#8a95a5" }}>{o.date}</span>
-                  </div>
-                  <div style={{ fontSize:12,color:"#6a7a8a",marginBottom:6 }}>{o.clinic}</div>
-                  <div style={{ display:"flex",flexWrap:"wrap",gap:5 }}>
-                    {o.products.map((p,j)=><span key={j} style={{ padding:"3px 8px",borderRadius:6,background:"#f0f4ff",color:"#2a5090",fontSize:11,border:"1px solid #d0ddf0" }}>{p.name.length>22?p.name.slice(0,22)+"…":p.name}　{p.qty}</span>)}
-                  </div>
-                </div>
-              ))}
-            </div>
-            <div style={{ background:"#fffbef",border:"1px solid #e8c95a",borderRadius:10,padding:"10px 14px",fontSize:12.5,color:"#7a6020",marginBottom:14 }}>💡 全商品「注文受付済み」で取り込まれます。取り込み後にステータスを更新してください。</div>
-            <div style={{ display:"flex",gap:8 }}>
-              <button onClick={()=>setPreview(null)} style={{ flex:1,padding:12,borderRadius:10,border:"1.5px solid #dde4ef",background:"#fff",fontSize:14,cursor:"pointer",color:"#666" }}>やり直す</button>
-              <button onClick={()=>{ onImport(preview); onClose(); }} style={{ flex:2,padding:12,borderRadius:10,border:"none",background:"linear-gradient(135deg,#0f2744,#1a3d6e)",color:"#fff",fontWeight:800,fontSize:14,cursor:"pointer" }}>{preview.length}件をインポートする</button>
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ── 商品エディター ────────────────────────────────────────────────────────
-function ProductEditor({ product, index, onChange, onDelete }) {
-  const [open,setOpen]=useState(false);
-  const s=STATUS_STAGES[product.status];
-  return (
-    <div style={{ borderBottom:"1px solid #f0f4f9" }}>
-      <div onClick={()=>setOpen(o=>!o)} style={{ display:"flex",alignItems:"center",padding:"11px 14px",cursor:"pointer",gap:10,background:open?"#f4f7fc":"#fff" }}>
-        <div style={{ width:22,height:22,borderRadius:6,background:"#f0f4ff",color:"#4a7cc7",fontSize:10,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0 }}>{index+1}</div>
-        <div style={{ flex:1,minWidth:0 }}>
-          <div style={{ fontSize:13,fontWeight:600,color:"#1a2a3a",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{product.name||"（未入力）"}</div>
-          <div style={{ display:"flex",alignItems:"center",gap:6,marginTop:3,flexWrap:"wrap" }}>
-            <span style={{ fontSize:11,color:"#8a95a5" }}>{product.qty}</span>
-            <span style={{ width:3,height:3,borderRadius:"50%",background:"#d0d8e4" }}/>
-            <span style={{ fontSize:11,fontWeight:700,color:s.color }}>{s.icon} {s.short}</span>
-            {product.deliveryInfo&&<span style={{ fontSize:11,color:"#e07d20",fontWeight:700,background:"#fff8f0",padding:"1px 6px",borderRadius:6,border:"1px solid #f0c090" }}>{product.deliveryInfo}</span>}
-          </div>
-        </div>
-        <div style={{ fontSize:14,color:"#c0c8d4",transform:open?"rotate(180deg)":"none",transition:"transform 0.2s" }}>⌄</div>
-      </div>
-      {open&&(
-        <div style={{ padding:"12px 14px 14px",background:"#f4f7fc",borderTop:"1px solid #edf0f6" }}>
-          {product.deliveryRecords&&product.deliveryRecords.length>0&&(
-            <div style={{ marginBottom:10,padding:"10px 12px",background:"#fff8f0",borderRadius:9,border:"1px solid #f0c090" }}>
-              <div style={{ fontSize:11,color:"#a04010",fontWeight:700,marginBottom:8 }}>🔶 分納履歴</div>
-              {product.deliveryRecords.map((r,i)=>(
-                <div key={i} style={{ display:"flex",alignItems:"center",gap:8,marginBottom:4,fontSize:12 }}>
-                  <span style={{ padding:"2px 7px",borderRadius:5,background:r.status==="発送済"?"#e8f4ee":"#f4f6fb",color:r.status==="発送済"?"#1a7a50":"#6a7a8a",fontWeight:700,fontSize:11,flexShrink:0 }}>{r.status==="発送済"?"✅ 発送済":"📋 未発送"}</span>
-                  <span style={{ color:"#1a2a3a",fontWeight:600 }}>{r.qty}{r.unit}</span>
-                  {r.delivDate&&<span style={{ color:"#8a95a5" }}>納品日：{r.delivDate}</span>}
-                  {r.shipDate&&!r.delivDate&&<span style={{ color:"#8a95a5" }}>発送日：{r.shipDate}</span>}
-                </div>
-              ))}
-            </div>
-          )}
-          <div style={{ display:"grid",gridTemplateColumns:"1fr auto",gap:8,marginBottom:10 }}>
-            <div>
-              <div style={{ fontSize:11,color:"#8a95a5",marginBottom:3 }}>商品名</div>
-              <input value={product.name} onChange={e=>onChange("name",e.target.value)} style={{ width:"100%",padding:"8px 10px",borderRadius:8,border:"1.5px solid #dde4ef",fontSize:13,outline:"none" }}/>
-            </div>
-            <div style={{ width:90 }}>
-              <div style={{ fontSize:11,color:"#8a95a5",marginBottom:3 }}>数量</div>
-              <input value={product.qty} onChange={e=>onChange("qty",e.target.value)} style={{ width:"100%",padding:"8px 10px",borderRadius:8,border:"1.5px solid #dde4ef",fontSize:13,outline:"none" }}/>
-            </div>
-          </div>
-          <div style={{ marginBottom:10 }}>
-            <div style={{ fontSize:11,color:"#8a95a5",marginBottom:6 }}>ステータス</div>
-            <div style={{ display:"flex",flexWrap:"wrap",gap:5 }}>
-              {STATUS_STAGES.map(st=>(
-                <button key={st.id} onClick={()=>onChange("status",st.id)} style={{ padding:"5px 9px",borderRadius:8,border:"1.5px solid",borderColor:product.status===st.id?st.color:"#dde4ef",background:product.status===st.id?st.color:"#fff",color:product.status===st.id?"#fff":"#4a5568",fontSize:11,fontWeight:product.status===st.id?700:400,cursor:"pointer",whiteSpace:"nowrap" }}>{st.icon} {st.label}</button>
-              ))}
-            </div>
-          </div>
-          <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10 }}>
-            <div>
-              <div style={{ fontSize:11,color:"#8a95a5",marginBottom:3 }}>お届け目安</div>
-              <input value={product.eta} onChange={e=>onChange("eta",e.target.value)} placeholder="例：約10日" style={{ width:"100%",padding:"8px 10px",borderRadius:8,border:"1.5px solid #dde4ef",fontSize:13,outline:"none" }}/>
-            </div>
-            <div>
-              <div style={{ fontSize:11,color:"#8a95a5",marginBottom:3 }}>備考（お客様に表示）</div>
-              <input value={product.note} onChange={e=>onChange("note",e.target.value)} placeholder="例：通関待ちです" style={{ width:"100%",padding:"8px 10px",borderRadius:8,border:"1.5px solid #dde4ef",fontSize:13,outline:"none" }}/>
-            </div>
-          </div>
-          <div style={{ display:"flex",justifyContent:"flex-end" }}>
-            <button onClick={onDelete} style={{ padding:"6px 12px",borderRadius:8,border:"1.5px solid #e0c0c0",background:"#fff8f8",color:"#c05050",fontSize:12,cursor:"pointer",fontWeight:600 }}>この商品を削除</button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── 注文カード ────────────────────────────────────────────────────────────
-function OrderCard({ order, onUpdate, onDelete }) {
-  const [open,setOpen]=useState(false);
-  const active=order.products.filter(p=>p.status<6).length;
-  const updateProduct=(pi,field,value)=>onUpdate(order.id,"products",order.products.map((p,i)=>i===pi?{...p,[field]:value}:p));
-  const deleteProduct=(pi)=>{ if(!confirm("この商品を削除しますか？"))return; onUpdate(order.id,"products",order.products.filter((_,i)=>i!==pi)); };
-  const addProduct=()=>{ onUpdate(order.id,"products",[...order.products,{name:"",qty:"",status:0,eta:"約30日",note:""}]); setOpen(true); };
-  return (
-    <div style={{ background:"#fff",borderRadius:14,border:"1.5px solid #e4eaf3",marginBottom:10,overflow:"hidden",boxShadow:"0 1px 8px rgba(10,30,53,0.05)",borderLeft:`4px solid ${active>0?"#d4a843":"#0f2744"}` }}>
-      <div onClick={()=>setOpen(o=>!o)} style={{ padding:"13px 16px",cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"flex-start" }}>
-        <div style={{ flex:1,minWidth:0,paddingRight:8 }}>
-          <div style={{ display:"flex",alignItems:"center",gap:8,marginBottom:4,flexWrap:"wrap" }}>
-            <span style={{ fontSize:15,fontWeight:900,color:"#0f2744",letterSpacing:"0.04em" }}>{order.id}</span>
-            {active>0?<span style={{ padding:"3px 9px",borderRadius:20,fontSize:11,fontWeight:700,background:"#fff8e8",color:"#b87f0a",border:"1px solid #e8c95a" }}>対応中 {active}件</span>:<span style={{ padding:"3px 9px",borderRadius:20,fontSize:11,fontWeight:700,background:"#e8f0fa",color:"#0f2744",border:"1px solid #c0d0e8" }}>✅ 全件完了</span>}
-          </div>
-          <div style={{ fontSize:11.5,color:"#8a95a5" }}>{order.date}　{order.clinic}　全{order.products.length}種類</div>
-        </div>
-        <div style={{ fontSize:16,color:"#aab",transform:open?"rotate(180deg)":"none",transition:"transform 0.2s",marginTop:2 }}>⌄</div>
-      </div>
-      {open&&(
-        <div style={{ borderTop:"1.5px solid #f0f4f9" }}>
-          {order.products.map((p,i)=><ProductEditor key={i} product={p} index={i} onChange={(f,v)=>updateProduct(i,f,v)} onDelete={()=>deleteProduct(i)}/>)}
-          <div style={{ padding:"10px 14px",background:"#f8fafd",borderTop:"1px solid #edf0f6",display:"flex",justifyContent:"space-between",alignItems:"center" }}>
-            <button onClick={addProduct} style={{ padding:"7px 14px",borderRadius:8,border:"1.5px solid #4a7cc7",background:"#f0f6ff",color:"#2a5090",fontSize:12.5,cursor:"pointer",fontWeight:700 }}>＋ 商品を追加</button>
-            <div style={{ display:"flex",gap:8,alignItems:"center" }}>
-              <span style={{ fontSize:10.5,color:"#c0c8d4" }}>更新：{order.updatedAt}</span>
-              <button onClick={()=>{ if(confirm("この注文を削除しますか？"))onDelete(order.id); }} style={{ padding:"6px 12px",borderRadius:8,border:"1.5px solid #e0c0c0",background:"#fff8f8",color:"#c05050",fontSize:12,cursor:"pointer",fontWeight:600 }}>注文削除</button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function GroupSection({ title, orders, onUpdate, onDelete, defaultOpen }) {
-  const [open,setOpen]=useState(defaultOpen??true);
-  const activeCount=orders.filter(o=>o.products.some(p=>p.status<6)).length;
-  return (
-    <div style={{ marginBottom:14 }}>
-      <div onClick={()=>setOpen(o=>!o)} style={{ display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 14px",borderRadius:10,background:open?"#0f2744":"#fff",border:open?"none":"1.5px solid #e4eaf3",cursor:"pointer",marginBottom:open?8:0 }}>
-        <div style={{ display:"flex",alignItems:"center",gap:8 }}>
-          <div style={{ fontSize:14,fontWeight:800,color:open?"#fff":"#0f2744" }}>{title}</div>
-          <span style={{ padding:"2px 9px",borderRadius:20,fontSize:11.5,fontWeight:700,background:open?"rgba(255,255,255,0.15)":"#f0f4f9",color:open?"#fff":"#6a7a8a" }}>{orders.length}件</span>
-          {activeCount>0&&<span style={{ padding:"2px 9px",borderRadius:20,fontSize:11.5,fontWeight:700,background:open?"rgba(212,168,67,0.3)":"#fff8e8",color:open?"#ffd878":"#b87f0a",border:open?"1px solid rgba(212,168,67,0.4)":"1px solid #e8c95a" }}>対応中 {activeCount}</span>}
-        </div>
-        <div style={{ fontSize:16,color:open?"rgba(255,255,255,0.6)":"#aab",transform:open?"rotate(180deg)":"none",transition:"transform 0.2s" }}>⌄</div>
-      </div>
-      {open&&orders.map(o=><OrderCard key={o.id} order={o} onUpdate={onUpdate} onDelete={onDelete}/>)}
-    </div>
-  );
-}
-
-// ── 出荷指示書印刷 ───────────────────────────────────────────────────────────
-function PrintInstructModal({ orders, onClose }) {
-  const [selectedDate, setSelectedDate] = useState("");
-  const allDates = [...new Set(orders.flatMap(o => (o.shipInstructions||[]).map(i => i.instructedAt?.slice(0,10) || "")).filter(Boolean))].sort((a,b) => b.localeCompare(a));
-  const currentDate = selectedDate || allDates[0] || "";
-  const instrItems = [];
-  orders.forEach(order => {
-    (order.shipInstructions||[]).forEach(instr => {
-      const d = instr.instructedAt?.slice(0,10) || instr.instructedAt || "";
-      if (d === currentDate || instr.instructedAt === currentDate) {
-        instrItems.push({ clinic: order.clinic, orderId: order.id, productName: instr.productName, qty: instr.qty, unit: instr.unit || "", instructedAt: instr.instructedAt });
-      }
-    });
-  });
-  const grouped = {};
-  instrItems.forEach(item => { if (!grouped[item.clinic]) grouped[item.clinic] = []; grouped[item.clinic].push(item); });
-  const handlePrint = () => {
-    const win = window.open('', '_blank');
-    const rows = Object.entries(grouped).flatMap(([clinic, items]) =>
-      items.map((item, i) => `<tr><td style="border:1px solid #ccc;padding:7px 10px;${i===0?'border-top:2px solid #888;':''}">${i===0?clinic:''}</td><td style="border:1px solid #ccc;padding:7px 10px;${i===0?'border-top:2px solid #888;':''}">${i===0?item.orderId:''}</td><td style="border:1px solid #ccc;padding:7px 10px;${i===0?'border-top:2px solid #888;':''}">${item.productName}</td><td style="border:1px solid #ccc;padding:7px 10px;text-align:center;font-weight:bold;${i===0?'border-top:2px solid #888;':''}">${item.qty}${item.unit}</td><td style="border:1px solid #ccc;padding:7px 10px;${i===0?'border-top:2px solid #888;':''}"></td></tr>`)
-    ).join('');
-    win.document.write(`<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><title>出荷指示書 ${currentDate}</title><style>*{box-sizing:border-box;margin:0;padding:0;}body{font-family:'Hiragino Sans','Yu Gothic',sans-serif;padding:20px;font-size:12px;}h1{font-size:18px;margin-bottom:4px;}.meta{color:#666;margin-bottom:16px;font-size:11px;}table{width:100%;border-collapse:collapse;}th{background:#0f2744;color:#fff;padding:8px 10px;text-align:left;font-size:12px;}th:last-child{width:120px;}td:nth-child(4){text-align:center;font-weight:bold;}@media print{body{padding:10mm;}button{display:none;}}</style></head><body><h1>📦 出荷指示書</h1><div class="meta">指示日：${currentDate}　／　合計 ${instrItems.length} 件　／　発行：${new Date().toLocaleDateString('ja-JP')}</div><table><thead><tr><th style="width:16%">クリニック</th><th style="width:13%">受注番号</th><th>商品名</th><th style="width:9%">数量</th><th style="width:18%">備考</th></tr></thead><tbody>${rows}</tbody></table><div style="margin-top:24px;font-size:11px;color:#999;text-align:right">合計 ${instrItems.length} 商品 ／ ${Object.keys(grouped).length} クリニック</div><script>window.onload=()=>window.print();<\/script></body></html>`);
-    win.document.close();
-  };
-  return (
-    <div style={{ position:"fixed", inset:0, background:"rgba(10,20,40,0.6)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:300, padding:16 }}>
-      <div style={{ background:"#fff", borderRadius:16, padding:"24px 24px", width:"100%", maxWidth:520, boxShadow:"0 20px 60px rgba(0,0,0,0.3)" }}>
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:20 }}>
-          <div style={{ fontSize:16, fontWeight:800, color:"#0f2744" }}>📄 出荷指示書を印刷</div>
-          <button onClick={onClose} style={{ background:"none", border:"none", fontSize:22, cursor:"pointer", color:"#8a95a5" }}>✕</button>
-        </div>
-        <div style={{ marginBottom:16 }}>
-          <div style={{ fontSize:12, color:"#8a95a5", marginBottom:8 }}>指示日を選択</div>
-          <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
-            {allDates.length === 0 ? (<div style={{ fontSize:13, color:"#aaa" }}>出荷指示の記録がありません</div>)
-            : allDates.map(d => (<button key={d} onClick={() => setSelectedDate(d)} style={{ padding:"6px 12px", borderRadius:20, border:"1.5px solid", borderColor:currentDate===d?"#0f2744":"#dde4ef", background:currentDate===d?"#0f2744":"#fff", color:currentDate===d?"#fff":"#4a5568", fontWeight:currentDate===d?700:400, fontSize:12.5, cursor:"pointer" }}>{d}</button>))}
-          </div>
-        </div>
-        {currentDate && instrItems.length > 0 && (
-          <div style={{ background:"#f8fafd", border:"1.5px solid #e4eaf3", borderRadius:10, padding:"12px 14px", marginBottom:16, maxHeight:240, overflowY:"auto" }}>
-            <div style={{ fontSize:11, color:"#8a95a5", marginBottom:8 }}>{instrItems.length}件 ／ {Object.keys(grouped).length}クリニック</div>
-            {Object.entries(grouped).map(([clinic, items]) => (
-              <div key={clinic} style={{ marginBottom:10 }}>
-                <div style={{ fontSize:12, fontWeight:700, color:"#0f2744", marginBottom:4 }}>{clinic}</div>
-                {items.map((item, i) => (<div key={i} style={{ display:"flex", gap:8, fontSize:12, color:"#4a5568", padding:"2px 0 2px 8px" }}><span style={{ fontWeight:700, color:"#e07d20" }}>{item.qty}{item.unit}</span><span style={{ flex:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{item.productName}</span></div>))}
-              </div>
-            ))}
-          </div>
-        )}
-        {currentDate && instrItems.length === 0 && (<div style={{ padding:"20px", textAlign:"center", color:"#aaa", fontSize:13, marginBottom:16 }}>この日付の出荷指示はありません</div>)}
-        <div style={{ padding:"10px 12px", background:"#f8fafd", borderRadius:9, border:"1px solid #e4eaf3", marginBottom:12, fontSize:12, color:"#4a7cc7", textAlign:"center" }}>📷 スマホで撮影した写真は<a href="https://pattosystem.github.io/-/admin_mobile.html" target="_blank" style={{ color:"#4a7cc7", fontWeight:700, marginLeft:4 }}>出荷指示書アプリ</a>で確認できます</div>
-        <div style={{ display:"flex", gap:8 }}>
-          <button onClick={onClose} style={{ flex:1, padding:12, borderRadius:10, border:"1.5px solid #dde4ef", background:"#fff", fontSize:14, cursor:"pointer", color:"#666" }}>閉じる</button>
-          <button onClick={handlePrint} disabled={instrItems.length === 0} style={{ flex:2, padding:12, borderRadius:10, border:"none", background:"#0f2744", color:"#fff", fontWeight:800, fontSize:14, cursor:"pointer", opacity:instrItems.length===0?0.4:1 }}>🖨️ 印刷する（{instrItems.length}件）</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ── 出荷指示セル ──────────────────────────────────────────────────────────
-function ShipInstructCell({ product: p, rowBg, instructions, onAdd, onCancel }) {
-  const [showForm, setShowForm] = useState(false);
-  const [inputQty, setInputQty] = useState("");
-  const [photoModal, setPhotoModal] = useState(null);
-  const unit = p.unit || "";
-  const handleConfirm = () => { if (!inputQty.trim()) return; onAdd(inputQty); setInputQty(""); setShowForm(false); };
-  if (p.status === 6 || p.status === 5 || p.status === 4) {
-    return (<td style={{ padding:"6px 8px", borderLeft:"1px solid #edf0f6", background:rowBg, textAlign:"center" }}><span style={{ fontSize:10, color:"#c0c8d4" }}>—</span></td>);
-  }
-  return (
-    <td style={{ padding:"6px 8px", borderLeft:"1px solid #edf0f6", background:rowBg, verticalAlign:"top" }}>
-      {instructions.length > 0 && (
-        <div style={{ marginBottom:4 }}>
-          {instructions.map((instr, idx) => (
-            <div key={instr.id||idx} style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", background:"#f0fdf6", border:"1px solid #b8e8cc", borderRadius:5, padding:"3px 5px", marginBottom:3, gap:4 }}>
-              <div style={{ flex:1 }}>
-                <div style={{ fontSize:10, fontWeight:700, color:"#1a7a50" }}>📤 {instr.qty}{instr.unit}</div>
-                <div style={{ fontSize:9.5, color:"#8a95a5" }}>{instr.instructedAt}</div>
-              </div>
-              {instr.photo && (<img src={instr.photo} onClick={()=>setPhotoModal(instr.photo)} style={{ width:36, height:36, objectFit:"cover", borderRadius:4, cursor:"pointer", border:"1px solid #b8e8cc", flexShrink:0 }} title="クリックで拡大" />)}
-              <button onClick={() => onCancel(instr.id||idx)} title="取消" style={{ border:"none", background:"none", color:"#e05050", fontSize:12, cursor:"pointer", padding:"0 2px", lineHeight:1, flexShrink:0 }}>✕</button>
-            </div>
-          ))}
-        </div>
-      )}
-      {showForm ? (
-        <div style={{ background:"#fffbef", border:"1px solid #e8c95a", borderRadius:6, padding:"5px" }}>
-          <div style={{ fontSize:10, color:"#7a6020", marginBottom:3, fontWeight:700 }}>出荷数量</div>
-          <div style={{ display:"flex", gap:3, alignItems:"center", marginBottom:4 }}>
-            <input type="number" min="1" value={inputQty} onChange={e => setInputQty(e.target.value)} onKeyDown={e => e.key==="Enter" && handleConfirm()} placeholder="数量" autoFocus style={{ width:"55px", padding:"3px 5px", borderRadius:5, border:"1.5px solid #e8c95a", fontSize:11, outline:"none" }} />
-            <span style={{ fontSize:10, color:"#7a6020" }}>{unit}</span>
-          </div>
-          <div style={{ display:"flex", gap:3 }}>
-            <button onClick={handleConfirm} style={{ flex:2, padding:"4px 0", borderRadius:5, border:"none", background:"#e07d20", color:"#fff", fontSize:10, fontWeight:700, cursor:"pointer" }}>確定</button>
-            <button onClick={() => { setShowForm(false); setInputQty(""); }} style={{ flex:1, padding:"4px 0", borderRadius:5, border:"1.5px solid #dde4ef", background:"#fff", color:"#888", fontSize:10, cursor:"pointer" }}>戻る</button>
-          </div>
-        </div>
-      ) : (
-        <button onClick={() => setShowForm(true)} style={{ width:"100%", padding:"4px 0", borderRadius:6, border:"1.5px solid #e07d20", background:"#fff8f0", color:"#e07d20", fontSize:10.5, fontWeight:700, cursor:"pointer" }}>
-          {instructions.length > 0 ? "📤 再指示" : "📤 出荷指示"}
-        </button>
-      )}
-      {photoModal && (
-        <div onClick={()=>setPhotoModal(null)} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.85)", zIndex:1000, display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer", padding:20 }}>
-          <div onClick={e=>e.stopPropagation()} style={{ position:"relative" }}>
-            <img src={photoModal} style={{ maxWidth:"90vw", maxHeight:"85vh", borderRadius:10, objectFit:"contain", display:"block" }} />
-            <button onClick={()=>setPhotoModal(null)} style={{ position:"absolute", top:-14, right:-14, width:32, height:32, borderRadius:"50%", border:"none", background:"#fff", color:"#333", fontSize:16, cursor:"pointer", fontWeight:700, boxShadow:"0 2px 8px rgba(0,0,0,0.4)", display:"flex", alignItems:"center", justifyContent:"center" }}>✕</button>
-          </div>
-        </div>
-      )}
-    </td>
-  );
-}
-
-// ── ステータス管理 ─────────────────────────────────────────────────────────
-function StatusManager({ orders, onUpdate }) {
-  const [selectedMonth, setSelectedMonth] = useState(null);
-  const [selectedClinic, setSelectedClinic] = useState("all");
-  const [showPrint, setShowPrint] = useState(false);
-  const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all");
-  function toMonthKey(d) { const m = (d||"").match(/(\d{4}年\d{2}月)/); return m ? m[1] : "不明"; }
-  const months = [...new Set(orders.map(o => toMonthKey(o.date)))].sort((a,b) => b.localeCompare(a));
-  const currentMonth = selectedMonth || months[0] || "";
-  const monthOrders = orders.filter(o => toMonthKey(o.date) === currentMonth);
-  const clinics = ["all", ...new Set(monthOrders.map(o => o.clinic).filter(Boolean))];
-  const baseOrders = selectedClinic === "all" ? monthOrders : monthOrders.filter(o => o.clinic === selectedClinic);
-  const searchFiltered = !search.trim() ? baseOrders : baseOrders.filter(o => o.id.includes(search.trim()) || (o.clinic||"").includes(search.trim()) || o.products.some(p => (p.name||"").includes(search.trim())));
-  const filtered = statusFilter === "all" ? searchFiltered : searchFiltered.filter(o => o.products.some(p => { if (statusFilter === "pending") return p.status !== 6 && p.status !== 7; if (statusFilter === "partial") return p.status === 7; if (statusFilter === "done") return p.status === 6; return true; }));
-  const allP = filtered.flatMap(o => o.products);
-  const baseP = searchFiltered.flatMap(o => o.products);
-  const stats = { done: baseP.filter(p => p.status === 6).length, partial: baseP.filter(p => p.status === 7).length, notship: baseP.filter(p => p.status < 5 && p.status !== 7).length, total: baseP.length };
-  function statusLabel(p) {
-    if (p.status === 6) return { text:"完了", bg:"#e8f4ee", color:"#1a7a50" };
-    if (p.status === 7) return { text:"一部納品", bg:"#fff8f0", color:"#e07d20" };
-    if (p.status === 5) return { text:"配送中", bg:"#f0f6ff", color:"#3aa876" };
-    if (p.status === 4) return { text:"通関中", bg:"#fff8e8", color:"#b87f0a" };
-    return { text:"未納", bg:"#fff0f0", color:"#e05050" };
-  }
-  function delivSummary(p) {
-    if (!p.deliveryRecords || p.deliveryRecords.length === 0) {
-      if (p.status === 6) return [{ label: p.qty, date:"完了", done:true }];
-      return [{ label: p.qty, date:"未発送", done:false }];
-    }
-    return p.deliveryRecords.filter(r => r.qty > 0).map(r => ({ label: `${r.qty}${r.unit||""}`, date: r.delivDate ? r.delivDate.slice(5) : (r.shipDate ? r.shipDate.slice(5) : "未発送"), done: r.status === "発送済" }));
-  }
-  return (
-    <div style={{ fontSize:12 }}>
-      {showPrint && <PrintInstructModal orders={orders} onClose={() => setShowPrint(false)} />}
-      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10, gap:8, flexWrap:"wrap" }}>
-        <div style={{ display:"flex", gap:4, flexWrap:"wrap" }}>
-          {months.map(m => (<button key={m} onClick={() => { setSelectedMonth(m); setSelectedClinic("all"); }} style={{ padding:"4px 11px", borderRadius:14, border:"1.5px solid", flexShrink:0, borderColor:currentMonth===m?"#0f2744":"#dde4ef", background:currentMonth===m?"#0f2744":"#fff", color:currentMonth===m?"#fff":"#4a5568", fontWeight:currentMonth===m?700:400, fontSize:11.5, cursor:"pointer" }}>{m}</button>))}
-        </div>
-        <button onClick={() => setShowPrint(true)} style={{ padding:"6px 14px", borderRadius:8, border:"1.5px solid #0f2744", background:"#0f2744", color:"#fff", fontWeight:700, fontSize:12.5, cursor:"pointer", whiteSpace:"nowrap", flexShrink:0 }}>🖨️ 出荷指示書を印刷</button>
-      </div>
-      <div style={{ display:"flex", gap:10, marginBottom:10, alignItems:"flex-start", flexWrap:"wrap" }}>
-        <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
-          {[{key:"all",l:"全商品",v:stats.total,c:"#4a7cc7",bg:"#f0f4ff"},{key:"pending",l:"未納",v:stats.notship,c:"#e05050",bg:"#fff0f0"},{key:"partial",l:"一部発送済み",v:stats.partial,c:"#e07d20",bg:"#fff8f0"},{key:"done",l:"完了",v:stats.done,c:"#1a7a50",bg:"#e8f4ee"}].map(s => (<button key={s.key} onClick={() => setStatusFilter(s.key)} style={{ padding:"5px 12px", borderRadius:20, cursor:"pointer", border:`1.5px solid ${s.c}`, background:statusFilter===s.key?s.c:s.bg, color:statusFilter===s.key?"#fff":s.c, fontWeight:700, fontSize:12.5, boxShadow:statusFilter===s.key?`0 2px 6px ${s.c}44`:"none" }}>{s.l} {s.v}</button>))}
-        </div>
-        <div style={{ width:"100%", marginBottom:6 }}>
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="受注番号・クリニック名・商品名で検索" style={{ width:"100%", padding:"8px 14px", borderRadius:9, border:"1.5px solid #dde4ef", fontSize:13, outline:"none", background:"#fff", color:"#1a2a3a" }} />
-        </div>
-        <div style={{ display:"flex", gap:4, flexWrap:"wrap", flex:1 }}>
-          {clinics.map(c => (<button key={c} onClick={() => setSelectedClinic(c)} style={{ padding:"3px 9px", borderRadius:12, border:"1.5px solid", borderColor:selectedClinic===c?"#d4a843":"#dde4ef", background:selectedClinic===c?"#d4a843":"#fff", color:selectedClinic===c?"#0f2744":"#4a5568", fontWeight:selectedClinic===c?700:400, fontSize:11, cursor:"pointer", whiteSpace:"nowrap" }}>{c === "all" ? "全て" : c}</button>))}
-        </div>
-      </div>
-      {filtered.length === 0 && (<div style={{ textAlign:"center", padding:"40px", color:"#aaa" }}>該当する注文がありません</div>)}
-      <div style={{ border:"1.5px solid #e4eaf3", borderRadius:10, overflow:"hidden", boxShadow:"0 2px 8px rgba(10,30,53,0.05)" }}>
-        <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11.5 }}>
-          <colgroup><col style={{ width:"11%" }} /><col style={{ width:"10%" }} /><col style={{ width:"17%" }} /><col style={{ width:"5%" }} /><col style={{ width:"18%" }} /><col style={{ width:"5%" }} /><col style={{ width:"7%" }} /><col style={{ width:"9%" }} /><col style={{ width:"9%" }} /><col style={{ width:"9%" }} /></colgroup>
-          <thead><tr style={{ background:"#0f2744" }}>{["受注番号","クリニック","商品名","受注数","納品履歴","未納数","状況","入金状況","入金日","出荷指示"].map(h => (<th key={h} style={{ padding:"7px 8px", textAlign:h==="受注数"||h==="未納数"||h==="状況"?"center":"left", color:"rgba(255,255,255,0.85)", fontWeight:700, whiteSpace:"nowrap", fontSize:11.5 }}>{h}</th>))}</tr></thead>
-          <tbody>
-            {filtered.map((order, oi) => order.products.map((p, pi) => {
-              const sc = statusLabel(p);
-              const delivs = delivSummary(p);
-              const totalQty = p.totalQtyNum || 0;
-              const delivered = p.deliveredQtyNum || (p.status===6 ? totalQty : 0);
-              const remaining = Math.max(0, totalQty - delivered);
-              const isFirst = pi === 0;
-              const rowCount = order.products.length;
-              const rowBg = oi % 2 === 0 ? "#fff" : "#f9fafc";
-              return (
-                <tr key={`${order.id}-${pi}`} style={{ borderBottom:"1px solid #edf0f6", background:rowBg }}>
-                  {isFirst && (<td rowSpan={rowCount} style={{ padding:"7px 8px", verticalAlign:"top", borderRight:"1px solid #edf0f6", background:rowBg }}>
-                    <a href={`https://pitto.i15.bcart.jp/admin/order/list?order_code=${order.id}&sort=order_time-desc&limit=25`} target="_blank" rel="noopener noreferrer" style={{ color:"#1a6abf", textDecoration:"underline", fontWeight:700, fontSize:11, display:"block" }}>{order.id}</a>
-                    <div style={{ fontSize:10, color:"#8a95a5", marginTop:1 }}>{(order.date||"").replace("2026年","").replace("日","")}</div>
-                    <button onClick={() => { if (!confirm(`${order.id}の全商品（${order.products.length}種）を受注数で一括出荷指示しますか？`)) return; const now = new Date().toLocaleDateString("ja-JP",{year:"numeric",month:"2-digit",day:"2-digit"}); const newInstrs = order.products.map(p => ({ id:Date.now()+Math.random(), productName:p.name, qty:(p.totalQtyNum||parseInt(p.qty)||"").toString(), unit:p.unit||"", instructedAt:now })); const merged = [...(order.shipInstructions||[]), ...newInstrs]; onUpdate(order.id,"shipInstructions",merged); }} style={{ marginTop:6, width:"100%", padding:"4px 0", borderRadius:6, border:"1.5px solid #4a7cc7", background:"#f0f6ff", color:"#1a4a90", fontSize:10, fontWeight:700, cursor:"pointer", whiteSpace:"nowrap" }}>📦 一括指示</button>
-                  </td>)}
-                  {isFirst && (<td rowSpan={rowCount} style={{ padding:"7px 8px", verticalAlign:"top", borderRight:"1px solid #edf0f6", color:"#333", lineHeight:1.4, background:rowBg, wordBreak:"break-all" }}>{order.clinic}</td>)}
-                  <td style={{ padding:"6px 8px", color:"#1a2a3a", lineHeight:1.4, borderRight:"1px solid #edf0f6", wordBreak:"break-all" }}>{p.name}</td>
-                  <td style={{ padding:"6px 8px", textAlign:"center", fontWeight:700, color:"#1a2a3a", borderRight:"1px solid #edf0f6", whiteSpace:"nowrap" }}>{p.qty}</td>
-                  <td style={{ padding:"5px 8px", borderRight:"1px solid #edf0f6" }}>{delivs.map((d, j) => (<div key={j} style={{ display:"flex", alignItems:"center", gap:4, lineHeight:1.6 }}><span style={{ fontSize:10, fontWeight:700, color:d.done?"#1a7a50":"#a0aab8" }}>{d.done?"✅":"📋"} {d.label}</span><span style={{ fontSize:10, color:d.done?"#1a7a50":"#a0aab8" }}>{d.date}</span></div>))}</td>
-                  <td style={{ padding:"6px 8px", textAlign:"center", borderRight:"1px solid #edf0f6", whiteSpace:"nowrap" }}>{remaining > 0 ? <span style={{ fontWeight:900, color:"#e05050", fontSize:12 }}>{remaining}{p.unit||""}</span> : <span style={{ color:"#3aa876", fontWeight:700 }}>—</span>}</td>
-                  <td style={{ padding:"6px 8px", textAlign:"center" }}><span style={{ padding:"2px 7px", borderRadius:20, fontSize:10.5, fontWeight:700, background:sc.bg, color:sc.color, whiteSpace:"nowrap" }}>{sc.text}</span></td>
-                  {isFirst && (<td rowSpan={rowCount} style={{ padding:"6px 8px", verticalAlign:"top", borderLeft:"1px solid #edf0f6", background:rowBg }}>
-                    <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
-                      {["", "入金済み", "未入金", "クレジット"].map(opt => (<button key={opt} onClick={() => onUpdate(order.id, "paymentStatus", opt)} style={{ padding:"4px 8px", borderRadius:6, border:"1.5px solid", cursor:"pointer", fontSize:11, fontWeight:700, whiteSpace:"nowrap", borderColor:order.paymentStatus===opt?(opt==="入金済み"?"#1a7a50":opt==="未入金"?"#e05050":opt==="クレジット"?"#4a7cc7":"#dde4ef"):"#dde4ef", background:order.paymentStatus===opt?(opt==="入金済み"?"#1a7a50":opt==="未入金"?"#e05050":opt==="クレジット"?"#4a7cc7":"#f5f7fa"):"#fff", color:order.paymentStatus===opt?(opt?"#fff":"#8a95a5"):(opt==="入金済み"?"#1a7a50":opt==="未入金"?"#e05050":opt==="クレジット"?"#4a7cc7":"#aab") }}>{opt || "—"}</button>))}
-                    </div>
-                  </td>)}
-                  {isFirst && (<td rowSpan={rowCount} style={{ padding:"6px 8px", verticalAlign:"top", borderLeft:"1px solid #edf0f6", background:rowBg }}>
-                    <input type="date" value={order.paymentDate||""} onChange={e => onUpdate(order.id, "paymentDate", e.target.value)} style={{ width:"100%", padding:"4px 6px", borderRadius:6, border:"1.5px solid #dde4ef", fontSize:11, outline:"none", background:"#fff", cursor:"pointer", color:"#1a2a3a" }} />
-                    {order.paymentDate && (<div style={{ fontSize:10.5, color:"#1a7a50", fontWeight:700, marginTop:3, textAlign:"center" }}>{order.paymentDate.slice(5).replace("-","/")}</div>)}
-                  </td>)}
-                  <ShipInstructCell product={p} rowBg={rowBg} instructions={(order.shipInstructions||[]).filter(i => i.productName === p.name)} onAdd={(qty) => { const now = new Date().toLocaleDateString("ja-JP",{year:"numeric",month:"2-digit",day:"2-digit"}); const updated = [...(order.shipInstructions||[]), { id:Date.now(), productName:p.name, qty, unit:p.unit||"", instructedAt:now }]; onUpdate(order.id, "shipInstructions", updated); }} onCancel={(instrId) => { const updated = (order.shipInstructions||[]).filter(i => i.id !== instrId); onUpdate(order.id, "shipInstructions", updated); }} />
-                </tr>
-              );
-            }))}
-          </tbody>
-        </table>
-      </div>
-      <div style={{ fontSize:11, color:"#c0c8d4", marginTop:6, textAlign:"right" }}>{search.trim() ? `検索結果：${filtered.length}注文 / ${allP.length}商品` : `${filtered.length}注文 / ${allP.length}商品`}</div>
-    </div>
-  );
-}
-
-// ── リクエスト管理 ────────────────────────────────────────────────────────
-function RequestManager(props) {
-  const [requests, setRequests] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [replyText, setReplyText] = useState({});
-  const [replyFiles, setReplyFiles] = useState({});  // {requestId: File[]}
-  const [replying, setReplying] = useState({});
-  const [replyDone, setReplyDone] = useState({});
-  const replyFileRefs = {};
-  const waitFB = async () => { let t=0; while(!window._firebase&&t<30){await new Promise(r=>setTimeout(r,200));t++;} };
-  useEffect(() => {
-    const load = async () => {
-      await waitFB();
-      const data = await window._firebase.loadRequests();
-      setRequests(data);
+    try{await window._sfb.signIn(email,pw);}
+    catch(e){
+      const c=e.code||"";
+      if(c.includes("invalid-credential")||c.includes("wrong-password"))setError("メールアドレスまたはパスワードが正しくありません");
+      else setError("ログインに失敗しました");
       setLoading(false);
-      if (props.onUnreadCount) props.onUnreadCount(data.filter(r => r.status !== "replied").length);
-      data.filter(r => r.status === "unread").forEach(r => window._firebase.markRequestRead(r.id));
-    };
-    load();
-  }, []);
-  const fmtSize = (bytes) => bytes < 1024*1024 ? Math.round(bytes/1024)+"KB" : (bytes/1024/1024).toFixed(1)+"MB";
-
-  const handleReply = async (id) => {
-    const text = replyText[id];
-    if (!text || !text.trim()) return;
-    setReplying(p => ({...p, [id]: true}));
-    try {
-      const files = replyFiles[id] || [];
-      let attachments = [];
-      if (files.length > 0) {
-        attachments = await window._firebase.uploadFiles(files, id);
-      }
-      await window._firebase.replyRequest(id, text.trim(), attachments);
-      setRequests(prev => prev.map(r => r.id === id ? {...r, reply: text.trim(), status: "replied", replyAttachments: attachments} : r));
-      setReplyDone(p => ({...p, [id]: true}));
-      setReplyFiles(p => ({...p, [id]: []}));
-    } catch(e) { alert("送信に失敗しました"); }
-    setReplying(p => ({...p, [id]: false}));
+    }
   };
-  const unreplied = requests.filter(r => r.status !== "replied").length;
-  if (loading) return <div style={{ textAlign:"center",padding:"40px 0",color:"#8a95a5" }}>読み込み中...</div>;
-  return (
-    <div>
-      <div style={{ display:"flex",gap:10,marginBottom:16,flexWrap:"wrap" }}>
-        {[{l:"未返信",v:unreplied,c:"#e07d20"},{l:"返信済み",v:requests.filter(r=>r.status==="replied").length,c:"#3aa876"},{l:"合計",v:requests.length,c:"#6b8cba"}].map(s=>(
-          <div key={s.l} style={{ background:"#fff",borderRadius:12,border:"1.5px solid #e4eaf3",padding:"12px 18px",flex:1,minWidth:120 }}>
-            <div style={{ fontSize:22,fontWeight:900,color:s.c }}>{s.v}</div>
-            <div style={{ fontSize:11,color:"#8a95a5",marginTop:2 }}>{s.l}</div>
+  const inp={width:"100%",padding:"13px 14px",borderRadius:10,border:"1.5px solid rgba(255,255,255,0.15)",background:"rgba(255,255,255,0.08)",color:"#fff",fontSize:15,outline:"none"};
+  return(
+    <div style={{minHeight:"100vh",background:`linear-gradient(160deg,#0a2818,#0f3d20,#1a5a30)`,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+      <div style={{width:"100%",maxWidth:380}}>
+        <div style={{textAlign:"center",marginBottom:32}}>
+          <div style={{fontSize:10.5,letterSpacing:"0.2em",color:GLL,fontWeight:700,marginBottom:8,textTransform:"uppercase"}}>Sales Management System</div>
+          <div style={{fontSize:24,fontWeight:900,color:"#fff",lineHeight:1.3,marginBottom:8}}>営業管理<br/>システム</div>
+        </div>
+        <div style={{background:"rgba(255,255,255,0.07)",border:"1.5px solid rgba(255,255,255,0.12)",borderRadius:16,padding:"28px 24px"}}>
+          <div style={{marginBottom:14}}>
+            <div style={{fontSize:11.5,color:"rgba(255,255,255,0.6)",marginBottom:6}}>メールアドレス</div>
+            <input type="email" value={email} onChange={e=>{setEmail(e.target.value);setError("");}} onKeyDown={e=>e.key==="Enter"&&handleLogin()} placeholder="sales@example.com" style={inp}/>
           </div>
-        ))}
+          <div style={{marginBottom:16}}>
+            <div style={{fontSize:11.5,color:"rgba(255,255,255,0.6)",marginBottom:6}}>パスワード</div>
+            <input type="password" value={pw} onChange={e=>{setPw(e.target.value);setError("");}} onKeyDown={e=>e.key==="Enter"&&handleLogin()} placeholder="••••••••" style={inp}/>
+          </div>
+          {error&&<div style={{padding:"10px 12px",background:"rgba(220,50,50,0.15)",border:"1px solid rgba(220,50,50,0.3)",borderRadius:8,color:"#ff9090",fontSize:12.5,marginBottom:14}}>⚠ {error}</div>}
+          <button onClick={handleLogin} disabled={loading} style={{width:"100%",padding:14,borderRadius:10,border:"none",background:GL,color:"#fff",fontWeight:800,fontSize:14,cursor:"pointer",opacity:loading?0.7:1}}>{loading?"ログイン中...":"ログイン"}</button>
+        </div>
       </div>
-      {requests.length === 0 && (<div style={{ textAlign:"center",padding:"48px 0",color:"#8a95a5" }}><div style={{ fontSize:32,marginBottom:12 }}>📭</div><div style={{ fontSize:14 }}>リクエストはまだありません</div></div>)}
-      {requests.map(r => (
-        <div key={r.id} style={{ background:"#fff",borderRadius:14,border:`1.5px solid ${r.status==="replied"?"#c0d0e8":"#f0c090"}`,marginBottom:12,overflow:"hidden",boxShadow:"0 1px 8px rgba(10,30,53,0.05)",borderLeft:`4px solid ${r.status==="replied"?"#3aa876":"#e07d20"}` }}>
-          <div style={{ padding:"14px 16px" }}>
-            <div style={{ display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10 }}>
-              <div>
-                <div style={{ display:"flex",alignItems:"center",gap:6,marginBottom:4,flexWrap:"wrap" }}>
-                  <span style={{ fontSize:14,fontWeight:900,color:"#0f2744" }}>{r.orderId||"—"}</span>
-                  {r.category&&<span style={{ padding:"2px 8px",borderRadius:20,fontSize:11,fontWeight:700,background:"#f0f4ff",color:"#4a5568",border:"1px solid #dde4ef" }}>{r.category}</span>}
-                  <span style={{ padding:"3px 9px",borderRadius:20,fontSize:11,fontWeight:700,background:r.status==="replied"?"#e8f0fa":"#fff8e8",color:r.status==="replied"?"#0f2744":"#b87f0a",border:r.status==="replied"?"1px solid #c0d0e8":"1px solid #e8c95a" }}>{r.status==="replied"?"✅ 返信済み":"🚨 未返信"}</span>
-                </div>
-                <div style={{ fontSize:11.5,color:"#8a95a5" }}>{r.clinic}　{r.email}</div>
-              </div>
-              <div style={{ fontSize:11,color:"#a0aab8",textAlign:"right" }}>{r.createdAt}</div>
-            </div>
-            {/* 進捗ステータス更新 */}
-            <div style={{ display:"flex",gap:5,marginBottom:10,flexWrap:"wrap" }}>
-              <span style={{ fontSize:11,color:"#8a95a5",alignSelf:"center" }}>進捗：</span>
-              {["受付待ち","確認中","対応中","完了"].map(p => (
-                <button key={p} onClick={async()=>{ await window._firebase.updateRequestProgress(r.id, p); setRequests(prev=>prev.map(req=>req.id===r.id?{...req,progress:p}:req)); }}
-                  style={{ padding:"3px 10px",borderRadius:20,border:"1.5px solid",cursor:"pointer",fontSize:11,fontWeight:700,
-                    borderColor:(r.progress||"受付待ち")===p?"#4a7cc7":"#dde4ef",
-                    background:(r.progress||"受付待ち")===p?"#4a7cc7":"#fff",
-                    color:(r.progress||"受付待ち")===p?"#fff":"#6a7a8a" }}>
-                  {p}
-                </button>
-              ))}
-            </div>
-            <div style={{ padding:"10px 14px",background:"#f8fafd",borderRadius:9,border:"1px solid #e4eaf3",fontSize:13,color:"#4a5568",marginBottom:6 }}>📬 {r.message}</div>
-            {/* お客様の添付ファイル */}
-            {r.attachments && r.attachments.length > 0 && (
-              <div style={{ marginBottom:10 }}>
-                <div style={{ fontSize:11,color:"#8a95a5",marginBottom:4,fontWeight:600 }}>📎 お客様の添付ファイル</div>
-                {r.attachments.map((f,fi) => (
-                  <a key={fi} href={f.url} target="_blank" rel="noopener noreferrer"
-                    style={{ display:"flex",alignItems:"center",gap:6,padding:"5px 9px",background:"#f0f6ff",borderRadius:7,border:"1px solid #d0ddf0",textDecoration:"none",marginBottom:3 }}>
-                    <span style={{ fontSize:13 }}>📄</span>
-                    <span style={{ fontSize:12,color:"#1a6abf",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{f.name}</span>
-                    <span style={{ fontSize:10,color:"#8a95a5" }}>↓ DL</span>
-                  </a>
-                ))}
-              </div>
-            )}
-            {r.reply && (<div style={{ padding:"10px 14px",background:"#f0f6ff",borderRadius:9,border:"1px solid #d0e0f4",fontSize:13,color:"#1a3a5c",marginBottom:4 }}>💬 {r.reply}</div>)}
-            {/* 管理者の添付ファイル */}
-            {r.replyAttachments && r.replyAttachments.length > 0 && (
-              <div style={{ marginBottom:4 }}>
-                {r.replyAttachments.map((f,fi) => (
-                  <a key={fi} href={f.url} target="_blank" rel="noopener noreferrer"
-                    style={{ display:"flex",alignItems:"center",gap:6,padding:"5px 9px",background:"#e8f4ee",borderRadius:7,border:"1px solid #b0d8b8",textDecoration:"none",marginBottom:3 }}>
-                    <span style={{ fontSize:13 }}>📄</span>
-                    <span style={{ fontSize:12,color:"#1a6abf",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{f.name}</span>
-                    <span style={{ fontSize:10,color:"#8a95a5" }}>↓ DL</span>
-                  </a>
-                ))}
-              </div>
-            )}
-            {r.repliedAt && <div style={{ fontSize:11,color:"#a0aab8",marginBottom:8,textAlign:"right" }}>返信日時：{r.repliedAt}</div>}
-            {r.status !== "replied" && !replyDone[r.id] && (
-              <div style={{ marginTop:8 }}>
-                <div style={{ fontSize:11.5,color:"#8a95a5",marginBottom:6 }}>返信メッセージを入力</div>
-                <textarea value={replyText[r.id]||""} onChange={e=>setReplyText(p=>({...p,[r.id]:e.target.value}))} placeholder="例：〇〇の商品は現在通関中で、約3〜5日でお届け予定です。" rows={3} style={{ width:"100%",padding:"10px 12px",borderRadius:9,border:"1.5px solid #dde4ef",fontSize:13,outline:"none",resize:"vertical",boxSizing:"border-box",marginBottom:8 }}/>
-                {/* 添付ファイル */}
-                <div style={{ marginBottom:8 }}>
-                  <input type="file" multiple id={`replyFile_${r.id}`}
-                    accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.png,.jpg,.jpeg,.gif,.zip,.csv"
-                    onChange={e=>{
-                      const files=Array.from(e.target.files).filter(f=>f.size<=10*1024*1024);
-                      setReplyFiles(p=>({...p,[r.id]:[...(p[r.id]||[]),...files]}));
-                      e.target.value="";
-                    }} style={{ display:"none" }}/>
-                  <label htmlFor={`replyFile_${r.id}`}
-                    style={{ display:"inline-flex",alignItems:"center",gap:6,padding:"6px 12px",borderRadius:8,border:"1.5px dashed #b0c4de",background:"#f8fafd",fontSize:12,cursor:"pointer",color:"#4a7cc7",fontWeight:700 }}>
-                    📎 ファイルを添付
-                  </label>
-                  {(replyFiles[r.id]||[]).length > 0 && (
-                    <div style={{ marginTop:6,display:"flex",flexDirection:"column",gap:4 }}>
-                      {(replyFiles[r.id]||[]).map((f,fi) => (
-                        <div key={fi} style={{ display:"flex",alignItems:"center",gap:6,padding:"5px 9px",background:"#f0f6ff",borderRadius:7,border:"1px solid #d0ddf0" }}>
-                          <span style={{ fontSize:12 }}>📄</span>
-                          <span style={{ flex:1,fontSize:11.5,color:"#1a2a3a",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{f.name}</span>
-                          <span style={{ fontSize:10.5,color:"#8a95a5" }}>{fmtSize(f.size)}</span>
-                          <button onClick={()=>setReplyFiles(p=>({...p,[r.id]:(p[r.id]||[]).filter((_,i)=>i!==fi)}))}
-                            style={{ border:"none",background:"none",color:"#e05050",fontSize:13,cursor:"pointer",padding:0 }}>✕</button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                <button onClick={()=>handleReply(r.id)} disabled={replying[r.id]} style={{ width:"100%",padding:"11px",borderRadius:9,border:"none",background:"#0f2744",color:"#fff",fontWeight:800,fontSize:13,cursor:"pointer",opacity:replying[r.id]?0.7:1 }}>{replying[r.id]?"送信中...":"返信を送る"}</button>
-              </div>
-            )}
-            {replyDone[r.id] && (<div style={{ padding:"10px",background:"#f0fdf6",borderRadius:9,border:"1px solid #a0d8b8",fontSize:13,color:"#1a7a50",fontWeight:600,textAlign:"center" }}>✅ 返信を送信しました</div>)}
-          </div>
+    </div>
+  );
+}
+
+// ── 月次グラフ ────────────────────────────────────────────────────────────
+function MiniBar({data,valueKey,labelKey,color,height=80}){
+  const max=Math.max(...data.map(d=>d[valueKey]),1);
+  return(
+    <div style={{display:"flex",gap:3,alignItems:"flex-end",height:height+24}}>
+      {data.map((d,i)=>(
+        <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
+          <div style={{fontSize:9,fontWeight:700,color:"#0f2744",minHeight:12}}>{d[valueKey]>0?d[valueKey]:""}</div>
+          <div style={{width:"100%",background:d[valueKey]>0?color:"#e4eaf3",borderRadius:"3px 3px 0 0",height:Math.max(3,Math.round((d[valueKey]/max)*height))+"px",transition:"height 0.3s"}}/>
+          <div style={{fontSize:8.5,color:"#a0aab8",textAlign:"center",lineHeight:1.2}}>{(d[labelKey]||"").replace("年","/").replace("月","")}</div>
         </div>
       ))}
     </div>
   );
 }
 
-// ── メインApp ─────────────────────────────────────────────────────────────
-function App() {
-  const [authed,setAuthed]=useState(false);
-  const [orders,setOrders]=useState([]);
-  const [loading,setLoading]=useState(true);
-  const [showCsv,setShowCsv]=useState(false);
-  const [saveStatus,setSaveStatus]=useState("");
-  const [groupMode,setGroupMode]=useState("month");
-  const [search,setSearch]=useState("");
-  const [importMsg,setImportMsg]=useState("");
-  const [tab,setTab]=useState("orders");
-  const [unreadCount,setUnreadCount]=useState(0);
+// ── 全体ダッシュボード ────────────────────────────────────────────────────
+function OverviewDashboard({clinics,orders,salesName,onSelectClinic}){
+  const now=new Date();
+  const thisMK=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}`;
+  const lastMK=`${now.getMonth()===0?now.getFullYear()-1:now.getFullYear()}-${String(now.getMonth()===0?12:now.getMonth()).padStart(2,"0")}`;
 
-  useEffect(()=>{
-    if(!authed) return;
-    const load=async()=>{
-      let t=0; while(!window._firebase&&t<30){await new Promise(r=>setTimeout(r,200));t++;}
-      try{
-        const [ordersData, annotations, bindings] = await Promise.all([
-          window._firebase.loadOrders(),
-          window._firebase.loadAnnotations(),
-          window._firebase.loadBindings(),
-        ]);
-        const merged = (ordersData||[]).map(o => {
-          const ann = annotations[o.id] || {};
-          return { ...o, paymentStatus: ann.paymentStatus || o.paymentStatus || "", paymentDate: ann.paymentDate || o.paymentDate || "", shipInstructions: ann.shipInstructions || o.shipInstructions || [] };
-        });
-        setOrders(merged);
-        window._annotations = annotations;
-        window._bindings = bindings;
-        console.log("✅ 読込完了:", merged.length, "件");
-      }catch(e){ console.error("load error:", e); }
-      setLoading(false);
-    };
-    load();
-  },[authed]);
+  // 月次キー（過去6ヶ月）
+  const monthKeys=[];
+  for(let i=5;i>=0;i--){
+    const d=new Date(now.getFullYear(),now.getMonth()-i,1);
+    monthKeys.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`);
+  }
 
-  const updateOrder=(id,field,value)=>{
-    setOrders(prev=>prev.map(o=>{
-      if(o.id!==id) return o;
-      const updated={...o,[field]:value,updatedAt:nowStr()};
-      if(["paymentStatus","paymentDate","shipInstructions"].includes(field)){
-        if(!window._annotations) window._annotations={};
-        if(!window._annotations[id]) window._annotations[id]={};
-        window._annotations[id][field]=value;
-      }
-      return updated;
-    }));
-  };
-  const deleteOrder=(id)=>setOrders(prev=>prev.filter(o=>o.id!==id));
-  const handleImport=(newOrders)=>{
-    setOrders(prev=>{
-      const map={};
-      prev.forEach(o=>map[o.id]=o);
-      newOrders.forEach(newOrder=>{
-        const existing = map[newOrder.id];
-        const ann = (window._annotations || {})[newOrder.id] || {};
-        const base = existing || {};
-        map[newOrder.id] = { ...newOrder, paymentStatus: base.paymentStatus || ann.paymentStatus || "", paymentDate: base.paymentDate || ann.paymentDate || "", shipInstructions: base.shipInstructions || ann.shipInstructions || [] };
-      });
-      return Object.values(map).sort((a,b)=>b.id.localeCompare(a.id));
+  // 全担当クリニックの集計
+  const myOrders=orders.filter(o=>clinics.includes(o.clinic));
+
+  // 今月・先月の売上
+  const calcRevenue=(mk)=>{
+    const mo=myOrders.filter(o=>toMK(o.date)===mk);
+    let rev=0;
+    mo.forEach(o=>{
+      if(o.totalAmount) rev+=o.totalAmount;
+      else o.products.forEach(p=>{if(p.amount)rev+=p.amount;});
     });
-    setImportMsg(`✅ ${newOrders.length}件をインポートしました。「Firebaseに保存」を押してください。`);
-    setTimeout(()=>setImportMsg(""),8000);
+    return {orders:mo.length, revenue:rev};
   };
-  const downloadBackup = async (ordersData) => {
-    const annotations = {};
-    ordersData.forEach(o => { if (o.paymentStatus || o.paymentDate || (o.shipInstructions && o.shipInstructions.length > 0)) { annotations[o.id] = { paymentStatus: o.paymentStatus || "", paymentDate: o.paymentDate || "", shipInstructions: o.shipInstructions || [] }; } });
-    let allData = { version:3, exportedAt: new Date().toISOString(), annotations, requests:[] };
-    try { const full = await window._firebase.loadAllData(); allData.requests = full.requests || []; } catch(e) {}
-    const blob = new Blob([JSON.stringify(allData, null, 2)], {type:"application/json"});
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    const d = new Date();
-    a.href = url;
-    a.download = `backup_${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}_${String(d.getHours()).padStart(2,"0")}${String(d.getMinutes()).padStart(2,"0")}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-  const handleSave=async()=>{
-    setSaveStatus("saving");
-    try{
-      await window._firebase.saveOrders(orders);
-      setSaveStatus("saved");
-      try { await downloadBackup(orders); } catch(be){ console.error("バックアップエラー:", be); }
-    }catch(e){
-      console.error("保存エラー:", e);
-      setSaveStatus("error");
-      alert("⚠️ 保存に失敗しました。\n\n" + (e.message||"不明なエラー"));
-    }
-    setTimeout(()=>setSaveStatus(""),4000);
-  };
+  const thisM=calcRevenue(thisMK);
+  const lastM=calcRevenue(lastMK);
+  const revDiff=lastM.revenue>0?Math.round((thisM.revenue-lastM.revenue)/lastM.revenue*100):null;
 
-  const filtered=orders.filter(o=>!search||o.id.includes(search)||o.clinic.includes(search)||o.products.some(p=>p.name.includes(search)));
-  const grouped=groupMode==="month"?groupBy(filtered,o=>toMonthKey(o.date)):groupBy(filtered,o=>o.clinic||"不明");
-  const keys=Object.keys(grouped).sort((a,b)=>groupMode==="month"?b.localeCompare(a):a.localeCompare(b));
-  const allP=orders.flatMap(o=>o.products);
-  const activeP=allP.filter(p=>p.status<6).length;
-  const cnt=STATUS_STAGES.reduce((a,s)=>{a[s.id]=allP.filter(p=>p.status===s.id).length;return a;},{});
+  // 月次トレンドデータ
+  const trend=monthKeys.map(mk=>{
+    const d=calcRevenue(mk);
+    return {month:fmtMK(mk),orders:d.orders,revenue:d.revenue};
+  });
+  const maxRev=Math.max(...trend.map(t=>t.revenue),1);
 
-  if(!authed) return <LoginScreen onLogin={()=>setAuthed(true)}/>;
+  // フォローアップ（30日以上未注文）
+  const followUp=clinics.map(clinic=>{
+    const co=myOrders.filter(o=>o.clinic===clinic).sort((a,b)=>b.id.localeCompare(a.id));
+    const last=co[0];
+    const lastDate=last?parseJpDate(last.date):null;
+    const days=lastDate?daysBetween(lastDate,now):null;
+    // クリニック売上（全期間）
+    let totalRev=0;
+    co.forEach(o=>{
+      if(o.totalAmount)totalRev+=o.totalAmount;
+      else o.products.forEach(p=>{if(p.amount)totalRev+=p.amount;});
+    });
+    return {clinic,lastDate:last?.date,days,orderCount:co.length,totalRev};
+  }).filter(c=>c.days===null||c.days>=30).sort((a,b)=>(b.days||999)-(a.days||999));
 
-  return (
-    <div style={{ minHeight:"100vh",background:"#f0f4f9" }}>
-      {showCsv&&<CsvImportModal onImport={handleImport} onClose={()=>setShowCsv(false)}/>}
-      <div style={{ background:"linear-gradient(135deg,#0a1e35,#0f2744)",padding:"18px 18px 20px",position:"sticky",top:0,zIndex:50 }}>
-        <div style={{ maxWidth:1200,margin:"0 auto" }}>
-          <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14 }}>
-            <div>
-              <div style={{ fontSize:11,letterSpacing:"0.18em",color:"#d4a843",fontWeight:700,marginBottom:3 }}>ADMIN</div>
-              <div style={{ fontSize:17,fontWeight:900,color:"#fff" }}>輸入状況 管理ダッシュボード</div>
-            </div>
-            {tab==="orders"&&(
-              <div style={{ display:"flex",gap:8 }}>
-                <button onClick={()=>setShowCsv(true)} style={{ padding:"9px 14px",borderRadius:9,border:"1.5px solid rgba(100,200,150,0.6)",background:"transparent",color:"#7df0b0",fontWeight:700,fontSize:13,cursor:"pointer" }}>📂 CSV取込</button>
-                <button onClick={handleSave} disabled={saveStatus==="saving"} style={{ padding:"9px 16px",borderRadius:9,border:"none",background:saveStatus==="saved"?"#3aa876":saveStatus==="error"?"#e05050":"#d4a843",color:"#0a1e35",fontWeight:800,fontSize:13,cursor:"pointer" }}>{saveStatus==="saving"?"保存中...":saveStatus==="saved"?"✓ 保存済み":saveStatus==="error"?"エラー":"Firebaseに保存"}</button>
-              </div>
-            )}
+  // クリニック別今月売上ランキング
+  const clinicThis=clinics.map(clinic=>{
+    const co=myOrders.filter(o=>o.clinic===clinic&&toMK(o.date)===thisMK);
+    let rev=0;
+    co.forEach(o=>{if(o.totalAmount)rev+=o.totalAmount;else o.products.forEach(p=>{if(p.amount)rev+=p.amount;});});
+    const allCo=myOrders.filter(o=>o.clinic===clinic).sort((a,b)=>b.id.localeCompare(a.id));
+    const lastDate=allCo[0]?parseJpDate(allCo[0].date):null;
+    const days=lastDate?daysBetween(lastDate,now):null;
+    return {clinic,orders:co.length,revenue:rev,days,totalOrders:allCo.length};
+  }).sort((a,b)=>b.revenue!==a.revenue?b.revenue-a.revenue:b.orders-a.orders);
+
+  const hasRevData=myOrders.some(o=>o.totalAmount||(o.products||[]).some(p=>p.amount));
+
+  return(
+    <div style={{padding:"20px",display:"flex",flexDirection:"column",gap:16}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-end"}}>
+        <div>
+          <div style={{fontSize:16,fontWeight:900,color:"#0f2744"}}>
+            {salesName?"こんにちは、"+salesName+"さん":"こんにちは"}
           </div>
-          <div style={{ display:"flex",gap:7,overflowX:"auto",paddingBottom:2,marginBottom:14 }}>
-            {[{l:"対応中商品",v:activeP,c:"#d4a843"},{l:"通関待ち",v:cnt[4]||0,c:"#e07d20"},{l:"配送中",v:cnt[5]||0,c:"#3aa876"},{l:"完了商品",v:cnt[6]||0,c:"#6b8cba"},{l:"全注文",v:orders.length,c:"#8a9ab5"}].map(s=>(
-              <div key={s.l} style={{ background:"rgba(255,255,255,0.09)",borderRadius:10,padding:"7px 13px",flexShrink:0,border:`1px solid ${s.c}30` }}>
-                <div style={{ fontSize:18,fontWeight:900,color:s.c }}>{s.v}</div>
-                <div style={{ fontSize:10,color:"rgba(255,255,255,0.5)",marginTop:1 }}>{s.l}</div>
-              </div>
-            ))}
-          </div>
-          <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:3 }}>
-            {[["orders","📦 注文管理"],["status","📊 ステータス管理"],["requests", unreadCount > 0 ? `📬 リクエスト ${unreadCount}件` : "📬 リクエスト"],["accounts","👤 クリニック管理"],["sales","💼 営業管理"],["backup","💾 バックアップ"]].map(([key,label])=>(
-              <button key={key} onClick={()=>setTab(key)} style={{ padding:"9px 8px",borderRadius:8,border:"none",background:tab===key?"#fff":"rgba(255,255,255,0.08)",color:tab===key?"#0f2744":"rgba(255,255,255,0.7)",fontWeight:tab===key?700:500,fontSize:12.5,cursor:"pointer",transition:"all 0.2s",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis" }}>{label}</button>
-            ))}
-          </div>
+          <div style={{fontSize:12,color:"#8a95a5",marginTop:2}}>担当 {clinics.length}クリニック の状況です</div>
         </div>
       </div>
 
-      <div style={{ maxWidth:1200,margin:"0 auto",padding:"18px 14px 48px" }}>
-        {tab==="accounts" && <ClinicManager orders={orders} />}
-        {tab==="sales" && <SalesManager orders={orders} />}
-        {tab==="requests" && <RequestManager onUnreadCount={setUnreadCount}/>}
-        {tab==="status" && <StatusManager orders={orders} onUpdate={updateOrder} />}
-        {tab==="backup" && <BackupManager orders={orders} downloadBackup={downloadBackup} />}
-        {tab==="orders" && (
-          <>
-            {loading&&<div style={{ textAlign:"center",padding:"60px 0",color:"#8a95a5" }}><div style={{ fontSize:32,marginBottom:12 }}>🔄</div><div style={{ fontSize:14 }}>データを読み込み中...</div></div>}
-            {!loading&&importMsg&&<div style={{ padding:"11px 16px",background:"#f0fdf6",border:"1.5px solid #3aa876",borderRadius:10,fontSize:13,fontWeight:700,color:"#1a7a50",marginBottom:14 }}>{importMsg}</div>}
-            {!loading&&(
-              <>
-                <div style={{ display:"flex",gap:8,marginBottom:16,flexWrap:"wrap",alignItems:"center" }}>
-                  <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="注文番号・クリニック・商品名で検索" style={{ flex:1,minWidth:160,padding:"10px 14px",borderRadius:10,border:"1.5px solid #dde4ef",fontSize:13,outline:"none",background:"#fff",color:"#0f2744" }}/>
-                  <div style={{ display:"flex",background:"#fff",borderRadius:10,border:"1.5px solid #dde4ef",overflow:"hidden" }}>
-                    {[["month","📅 月別"],["clinic","🏥 クリニック別"]].map(([k,l])=>(
-                      <button key={k} onClick={()=>setGroupMode(k)} style={{ padding:"9px 13px",border:"none",background:groupMode===k?"#0f2744":"transparent",color:groupMode===k?"#fff":"#6a7a8a",fontWeight:groupMode===k?700:500,fontSize:12.5,cursor:"pointer",whiteSpace:"nowrap" }}>{l}</button>
-                    ))}
-                  </div>
+      {/* KPIカード */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8}}>
+        {/* 今月売上 */}
+        <div style={{background:"#f0fdf6",borderRadius:12,padding:"12px 14px",border:"1.5px solid #3aa87630",gridColumn: hasRevData?"auto":"1/3"}}>
+          <div style={{fontSize:10,color:GL,fontWeight:700,marginBottom:3}}>💴 今月の売上</div>
+          {hasRevData?(
+            <>
+              <div style={{fontSize:20,fontWeight:900,color:G}}>{fmtYen(thisM.revenue)}</div>
+              {revDiff!==null&&<div style={{fontSize:10.5,marginTop:3,color:revDiff>=0?"#1a7a50":"#e05050",fontWeight:700}}>{revDiff>=0?"▲":"▼"}{Math.abs(revDiff)}% vs 先月</div>}
+            </>
+          ):(
+            <div style={{fontSize:11,color:"#a0aab8",marginTop:4,lineHeight:1.5}}>CSVに金額データなし<br/>再インポートで反映</div>
+          )}
+        </div>
+        {/* 今月受注 */}
+        <div style={{background:"#fffbef",borderRadius:12,padding:"12px 14px",border:"1.5px solid #d4a84330"}}>
+          <div style={{fontSize:10,color:"#d4a843",fontWeight:700,marginBottom:3}}>📋 今月の受注</div>
+          <div style={{fontSize:20,fontWeight:900,color:"#b87f0a"}}>{thisM.orders}<span style={{fontSize:11,marginLeft:2}}>件</span></div>
+          {lastM.orders>0&&<div style={{fontSize:10.5,marginTop:3,color:"#8a6010"}}>先月 {lastM.orders}件</div>}
+        </div>
+        {/* 対応中 */}
+        <div style={{background:"#fff8f0",borderRadius:12,padding:"12px 14px",border:"1.5px solid #e07d2030"}}>
+          <div style={{fontSize:10,color:"#e07d20",fontWeight:700,marginBottom:3}}>📦 対応中商品</div>
+          <div style={{fontSize:20,fontWeight:900,color:"#c06010"}}>{myOrders.flatMap(o=>o.products).filter(p=>p.status<6).length}<span style={{fontSize:11,marginLeft:2}}>件</span></div>
+        </div>
+        {/* フォローアップ */}
+        <div style={{background:followUp.length>0?"#fff8f0":"#f0fdf6",borderRadius:12,padding:"12px 14px",border:`1.5px solid ${followUp.length>0?"#e07d2030":"#3aa87630"}`}}>
+          <div style={{fontSize:10,color:followUp.length>0?"#e07d20":GL,fontWeight:700,marginBottom:3}}>🔔 要フォロー</div>
+          <div style={{fontSize:20,fontWeight:900,color:followUp.length>0?"#c06010":G}}>{followUp.length}<span style={{fontSize:11,marginLeft:2}}>件</span></div>
+        </div>
+      </div>
+
+      {/* 月次売上グラフ */}
+      {hasRevData&&(
+        <div style={{background:"#fff",borderRadius:14,border:"1.5px solid #e4eaf3",padding:"16px",boxShadow:"0 2px 8px rgba(10,30,53,0.05)"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+            <div style={{fontSize:13,fontWeight:800,color:"#0f2744"}}>📊 月次売上推移</div>
+            <div style={{fontSize:11,color:"#8a95a5"}}>過去6ヶ月</div>
+          </div>
+          <div style={{display:"flex",gap:3,alignItems:"flex-end",height:100}}>
+            {trend.map((d,i)=>(
+              <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
+                <div style={{fontSize:8.5,fontWeight:700,color:"#0f2744",minHeight:12,textAlign:"center"}}>{d.revenue>0?("¥"+(d.revenue>=10000?Math.round(d.revenue/10000)+"万":"")):"" }</div>
+                <div style={{width:"100%",background:d.revenue>0?GL:"#e4eaf3",borderRadius:"3px 3px 0 0",height:Math.max(3,Math.round((d.revenue/maxRev)*72))+"px",transition:"height 0.3s"}}/>
+                <div style={{fontSize:8.5,color:"#a0aab8",textAlign:"center",lineHeight:1.2}}>{d.month.replace("年","/").replace("月","")}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* 月次受注グラフ（売上データなし時） */}
+      {!hasRevData&&(
+        <div style={{background:"#fff",borderRadius:14,border:"1.5px solid #e4eaf3",padding:"16px",boxShadow:"0 2px 8px rgba(10,30,53,0.05)"}}>
+          <div style={{fontSize:13,fontWeight:800,color:"#0f2744",marginBottom:12}}>📊 月次受注推移</div>
+          <MiniBar data={trend} valueKey="orders" labelKey="month" color={GL} height={72}/>
+          <div style={{marginTop:8,padding:"8px 12px",background:"#fffbef",borderRadius:8,border:"1px solid #e8c95a",fontSize:11.5,color:"#7a6020"}}>
+            💡 売上金額を表示するにはCSVを再インポートしてください（単価・商品金額列が必要です）
+          </div>
+        </div>
+      )}
+
+      {/* クリニック別サマリーテーブル */}
+      <div style={{background:"#fff",borderRadius:14,border:"1.5px solid #e4eaf3",padding:"16px",boxShadow:"0 2px 8px rgba(10,30,53,0.05)"}}>
+        <div style={{fontSize:13,fontWeight:800,color:"#0f2744",marginBottom:12}}>🏥 クリニック別状況（今月）</div>
+        <div style={{border:"1px solid #f0f4f9",borderRadius:10,overflow:"hidden"}}>
+          <div style={{display:"grid",gridTemplateColumns:`2fr ${hasRevData?"1fr ":""}1fr 1fr 1fr`,background:"#0f2744",padding:"7px 12px",gap:8}}>
+            {["クリニック", ...(hasRevData?["今月売上"]:[]), "今月受注", "累計受注", "最終注文"].map(h=>(
+              <div key={h} style={{fontSize:11,fontWeight:700,color:"rgba(255,255,255,0.85)"}}>{h}</div>
+            ))}
+          </div>
+          {clinicThis.map((c,i)=>(
+            <div key={c.clinic} onClick={()=>onSelectClinic(c.clinic)}
+              style={{display:"grid",gridTemplateColumns:`2fr ${hasRevData?"1fr ":""}1fr 1fr 1fr`,padding:"9px 12px",gap:8,cursor:"pointer",background:i%2===0?"#fff":"#f9fafc",borderBottom:"1px solid #f0f4f9",transition:"background 0.1s"}}
+              onMouseEnter={e=>e.currentTarget.style.background="#f0fdf6"}
+              onMouseLeave={e=>e.currentTarget.style.background=i%2===0?"#fff":"#f9fafc"}>
+              <div>
+                <div style={{fontSize:12.5,fontWeight:700,color:"#0f2744",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.clinic}</div>
+                {(c.days===null||c.days>=30)&&<div style={{fontSize:10,color:"#e07d20",fontWeight:700,marginTop:1}}>🔔 要フォロー（{c.days===null?"未注文":c.days+"日"}）</div>}
+              </div>
+              {hasRevData&&<div style={{fontSize:12.5,fontWeight:700,color:c.revenue>0?G:"#a0aab8"}}>{fmtYen(c.revenue)}</div>}
+              <div style={{fontSize:12.5,color:c.orders>0?"#0f2744":"#a0aab8",fontWeight:c.orders>0?700:400}}>{c.orders>0?c.orders+"件":"—"}</div>
+              <div style={{fontSize:12.5,color:"#4a5568"}}>{c.totalOrders}件</div>
+              <div style={{fontSize:11,color:c.days===null||c.days>=30?"#e07d20":"#8a95a5"}}>{c.days===null?"未注文":c.days+"日前"}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* フォローアップアラート */}
+      {followUp.length>0&&(
+        <div style={{background:"#fff",borderRadius:14,border:"1.5px solid #f0c090",padding:"16px",boxShadow:"0 2px 8px rgba(10,30,53,0.05)"}}>
+          <div style={{fontSize:13,fontWeight:800,color:"#e07d20",marginBottom:10}}>🔔 フォローアップ推奨（{followUp.length}件）</div>
+          {followUp.map(c=>(
+            <div key={c.clinic} onClick={()=>onSelectClinic(c.clinic)}
+              style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:"1px solid #fdf0e0",cursor:"pointer"}}
+              onMouseEnter={e=>e.currentTarget.style.background="#fffbef"}
+              onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+              <div>
+                <div style={{fontSize:13,fontWeight:700,color:"#1a2a3a"}}>{c.clinic}</div>
+                <div style={{fontSize:11,color:"#a0aab8",marginTop:2}}>
+                  {c.lastDate?`最終注文：${c.lastDate}`:"注文履歴なし"}
+                  {hasRevData&&c.totalRev>0&&<span style={{marginLeft:8,color:"#4a7cc7"}}>累計 {fmtYen(c.totalRev)}</span>}
                 </div>
-                {orders.length===0&&<div style={{ textAlign:"center",padding:"48px 0",color:"#8a95a5" }}><div style={{ fontSize:32,marginBottom:12 }}>📭</div><div style={{ fontSize:14,marginBottom:8 }}>まだ注文データがありません</div><div style={{ fontSize:12.5 }}>「📂 CSV取込」でbcartのデータを読み込んでください</div></div>}
-                {keys.map((k,i)=><GroupSection key={k} title={k} orders={grouped[k]} onUpdate={updateOrder} onDelete={deleteOrder} defaultOpen={i===0}/>)}
-                {orders.length>0&&<div style={{ textAlign:"center",fontSize:12,color:"#c0c8d4",marginTop:8 }}>{filtered.length}件表示（全{orders.length}件）</div>}
-              </>
-            )}
+              </div>
+              <div style={{textAlign:"right"}}>
+                <div style={{fontSize:16,fontWeight:900,color:c.days===null||c.days>=60?"#e05050":"#e07d20"}}>{c.days===null?"未注文":c.days+"日"}</div>
+                <div style={{fontSize:10,color:"#4a7cc7",marginTop:2}}>詳細を見る →</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── クリニック詳細 ────────────────────────────────────────────────────────
+function ClinicDetail({clinic,orders}){
+  const now=new Date();
+  const co=orders.filter(o=>o.clinic===clinic).sort((a,b)=>b.id.localeCompare(a.id));
+
+  // 月次キー（過去6ヶ月）
+  const monthKeys=[];
+  for(let i=5;i>=0;i--){
+    const d=new Date(now.getFullYear(),now.getMonth()-i,1);
+    monthKeys.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`);
+  }
+
+  // 月次データ
+  const hasRevData=co.some(o=>o.totalAmount||(o.products||[]).some(p=>p.amount));
+  const monthlyData=monthKeys.map(mk=>{
+    const mo=co.filter(o=>toMK(o.date)===mk);
+    let rev=0;
+    mo.forEach(o=>{if(o.totalAmount)rev+=o.totalAmount;else o.products.forEach(p=>{if(p.amount)rev+=p.amount;});});
+    return {month:fmtMK(mk),orders:mo.length,revenue:rev};
+  });
+
+  // 累計売上
+  let totalRevenue=0;
+  co.forEach(o=>{if(o.totalAmount)totalRevenue+=o.totalAmount;else o.products.forEach(p=>{if(p.amount)totalRevenue+=p.amount;});});
+
+  // 最終注文からの日数
+  const lastDate=co[0]?parseJpDate(co[0].date):null;
+  const daysSinceLast=lastDate?daysBetween(lastDate,now):null;
+  const inProgress=co.flatMap(o=>o.products).filter(p=>p.status<6).length;
+
+  // よく注文する商品
+  const productCount={};
+  co.forEach(o=>o.products.forEach(p=>{
+    const name=p.name.split("（")[0].trim();
+    if(!productCount[name])productCount[name]={count:0,revenue:0};
+    productCount[name].count++;
+    if(p.amount)productCount[name].revenue+=p.amount;
+  }));
+  const topProducts=Object.entries(productCount).sort((a,b)=>b[1].count-a[1].count).slice(0,5);
+
+  return(
+    <div style={{padding:"20px",display:"flex",flexDirection:"column",gap:16}}>
+      {/* ヘッダー */}
+      <div style={{background:`linear-gradient(135deg,#0a2818,#0f3d20)`,borderRadius:14,padding:"18px 20px",color:"#fff"}}>
+        <div style={{fontSize:11,color:"rgba(255,255,255,0.5)",marginBottom:4}}>CLINIC DETAIL</div>
+        <div style={{fontSize:20,fontWeight:900,marginBottom:8}}>{clinic}</div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          <span style={{padding:"3px 10px",borderRadius:20,fontSize:11.5,fontWeight:700,background:"rgba(255,255,255,0.12)",color:"#fff"}}>累計 {co.length}注文</span>
+          {hasRevData&&totalRevenue>0&&<span style={{padding:"3px 10px",borderRadius:20,fontSize:11.5,fontWeight:700,background:"rgba(93,216,138,0.25)",color:GLL}}>累計売上 {fmtYen(totalRevenue)}</span>}
+          {inProgress>0&&<span style={{padding:"3px 10px",borderRadius:20,fontSize:11.5,fontWeight:700,background:"rgba(212,168,67,0.3)",color:"#ffd878",border:"1px solid rgba(212,168,67,0.4)"}}>対応中 {inProgress}件</span>}
+          {daysSinceLast!==null&&<span style={{padding:"3px 10px",borderRadius:20,fontSize:11.5,fontWeight:700,background:daysSinceLast>=30?"rgba(224,125,32,0.3)":"rgba(255,255,255,0.1)",color:daysSinceLast>=30?"#ffb060":"rgba(255,255,255,0.7)"}}>最終注文 {daysSinceLast}日前</span>}
+        </div>
+      </div>
+
+      {/* 月次グラフ */}
+      <div style={{background:"#fff",borderRadius:14,border:"1.5px solid #e4eaf3",padding:"16px",boxShadow:"0 2px 8px rgba(10,30,53,0.05)"}}>
+        <div style={{fontSize:13,fontWeight:800,color:"#0f2744",marginBottom:12}}>
+          {hasRevData?"📊 月次売上推移":"📊 月次発注推移"}
+        </div>
+        {hasRevData?(
+          <>
+            <div style={{display:"flex",gap:3,alignItems:"flex-end",height:100}}>
+              {monthlyData.map((d,i)=>{
+                const maxV=Math.max(...monthlyData.map(x=>x.revenue),1);
+                return(
+                  <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
+                    <div style={{fontSize:8.5,fontWeight:700,color:"#0f2744",minHeight:12,textAlign:"center"}}>{d.revenue>0?("¥"+(d.revenue>=10000?Math.round(d.revenue/10000)+"万":d.revenue)):""}</div>
+                    <div style={{width:"100%",background:d.revenue>0?GL:"#e4eaf3",borderRadius:"3px 3px 0 0",height:Math.max(3,Math.round((d.revenue/maxV)*72))+"px",transition:"height 0.3s"}}/>
+                    <div style={{fontSize:8.5,color:"#a0aab8",textAlign:"center",lineHeight:1.2}}>{d.month.replace("年","/").replace("月","")}</div>
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginTop:12}}>
+              {monthlyData.slice(-3).map((d,i)=>(
+                <div key={i} style={{textAlign:"center",padding:"8px",background:"#f8fafd",borderRadius:8,border:"1px solid #e4eaf3"}}>
+                  <div style={{fontSize:10,color:"#8a95a5",marginBottom:2}}>{d.month}</div>
+                  <div style={{fontSize:13,fontWeight:800,color:GL}}>{fmtYen(d.revenue)}</div>
+                  <div style={{fontSize:10.5,color:"#a0aab8"}}>{d.orders}注文</div>
+                </div>
+              ))}
+            </div>
+          </>
+        ):(
+          <>
+            <MiniBar data={monthlyData} valueKey="orders" labelKey="month" color={GL} height={72}/>
+            <div style={{marginTop:8,padding:"8px 12px",background:"#fffbef",borderRadius:8,border:"1px solid #e8c95a",fontSize:11.5,color:"#7a6020"}}>
+              💡 売上金額を表示するにはCSVを再インポートしてください
+            </div>
           </>
         )}
+      </div>
+
+      {/* よく注文する商品 */}
+      {topProducts.length>0&&(
+        <div style={{background:"#fff",borderRadius:14,border:"1.5px solid #e4eaf3",padding:"16px",boxShadow:"0 2px 8px rgba(10,30,53,0.05)"}}>
+          <div style={{fontSize:13,fontWeight:800,color:"#0f2744",marginBottom:10}}>🏆 よく注文される商品</div>
+          {topProducts.map(([name,data],i)=>(
+            <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 0",borderBottom:i<topProducts.length-1?"1px solid #f4f6fb":"none"}}>
+              <div style={{width:20,height:20,borderRadius:6,background:i===0?"#d4a843":i===1?"#8a9ab5":i===2?"#b87040":"#e4eaf3",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:800,color:"#fff",flexShrink:0}}>{i+1}</div>
+              <div style={{flex:1,fontSize:12.5,color:"#1a2a3a",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{name}</div>
+              <div style={{display:"flex",gap:10,flexShrink:0}}>
+                <span style={{fontSize:12,fontWeight:700,color:"#4a7cc7"}}>{data.count}回</span>
+                {hasRevData&&data.revenue>0&&<span style={{fontSize:12,color:GL,fontWeight:700}}>{fmtYen(data.revenue)}</span>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* 対応中注文 */}
+      {inProgress>0&&(
+        <div style={{background:"#fff",borderRadius:14,border:"1.5px solid #e4eaf3",padding:"16px",boxShadow:"0 2px 8px rgba(10,30,53,0.05)"}}>
+          <div style={{fontSize:13,fontWeight:800,color:"#0f2744",marginBottom:10}}>📦 現在の対応中商品</div>
+          {co.filter(o=>o.products.some(p=>p.status<6)).map(order=>(
+            <div key={order.id} style={{marginBottom:10,padding:"10px 12px",background:"#f8fafd",borderRadius:10,border:"1.5px solid #e4eaf3"}}>
+              <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
+                <div>
+                  <span style={{fontSize:12,fontWeight:700,color:"#0f2744"}}>{order.id}</span>
+                  <span style={{fontSize:10.5,color:"#a0aab8",marginLeft:8}}>{order.date}</span>
+                  {parseJpDate(order.date)&&<span style={{fontSize:10.5,color:"#c0c8d4",marginLeft:4}}>（{daysBetween(parseJpDate(order.date),now)}日経過）</span>}
+                </div>
+                {hasRevData&&order.totalAmount>0&&<span style={{fontSize:12,fontWeight:700,color:GL}}>{fmtYen(order.totalAmount)}</span>}
+              </div>
+              {order.products.filter(p=>p.status<6).map((p,i)=>{
+                const s=STATUS_STAGES[p.status]||STATUS_STAGES[0];
+                return(
+                  <div key={i} style={{display:"flex",justifyContent:"space-between",fontSize:11.5,padding:"3px 0"}}>
+                    <span style={{color:"#4a5568",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.name.split("（")[0].trim()}</span>
+                    <div style={{display:"flex",gap:8,flexShrink:0}}>
+                      {hasRevData&&p.amount>0&&<span style={{color:"#8a95a5"}}>{fmtYen(p.amount)}</span>}
+                      <span style={{padding:"1px 7px",borderRadius:20,fontSize:10,fontWeight:700,background:s.color+"18",color:s.color}}>{s.short}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* 注文履歴 */}
+      <div style={{background:"#fff",borderRadius:14,border:"1.5px solid #e4eaf3",padding:"16px",boxShadow:"0 2px 8px rgba(10,30,53,0.05)"}}>
+        <div style={{fontSize:13,fontWeight:800,color:"#0f2744",marginBottom:10}}>🗓 注文履歴</div>
+        {co.slice(0,10).map(order=>{
+          const active=order.products.filter(p=>p.status<6).length;
+          let rev=0;
+          if(order.totalAmount)rev=order.totalAmount;
+          else order.products.forEach(p=>{if(p.amount)rev+=p.amount;});
+          return(
+            <div key={order.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:"1px solid #f4f6fb"}}>
+              <div>
+                <div style={{fontSize:12.5,fontWeight:700,color:"#0f2744"}}>{order.id}</div>
+                <div style={{fontSize:11,color:"#a0aab8",marginTop:1}}>{order.date} · {order.products.length}商品</div>
+              </div>
+              <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                {hasRevData&&rev>0&&<span style={{fontSize:12,fontWeight:700,color:GL}}>{fmtYen(rev)}</span>}
+                {active>0
+                  ?<span style={{padding:"2px 8px",borderRadius:20,fontSize:11,fontWeight:700,background:"#fff8e8",color:"#b87f0a",border:"1px solid #e8c95a"}}>対応中 {active}</span>
+                  :<span style={{padding:"2px 8px",borderRadius:20,fontSize:11,fontWeight:700,background:"#e8f4ee",color:"#1a7a50"}}>✅ 完了</span>
+                }
+              </div>
+            </div>
+          );
+        })}
+        {co.length>10&&<div style={{fontSize:11,color:"#a0aab8",textAlign:"center",marginTop:8}}>他 {co.length-10}件...</div>}
       </div>
     </div>
   );
 }
 
+// ── メイン ────────────────────────────────────────────────────────────────
+function MainScreen({user}){
+  const [orders,setOrders]=useState([]);
+  const [assignedClinics,setAssignedClinics]=useState([]);
+  const [salesName,setSalesName]=useState("");
+  const [selectedClinic,setSelectedClinic]=useState(null);
+  const [loading,setLoading]=useState(true);
+  const [isMobile,setIsMobile]=useState(window.innerWidth<900);
+
+  useEffect(()=>{
+    const h=()=>setIsMobile(window.innerWidth<900);
+    window.addEventListener('resize',h);
+    return()=>window.removeEventListener('resize',h);
+  },[]);
+
+  useEffect(()=>{
+    const load=async()=>{
+      let t=0;while(!window._sfb&&t<30){await new Promise(r=>setTimeout(r,200));t++;}
+      const [salesBindings, salesOrderData]=await Promise.all([
+        window._sfb.loadSalesBindings(),
+        window._sfb.loadSalesOrders(),
+      ]);
+      const myBinding=salesBindings.find(b=>b.email===user.email);
+      if(myBinding){
+        setAssignedClinics(Array.isArray(myBinding.clinics)?myBinding.clinics:[]);
+        setSalesName(myBinding.name||"");
+      }
+      // orders = sales_ordersから取得（物流データは使わない）
+      setOrders(salesOrderData);
+      setLoading(false);
+    };
+    load();
+  },[]);
+
+  const myOrders=useMemo(()=>orders.filter(o=>assignedClinics.includes(o.clinic)),[orders,assignedClinics]);
+
+  if(loading)return(
+    <div style={{minHeight:"100vh",background:"linear-gradient(160deg,#0a2818,#0f3d20)",display:"flex",alignItems:"center",justifyContent:"center",color:"rgba(255,255,255,0.5)",fontSize:14}}>読み込み中...</div>
+  );
+
+  // 左パネルのクリニックカード
+  const ClinicItem=({clinic})=>{
+    const co=myOrders.filter(o=>o.clinic===clinic);
+    const now=new Date();
+    const last=co.sort((a,b)=>b.id.localeCompare(a.id))[0];
+    const days=last?daysBetween(parseJpDate(last.date),now):null;
+    const inProg=co.flatMap(o=>o.products).filter(p=>p.status<6).length;
+    const isSelected=selectedClinic===clinic;
+    const needFollow=days===null||days>=30;
+    // 今月売上
+    const thisMK=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}`;
+    let thisRevenue=0;
+    co.filter(o=>toMK(o.date)===thisMK).forEach(o=>{
+      if(o.totalAmount)thisRevenue+=o.totalAmount;
+      else o.products.forEach(p=>{if(p.amount)thisRevenue+=p.amount;});
+    });
+    const hasRev=co.some(o=>o.totalAmount||(o.products||[]).some(p=>p.amount));
+    return(
+      <div onClick={()=>setSelectedClinic(clinic)} style={{background:isSelected?"#0a2818":"#fff",borderRadius:12,border:`1.5px solid ${isSelected?GL:needFollow?"#f0c090":"#e4eaf3"}`,marginBottom:7,overflow:"hidden",cursor:"pointer",boxShadow:isSelected?"0 4px 16px rgba(10,61,32,0.3)":"0 1px 4px rgba(10,30,53,0.04)",transition:"all 0.15s"}}>
+        <div style={{padding:"10px 12px"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:3}}>
+            <div style={{fontSize:12.5,fontWeight:800,color:isSelected?"#fff":"#0f2744",flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{clinic}</div>
+            <div style={{display:"flex",gap:3,flexShrink:0,marginLeft:4}}>
+              {inProg>0&&<span style={{padding:"1px 5px",borderRadius:20,fontSize:9.5,fontWeight:700,background:isSelected?"rgba(212,168,67,0.4)":"#fff8e8",color:isSelected?"#ffd878":"#b87f0a"}}>対応{inProg}</span>}
+              {needFollow&&<span style={{padding:"1px 5px",borderRadius:20,fontSize:9.5,fontWeight:700,background:isSelected?"rgba(224,125,32,0.4)":"#fff8f0",color:isSelected?"#ffb060":"#e07d20"}}>🔔</span>}
+            </div>
+          </div>
+          {hasRev&&thisRevenue>0&&<div style={{fontSize:11.5,fontWeight:700,color:isSelected?GLL:GL,marginBottom:1}}>今月 {fmtYen(thisRevenue)}</div>}
+          <div style={{fontSize:10.5,color:isSelected?"rgba(255,255,255,0.45)":"#a0aab8"}}>
+            {last?`${days}日前 / 累計${co.length}件`:"注文なし"}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  return(
+    <div style={{display:"flex",flexDirection:"column",height:"100vh",overflow:"hidden"}}>
+      {/* ヘッダー */}
+      <div style={{background:"linear-gradient(160deg,#0a2818,#0f3d20)",padding:"12px 20px",flexShrink:0}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div>
+            <div style={{fontSize:9,letterSpacing:"0.2em",color:GLL,fontWeight:700,textTransform:"uppercase"}}>Sales Management System</div>
+            <div style={{fontSize:16,fontWeight:900,color:"#fff"}}>営業管理システム</div>
+            <div style={{fontSize:10.5,color:"rgba(255,255,255,0.4)",marginTop:1}}>{user.email}{salesName?" / "+salesName:""} · 担当 {assignedClinics.length}クリニック</div>
+          </div>
+          <button onClick={()=>window._sfb.signOut()} style={{padding:"6px 12px",borderRadius:8,border:"1px solid rgba(255,255,255,0.2)",background:"transparent",color:"rgba(255,255,255,0.6)",fontSize:11.5,cursor:"pointer"}}>ログアウト</button>
+        </div>
+      </div>
+
+      {/* 2ペイン */}
+      <div style={{flex:1,display:"flex",overflow:"hidden",background:"#f0f4f9"}}>
+        {/* 左 */}
+        {!isMobile&&(
+          <div style={{width:240,flexShrink:0,background:"#f0f4f9",borderRight:"1.5px solid #e4eaf3",display:"flex",flexDirection:"column",overflow:"hidden"}}>
+            <div style={{padding:"10px 10px 6px",borderBottom:"1px solid #e4eaf3",flexShrink:0,background:"#fff"}}>
+              <button onClick={()=>setSelectedClinic(null)} style={{width:"100%",padding:"7px 10px",borderRadius:8,border:"1.5px solid",cursor:"pointer",fontSize:12,fontWeight:700,borderColor:!selectedClinic?GL:"#dde4ef",background:!selectedClinic?GL:"#fff",color:!selectedClinic?"#fff":"#6a7a8a"}}>
+                📊 全体ダッシュボード
+              </button>
+            </div>
+            <div style={{flex:1,overflowY:"auto",padding:"8px 8px"}}>
+              {assignedClinics.length===0
+                ?<div style={{textAlign:"center",padding:"40px 0",color:"#a0aab8",fontSize:12}}>担当クリニックが未設定です</div>
+                :assignedClinics.map(c=><ClinicItem key={c} clinic={c}/>)
+              }
+            </div>
+          </div>
+        )}
+        {/* 右 */}
+        <div style={{flex:1,overflowY:"auto"}}>
+          {selectedClinic
+            ?<ClinicDetail clinic={selectedClinic} orders={myOrders}/>
+            :<OverviewDashboard clinics={assignedClinics} orders={myOrders} salesName={salesName} onSelectClinic={setSelectedClinic}/>
+          }
+        </div>
+      </div>
+
+      {/* モバイル下タブ */}
+      {isMobile&&(
+        <div style={{position:"fixed",bottom:0,left:0,right:0,background:"#fff",borderTop:"1.5px solid #e4eaf3",display:"flex",zIndex:50,overflowX:"auto"}}>
+          <button onClick={()=>setSelectedClinic(null)} style={{flexShrink:0,padding:"9px 14px",border:"none",background:!selectedClinic?"#0a2818":"#fff",color:!selectedClinic?"#fff":"#4a5568",fontSize:11.5,fontWeight:700,cursor:"pointer"}}>📊 全体</button>
+          {assignedClinics.map(c=>(
+            <button key={c} onClick={()=>setSelectedClinic(c)} style={{flexShrink:0,padding:"9px 14px",border:"none",background:selectedClinic===c?"#0a2818":"#fff",color:selectedClinic===c?"#fff":"#4a5568",fontSize:11,fontWeight:700,cursor:"pointer",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:140}}>{c}</button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function App(){
+  const [user,setUser]=useState(null);
+  const [authReady,setAuthReady]=useState(false);
+  useEffect(()=>{
+    const wait=async()=>{
+      let t=0;while(!window._sfb&&t<30){await new Promise(r=>setTimeout(r,200));t++;}
+      window._sfb.onAuthStateChanged(u=>{setUser(u);setAuthReady(true);});
+    };
+    wait();
+  },[]);
+  if(!authReady)return<div style={{minHeight:"100vh",background:"linear-gradient(160deg,#0a2818,#0f3d20)",display:"flex",alignItems:"center",justifyContent:"center",color:"rgba(255,255,255,0.5)",fontSize:14}}>読み込み中...</div>;
+  return user?<MainScreen user={user}/>:<LoginScreen/>;
+}
 ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
 </script>
 </body>
