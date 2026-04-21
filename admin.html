@@ -694,86 +694,6 @@ function ClinicManager({ orders }) {
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
 
-      {/* ── 売上CSV取込 ── */}
-      <div style={{ background:"#fff", borderRadius:14, border:"1.5px solid #e4eaf3", padding:"20px", boxShadow:"0 2px 10px rgba(10,30,53,0.05)" }}>
-        <div style={{ fontSize:14, fontWeight:800, color:"#0f2744", marginBottom:4 }}>📊 売上データ（受注CSV取込）</div>
-        <div style={{ fontSize:12, color:"#8a95a5", marginBottom:14, lineHeight:1.6 }}>
-          bcartの受注CSVを取り込むと、sales.htmlで営業担当者が売上を確認できます。物流CSVとは完全に分離して管理します。
-        </div>
-        {!csvLoading && salesOrders.length > 0 && (
-          <div style={{ marginBottom:14, padding:"12px 14px", background:"#f0fdf6", border:"1.5px solid #3aa87640", borderRadius:10 }}>
-            <div style={{ fontSize:12, fontWeight:700, color:"#1a7a50", marginBottom:8 }}>✅ 保存済み：{salesOrders.length}件の受注データ</div>
-            <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-              {Object.entries(salesSummary).slice(0,6).map(([clinic, data]) => (
-                <div key={clinic} style={{ padding:"5px 10px", background:"#fff", borderRadius:8, border:"1px solid #c0d8c0", fontSize:11.5 }}>
-                  <span style={{ fontWeight:700, color:"#0f2744" }}>{clinic}</span>
-                  <span style={{ color:"#3aa876", marginLeft:6, fontWeight:700 }}>{fmtYen(data.total)}</span>
-                  <span style={{ color:"#a0aab8", marginLeft:4 }}>({data.orders}件)</span>
-                </div>
-              ))}
-              {Object.keys(salesSummary).length > 6 && <span style={{ fontSize:11, color:"#a0aab8", alignSelf:"center" }}>他 {Object.keys(salesSummary).length-6} クリニック...</span>}
-            </div>
-          </div>
-        )}
-        <div style={{ marginBottom:10 }}>
-          <div style={{ fontSize:11.5, color:"#8a95a5", marginBottom:6 }}>文字コード</div>
-          <div style={{ display:"flex", gap:8 }}>
-            {[["shift_jis","Shift-JIS（標準）"],["utf-8","UTF-8"]].map(([v,l]) => (
-              <button key={v} onClick={() => setCsvEncoding(v)}
-                style={{ padding:"6px 14px", borderRadius:8, border:"1.5px solid", fontSize:12.5, cursor:"pointer",
-                  borderColor:csvEncoding===v?"#0f2744":"#dde4ef", background:csvEncoding===v?"#0f2744":"#fff",
-                  color:csvEncoding===v?"#fff":"#555", fontWeight:csvEncoding===v?700:400 }}>{l}</button>
-            ))}
-          </div>
-        </div>
-        {!csvPreview && (
-          <>
-            <input ref={csvFileRef} type="file" accept=".csv"
-              onChange={e => { if(e.target.files[0]) handleSalesCsvRead(e.target.files[0]); e.target.value=""; }}
-              style={{ display:"none" }}/>
-            <button onClick={() => csvFileRef.current.click()}
-              style={{ width:"100%", padding:"12px", borderRadius:10, border:"1.5px dashed #6b8cba", background:"#f4f6fb", color:"#0f2744", fontWeight:700, fontSize:14, cursor:"pointer" }}>
-              📂 受注CSVファイルを選択
-            </button>
-          </>
-        )}
-        {csvError && <div style={{ padding:"10px 14px", background:"#fff0f0", border:"1px solid #e0c0c0", borderRadius:9, fontSize:13, color:"#c05050", marginTop:10 }}>⚠ {csvError}</div>}
-        {csvPreview && (
-          <div>
-            <div style={{ padding:"10px 14px", background:"#f0fdf6", border:"1px solid #a0d8b8", borderRadius:9, marginBottom:12, fontSize:13, color:"#1a7a50", fontWeight:600 }}>
-              ✅ {csvPreview.length}件の受注データを読み込みました（既存データとマージして保存します）
-            </div>
-            <div style={{ maxHeight:200, overflowY:"auto", border:"1.5px solid #e4eaf3", borderRadius:10, marginBottom:12 }}>
-              <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
-                <thead><tr style={{ background:"#0f2744" }}>{["受注番号","日付","クリニック","売上金額","商品数"].map(h=>(
-                  <th key={h} style={{ padding:"6px 10px", color:"rgba(255,255,255,0.85)", fontWeight:700, textAlign:"left", whiteSpace:"nowrap" }}>{h}</th>
-                ))}</tr></thead>
-                <tbody>{csvPreview.map((o,i)=>(
-                  <tr key={i} style={{ borderBottom:"1px solid #f0f4f9", background:i%2===0?"#fff":"#f9fafc" }}>
-                    <td style={{ padding:"6px 10px", fontWeight:700, color:"#0f2744" }}>{o.id}</td>
-                    <td style={{ padding:"6px 10px", color:"#6a7a8a" }}>{o.date}</td>
-                    <td style={{ padding:"6px 10px", color:"#1a2a3a" }}>{o.clinic}</td>
-                    <td style={{ padding:"6px 10px", fontWeight:700, color:o.totalAmount>0?"#3aa876":"#a0aab8" }}>{fmtYen(o.totalAmount)}</td>
-                    <td style={{ padding:"6px 10px", color:"#6a7a8a" }}>{o.products.length}種</td>
-                  </tr>
-                ))}</tbody>
-              </table>
-            </div>
-            <div style={{ display:"flex", gap:8 }}>
-              <button onClick={() => { setCsvPreview(null); setCsvError(""); }}
-                style={{ flex:1, padding:"11px", borderRadius:9, border:"1.5px solid #dde4ef", background:"#fff", fontSize:13, cursor:"pointer", color:"#666" }}>やり直す</button>
-              <button onClick={handleSalesCsvSave} disabled={csvSaving}
-                style={{ flex:2, padding:"11px", borderRadius:9, border:"none",
-                  background:csvSaving?"#8a9ab5":"linear-gradient(135deg,#1a6a3a,#2a9a5a)",
-                  color:"#fff", fontWeight:800, fontSize:13, cursor:"pointer", opacity:csvSaving?0.7:1 }}>
-                {csvSaving?"保存中...":csvPreview.length+"件を保存する"}
-              </button>
-            </div>
-          </div>
-        )}
-        {csvMsg==="saved" && <div style={{ marginTop:10, padding:"8px 12px", background:"#f0fdf6", border:"1px solid #3aa876", borderRadius:8, fontSize:12, color:"#1a7a50", textAlign:"center" }}>✅ 売上データを保存しました。sales.htmlに反映されます。</div>}
-      </div>
-
       {/* ── アカウント一覧 ── */}
       <div style={{ background:"#fff", borderRadius:14, border:"1.5px solid #e4eaf3", padding:"20px", boxShadow:"0 2px 10px rgba(10,30,53,0.05)" }}>
         <div style={{ fontSize:14, fontWeight:800, color:"#0f2744", marginBottom:4 }}>👥 登録済みアカウント一覧</div>
@@ -1249,6 +1169,87 @@ function SalesManager({ orders }) {
 
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+
+      {/* ── 売上CSV取込 ── */}
+      <div style={{ background:"#fff", borderRadius:14, border:"1.5px solid #e4eaf3", padding:"20px", boxShadow:"0 2px 10px rgba(10,30,53,0.05)" }}>
+        <div style={{ fontSize:14, fontWeight:800, color:"#0f2744", marginBottom:4 }}>📊 売上データ（受注CSV取込）</div>
+        <div style={{ fontSize:12, color:"#8a95a5", marginBottom:14, lineHeight:1.6 }}>
+          bcartの受注CSVを取り込むと、sales.htmlで営業担当者が売上を確認できます。物流CSVとは完全に分離して管理します。
+        </div>
+        {!csvLoading && salesOrders.length > 0 && (
+          <div style={{ marginBottom:14, padding:"12px 14px", background:"#f0fdf6", border:"1.5px solid #3aa87640", borderRadius:10 }}>
+            <div style={{ fontSize:12, fontWeight:700, color:"#1a7a50", marginBottom:8 }}>✅ 保存済み：{salesOrders.length}件の受注データ</div>
+            <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+              {Object.entries(salesSummary).slice(0,6).map(([clinic, data]) => (
+                <div key={clinic} style={{ padding:"5px 10px", background:"#fff", borderRadius:8, border:"1px solid #c0d8c0", fontSize:11.5 }}>
+                  <span style={{ fontWeight:700, color:"#0f2744" }}>{clinic}</span>
+                  <span style={{ color:"#3aa876", marginLeft:6, fontWeight:700 }}>{fmtYen(data.total)}</span>
+                  <span style={{ color:"#a0aab8", marginLeft:4 }}>({data.orders}件)</span>
+                </div>
+              ))}
+              {Object.keys(salesSummary).length > 6 && <span style={{ fontSize:11, color:"#a0aab8", alignSelf:"center" }}>他 {Object.keys(salesSummary).length-6} クリニック...</span>}
+            </div>
+          </div>
+        )}
+        <div style={{ marginBottom:10 }}>
+          <div style={{ fontSize:11.5, color:"#8a95a5", marginBottom:6 }}>文字コード</div>
+          <div style={{ display:"flex", gap:8 }}>
+            {[["shift_jis","Shift-JIS（標準）"],["utf-8","UTF-8"]].map(([v,l]) => (
+              <button key={v} onClick={() => setCsvEncoding(v)}
+                style={{ padding:"6px 14px", borderRadius:8, border:"1.5px solid", fontSize:12.5, cursor:"pointer",
+                  borderColor:csvEncoding===v?"#0f2744":"#dde4ef", background:csvEncoding===v?"#0f2744":"#fff",
+                  color:csvEncoding===v?"#fff":"#555", fontWeight:csvEncoding===v?700:400 }}>{l}</button>
+            ))}
+          </div>
+        </div>
+        {!csvPreview && (
+          <>
+            <input ref={csvFileRef} type="file" accept=".csv"
+              onChange={e => { if(e.target.files[0]) handleSalesCsvRead(e.target.files[0]); e.target.value=""; }}
+              style={{ display:"none" }}/>
+            <button onClick={() => csvFileRef.current.click()}
+              style={{ width:"100%", padding:"12px", borderRadius:10, border:"1.5px dashed #6b8cba", background:"#f4f6fb", color:"#0f2744", fontWeight:700, fontSize:14, cursor:"pointer" }}>
+              📂 受注CSVファイルを選択
+            </button>
+          </>
+        )}
+        {csvError && <div style={{ padding:"10px 14px", background:"#fff0f0", border:"1px solid #e0c0c0", borderRadius:9, fontSize:13, color:"#c05050", marginTop:10 }}>⚠ {csvError}</div>}
+        {csvPreview && (
+          <div>
+            <div style={{ padding:"10px 14px", background:"#f0fdf6", border:"1px solid #a0d8b8", borderRadius:9, marginBottom:12, fontSize:13, color:"#1a7a50", fontWeight:600 }}>
+              ✅ {csvPreview.length}件の受注データを読み込みました（既存データとマージして保存します）
+            </div>
+            <div style={{ maxHeight:200, overflowY:"auto", border:"1.5px solid #e4eaf3", borderRadius:10, marginBottom:12 }}>
+              <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+                <thead><tr style={{ background:"#0f2744" }}>{["受注番号","日付","クリニック","売上金額","商品数"].map(h=>(
+                  <th key={h} style={{ padding:"6px 10px", color:"rgba(255,255,255,0.85)", fontWeight:700, textAlign:"left", whiteSpace:"nowrap" }}>{h}</th>
+                ))}</tr></thead>
+                <tbody>{csvPreview.map((o,i)=>(
+                  <tr key={i} style={{ borderBottom:"1px solid #f0f4f9", background:i%2===0?"#fff":"#f9fafc" }}>
+                    <td style={{ padding:"6px 10px", fontWeight:700, color:"#0f2744" }}>{o.id}</td>
+                    <td style={{ padding:"6px 10px", color:"#6a7a8a" }}>{o.date}</td>
+                    <td style={{ padding:"6px 10px", color:"#1a2a3a" }}>{o.clinic}</td>
+                    <td style={{ padding:"6px 10px", fontWeight:700, color:o.totalAmount>0?"#3aa876":"#a0aab8" }}>{fmtYen(o.totalAmount)}</td>
+                    <td style={{ padding:"6px 10px", color:"#6a7a8a" }}>{o.products.length}種</td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            </div>
+            <div style={{ display:"flex", gap:8 }}>
+              <button onClick={() => { setCsvPreview(null); setCsvError(""); }}
+                style={{ flex:1, padding:"11px", borderRadius:9, border:"1.5px solid #dde4ef", background:"#fff", fontSize:13, cursor:"pointer", color:"#666" }}>やり直す</button>
+              <button onClick={handleSalesCsvSave} disabled={csvSaving}
+                style={{ flex:2, padding:"11px", borderRadius:9, border:"none",
+                  background:csvSaving?"#8a9ab5":"linear-gradient(135deg,#1a6a3a,#2a9a5a)",
+                  color:"#fff", fontWeight:800, fontSize:13, cursor:"pointer", opacity:csvSaving?0.7:1 }}>
+                {csvSaving?"保存中...":csvPreview.length+"件を保存する"}
+              </button>
+            </div>
+          </div>
+        )}
+        {csvMsg==="saved" && <div style={{ marginTop:10, padding:"8px 12px", background:"#f0fdf6", border:"1px solid #3aa876", borderRadius:8, fontSize:12, color:"#1a7a50", textAlign:"center" }}>✅ 売上データを保存しました。sales.htmlに反映されます。</div>}
+      </div>
+
       <div style={{ background:"#fff", borderRadius:14, border:"1.5px solid #e4eaf3", padding:"20px", boxShadow:"0 2px 10px rgba(10,30,53,0.05)" }}>
         <div style={{ fontSize:14, fontWeight:800, color:"#0f2744", marginBottom:4 }}>💼 登録済み営業アカウント</div>
         <div style={{ fontSize:12, color:"#8a95a5", marginBottom:16, lineHeight:1.6 }}>
