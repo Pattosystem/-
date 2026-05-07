@@ -149,6 +149,46 @@
     markRequestRead: async (id) => {
       await updateDoc(doc(db, "requests", id), { status: "read" });
     },
+    // 管理者発のリクエスト（資料共有等）を作成
+    createAdminRequest: async ({targetEmail, targetClinic, subject, message, category, attachments}) => {
+      const id = `req_admin_${targetEmail.replace(/[@.]/g,"_")}_${Date.now()}`;
+      const now = new Date().toLocaleString("ja-JP", {year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"});
+      await setDoc(doc(db, "requests", id), {
+        id,
+        direction: "from_admin",
+        orderId: "",
+        clinic: targetClinic || "",
+        email: targetEmail,
+        subject: subject || "",
+        message: message || "",
+        category: category || "資料",
+        status: "unread",
+        progress: "送信済み",
+        reply: "",
+        customerReply: "",
+        customerReplyAt: "",
+        attachments: attachments || [],
+        replyAttachments: [],
+        createdAt: now,
+        repliedAt: ""
+      });
+      return id;
+    },
+    // 管理者発リクエスト用のファイルアップロード
+    uploadAdminFiles: async (files, requestId) => {
+      const urls = [];
+      for (const file of files) {
+        const path = `requests/${requestId}/admin_${Date.now()}_${file.name}`;
+        const storageRef = ref(storage, path);
+        await uploadBytes(storageRef, file);
+        const url = await getDownloadURL(storageRef);
+        urls.push({ name: file.name, url, size: file.size });
+      }
+      return urls;
+    },
+    deleteRequest: async (id) => {
+      await deleteDoc(doc(db, "requests", id));
+    },
     loadShipPhotos: async () => {
       try {
         const snap = await getDocs(collection(db, "ship_photos"));
@@ -1787,29 +1827,54 @@ function StatusManager({ orders, onUpdate }) {
   );
 }
 
-// ── リクエスト管理 ────────────────────────────────────────────────────────
+// ── リクエスト管理（お客様発／管理者発のサブタブ式） ─────────────────────
 function RequestManager(props) {
+  const [subTab, setSubTab] = useState("from_customer"); // "from_customer" | "from_admin"
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
   const [replyText, setReplyText] = useState({});
-  const [replyFiles, setReplyFiles] = useState({});  // {requestId: File[]}
+  const [replyFiles, setReplyFiles] = useState({});
   const [replying, setReplying] = useState({});
   const [replyDone, setReplyDone] = useState({});
-  const replyFileRefs = {};
+
+  // 管理者発フォーム用ステート
+  const [bindings, setBindings] = useState([]);
+  const [showCompose, setShowCompose] = useState(false);
+  const [composeTarget, setComposeTarget] = useState("");
+  const [composeCategory, setComposeCategory] = useState("資料");
+  const [composeSubject, setComposeSubject] = useState("");
+  const [composeMessage, setComposeMessage] = useState("");
+  const [composeFiles, setComposeFiles] = useState([]);
+  const [sending, setSending] = useState(false);
+  const [sendDone, setSendDone] = useState(false);
+  const [uploadingMsg, setUploadingMsg] = useState("");
+  const composeFileRef = useRef();
+
+  const ADMIN_CATEGORIES = ["資料", "請求書", "見積書", "納品書", "その他"];
+  const fmtSize = (bytes) => bytes < 1024*1024 ? Math.round(bytes/1024)+"KB" : (bytes/1024/1024).toFixed(1)+"MB";
   const waitFB = async () => { let t=0; while(!window._firebase&&t<30){await new Promise(r=>setTimeout(r,200));t++;} };
+
   useEffect(() => {
     const load = async () => {
       await waitFB();
-      const data = await window._firebase.loadRequests();
+      const [data, bindingsData] = await Promise.all([
+        window._firebase.loadRequests(),
+        window._firebase.loadBindingsFull()
+      ]);
       setRequests(data);
+      setBindings(bindingsData);
       setLoading(false);
-      if (props.onUnreadCount) props.onUnreadCount(data.filter(r => r.status !== "replied").length);
-      data.filter(r => r.status === "unread").forEach(r => window._firebase.markRequestRead(r.id));
+      // ヘッダーバッジ：お客様発の未返信件数（既存仕様維持）
+      const fc = data.filter(r => (r.direction || "from_customer") === "from_customer");
+      if (props.onUnreadCount) props.onUnreadCount(fc.filter(r => r.status !== "replied").length);
+      // お客様発の未読を既読化（既存ロジック）
+      data.filter(r => (r.direction || "from_customer") === "from_customer" && r.status === "unread")
+        .forEach(r => window._firebase.markRequestRead(r.id));
     };
     load();
   }, []);
-  const fmtSize = (bytes) => bytes < 1024*1024 ? Math.round(bytes/1024)+"KB" : (bytes/1024/1024).toFixed(1)+"MB";
 
+  // お客様発への返信
   const handleReply = async (id) => {
     const text = replyText[id];
     if (!text || !text.trim()) return;
@@ -1827,114 +1892,379 @@ function RequestManager(props) {
     } catch(e) { alert("送信に失敗しました"); }
     setReplying(p => ({...p, [id]: false}));
   };
-  const unreplied = requests.filter(r => r.status !== "replied").length;
+
+  // 管理者発の送信
+  const handleSendAdmin = async () => {
+    if (!composeTarget) { alert("送信先のクリニックを選んでください"); return; }
+    if (!composeMessage.trim() && composeFiles.length === 0) { alert("本文か添付ファイルのいずれかを入力してください"); return; }
+    setSending(true);
+    try {
+      const target = bindings.find(b => b.email === composeTarget);
+      const targetClinic = target ? ((target.clinics && target.clinics[0]) || target.clinicName || "") : "";
+      const tmpId = `req_admin_${composeTarget.replace(/[@.]/g,"_")}_${Date.now()}`;
+      let attachments = [];
+      if (composeFiles.length > 0) {
+        setUploadingMsg("ファイルをアップロード中...");
+        attachments = await window._firebase.uploadAdminFiles(composeFiles, tmpId);
+      }
+      setUploadingMsg("送信中...");
+      await window._firebase.createAdminRequest({
+        targetEmail: composeTarget,
+        targetClinic,
+        subject: composeSubject.trim(),
+        message: composeMessage.trim(),
+        category: composeCategory,
+        attachments
+      });
+      // 再読み込み
+      const data = await window._firebase.loadRequests();
+      setRequests(data);
+      setSendDone(true);
+      setComposeTarget(""); setComposeSubject(""); setComposeMessage(""); setComposeCategory("資料"); setComposeFiles([]);
+      setUploadingMsg("");
+      setTimeout(() => { setSendDone(false); setShowCompose(false); }, 1800);
+    } catch(e) {
+      console.error(e);
+      alert("送信に失敗しました");
+      setUploadingMsg("");
+    }
+    setSending(false);
+  };
+
+  const handleDelete = async (id) => {
+    if (!confirm("このリクエストを削除しますか？\n（添付ファイルもFirebase Storageから消えません。レコードのみ削除されます）")) return;
+    try {
+      await window._firebase.deleteRequest(id);
+      setRequests(prev => prev.filter(r => r.id !== id));
+    } catch(e) { alert("削除に失敗しました"); }
+  };
+
   if (loading) return <div style={{ textAlign:"center",padding:"40px 0",color:"#8a95a5" }}>読み込み中...</div>;
+
+  const fromCustomer = requests.filter(r => (r.direction || "from_customer") === "from_customer");
+  const fromAdmin = requests.filter(r => r.direction === "from_admin");
+  const fcUnreplied = fromCustomer.filter(r => r.status !== "replied").length;
+  const faUnread = fromAdmin.filter(r => r.status === "unread").length;
+  const faCustomerReplied = fromAdmin.filter(r => r.customerReply).length;
+
   return (
     <div>
-      <div style={{ display:"flex",gap:10,marginBottom:16,flexWrap:"wrap" }}>
-        {[{l:"未返信",v:unreplied,c:"#e07d20"},{l:"返信済み",v:requests.filter(r=>r.status==="replied").length,c:"#3aa876"},{l:"合計",v:requests.length,c:"#6b8cba"}].map(s=>(
-          <div key={s.l} style={{ background:"#fff",borderRadius:12,border:"1.5px solid #e4eaf3",padding:"12px 18px",flex:1,minWidth:120 }}>
-            <div style={{ fontSize:22,fontWeight:900,color:s.c }}>{s.v}</div>
-            <div style={{ fontSize:11,color:"#8a95a5",marginTop:2 }}>{s.l}</div>
-          </div>
-        ))}
+      {/* ── サブタブ ── */}
+      <div style={{ display:"flex",gap:0,marginBottom:14,background:"#f0f4fa",borderRadius:11,padding:4 }}>
+        <button onClick={()=>setSubTab("from_customer")}
+          style={{ flex:1,padding:"11px",borderRadius:8,border:"none",cursor:"pointer",fontSize:13,fontWeight:700,
+            background: subTab==="from_customer" ? "#fff" : "transparent",
+            color: subTab==="from_customer" ? "#0f2744" : "#8a95a5",
+            boxShadow: subTab==="from_customer" ? "0 1px 4px rgba(10,30,53,0.08)" : "none",
+            transition:"all 0.15s"
+          }}>
+          📥 お客様発 {fcUnreplied>0 && <span style={{ marginLeft:5,padding:"1px 7px",borderRadius:20,fontSize:11,background:"#e07d20",color:"#fff" }}>{fcUnreplied}</span>}
+        </button>
+        <button onClick={()=>setSubTab("from_admin")}
+          style={{ flex:1,padding:"11px",borderRadius:8,border:"none",cursor:"pointer",fontSize:13,fontWeight:700,
+            background: subTab==="from_admin" ? "#fff" : "transparent",
+            color: subTab==="from_admin" ? "#0f2744" : "#8a95a5",
+            boxShadow: subTab==="from_admin" ? "0 1px 4px rgba(10,30,53,0.08)" : "none",
+            transition:"all 0.15s"
+          }}>
+          📤 管理者発 {faUnread>0 && <span style={{ marginLeft:5,padding:"1px 7px",borderRadius:20,fontSize:11,background:"#6b8cba",color:"#fff" }}>未読{faUnread}</span>}
+        </button>
       </div>
-      {requests.length === 0 && (<div style={{ textAlign:"center",padding:"48px 0",color:"#8a95a5" }}><div style={{ fontSize:32,marginBottom:12 }}>📭</div><div style={{ fontSize:14 }}>リクエストはまだありません</div></div>)}
-      {requests.map(r => (
-        <div key={r.id} style={{ background:"#fff",borderRadius:14,border:`1.5px solid ${r.status==="replied"?"#c0d0e8":"#f0c090"}`,marginBottom:12,overflow:"hidden",boxShadow:"0 1px 8px rgba(10,30,53,0.05)",borderLeft:`4px solid ${r.status==="replied"?"#3aa876":"#e07d20"}` }}>
-          <div style={{ padding:"14px 16px" }}>
-            <div style={{ display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10 }}>
-              <div>
-                <div style={{ display:"flex",alignItems:"center",gap:6,marginBottom:4,flexWrap:"wrap" }}>
-                  <span style={{ fontSize:14,fontWeight:900,color:"#0f2744" }}>{r.orderId||"—"}</span>
-                  {r.category&&<span style={{ padding:"2px 8px",borderRadius:20,fontSize:11,fontWeight:700,background:"#f0f4ff",color:"#4a5568",border:"1px solid #dde4ef" }}>{r.category}</span>}
-                  <span style={{ padding:"3px 9px",borderRadius:20,fontSize:11,fontWeight:700,background:r.status==="replied"?"#e8f0fa":"#fff8e8",color:r.status==="replied"?"#0f2744":"#b87f0a",border:r.status==="replied"?"1px solid #c0d0e8":"1px solid #e8c95a" }}>{r.status==="replied"?"✅ 返信済み":"🚨 未返信"}</span>
+
+      {/* ─────── お客様発 ─────── */}
+      {subTab === "from_customer" && (
+        <div>
+          <div style={{ display:"flex",gap:10,marginBottom:16,flexWrap:"wrap" }}>
+            {[{l:"未返信",v:fcUnreplied,c:"#e07d20"},{l:"返信済み",v:fromCustomer.filter(r=>r.status==="replied").length,c:"#3aa876"},{l:"合計",v:fromCustomer.length,c:"#6b8cba"}].map(s=>(
+              <div key={s.l} style={{ background:"#fff",borderRadius:12,border:"1.5px solid #e4eaf3",padding:"12px 18px",flex:1,minWidth:120 }}>
+                <div style={{ fontSize:22,fontWeight:900,color:s.c }}>{s.v}</div>
+                <div style={{ fontSize:11,color:"#8a95a5",marginTop:2 }}>{s.l}</div>
+              </div>
+            ))}
+          </div>
+          {fromCustomer.length === 0 && (
+            <div style={{ textAlign:"center",padding:"48px 0",color:"#8a95a5" }}>
+              <div style={{ fontSize:32,marginBottom:12 }}>📭</div>
+              <div style={{ fontSize:14 }}>お客様からのリクエストはまだありません</div>
+            </div>
+          )}
+          {fromCustomer.map(r => (
+            <div key={r.id} style={{ background:"#fff",borderRadius:14,border:`1.5px solid ${r.status==="replied"?"#c0d0e8":"#f0c090"}`,marginBottom:12,overflow:"hidden",boxShadow:"0 1px 8px rgba(10,30,53,0.05)",borderLeft:`4px solid ${r.status==="replied"?"#3aa876":"#e07d20"}` }}>
+              <div style={{ padding:"14px 16px" }}>
+                <div style={{ display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10 }}>
+                  <div>
+                    <div style={{ display:"flex",alignItems:"center",gap:6,marginBottom:4,flexWrap:"wrap" }}>
+                      <span style={{ fontSize:14,fontWeight:900,color:"#0f2744" }}>{r.orderId||"—"}</span>
+                      {r.category&&<span style={{ padding:"2px 8px",borderRadius:20,fontSize:11,fontWeight:700,background:"#f0f4ff",color:"#4a5568",border:"1px solid #dde4ef" }}>{r.category}</span>}
+                      <span style={{ padding:"3px 9px",borderRadius:20,fontSize:11,fontWeight:700,background:r.status==="replied"?"#e8f0fa":"#fff8e8",color:r.status==="replied"?"#0f2744":"#b87f0a",border:r.status==="replied"?"1px solid #c0d0e8":"1px solid #e8c95a" }}>{r.status==="replied"?"✅ 返信済み":"🚨 未返信"}</span>
+                    </div>
+                    <div style={{ fontSize:11.5,color:"#8a95a5" }}>{r.clinic}　{r.email}</div>
+                  </div>
+                  <div style={{ fontSize:11,color:"#a0aab8",textAlign:"right" }}>{r.createdAt}</div>
                 </div>
-                <div style={{ fontSize:11.5,color:"#8a95a5" }}>{r.clinic}　{r.email}</div>
-              </div>
-              <div style={{ fontSize:11,color:"#a0aab8",textAlign:"right" }}>{r.createdAt}</div>
-            </div>
-            {/* 進捗ステータス更新 */}
-            <div style={{ display:"flex",gap:5,marginBottom:10,flexWrap:"wrap" }}>
-              <span style={{ fontSize:11,color:"#8a95a5",alignSelf:"center" }}>進捗：</span>
-              {["受付待ち","確認中","対応中","完了"].map(p => (
-                <button key={p} onClick={async()=>{ await window._firebase.updateRequestProgress(r.id, p); setRequests(prev=>prev.map(req=>req.id===r.id?{...req,progress:p}:req)); }}
-                  style={{ padding:"3px 10px",borderRadius:20,border:"1.5px solid",cursor:"pointer",fontSize:11,fontWeight:700,
-                    borderColor:(r.progress||"受付待ち")===p?"#4a7cc7":"#dde4ef",
-                    background:(r.progress||"受付待ち")===p?"#4a7cc7":"#fff",
-                    color:(r.progress||"受付待ち")===p?"#fff":"#6a7a8a" }}>
-                  {p}
-                </button>
-              ))}
-            </div>
-            <div style={{ padding:"10px 14px",background:"#f8fafd",borderRadius:9,border:"1px solid #e4eaf3",fontSize:13,color:"#4a5568",marginBottom:6 }}>📬 {r.message}</div>
-            {/* お客様の添付ファイル */}
-            {r.attachments && r.attachments.length > 0 && (
-              <div style={{ marginBottom:10 }}>
-                <div style={{ fontSize:11,color:"#8a95a5",marginBottom:4,fontWeight:600 }}>📎 お客様の添付ファイル</div>
-                {r.attachments.map((f,fi) => (
-                  <a key={fi} href={f.url} target="_blank" rel="noopener noreferrer"
-                    style={{ display:"flex",alignItems:"center",gap:6,padding:"5px 9px",background:"#f0f6ff",borderRadius:7,border:"1px solid #d0ddf0",textDecoration:"none",marginBottom:3 }}>
-                    <span style={{ fontSize:13 }}>📄</span>
-                    <span style={{ fontSize:12,color:"#1a6abf",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{f.name}</span>
-                    <span style={{ fontSize:10,color:"#8a95a5" }}>↓ DL</span>
-                  </a>
-                ))}
-              </div>
-            )}
-            {r.reply && (<div style={{ padding:"10px 14px",background:"#f0f6ff",borderRadius:9,border:"1px solid #d0e0f4",fontSize:13,color:"#1a3a5c",marginBottom:4 }}>💬 {r.reply}</div>)}
-            {/* 管理者の添付ファイル */}
-            {r.replyAttachments && r.replyAttachments.length > 0 && (
-              <div style={{ marginBottom:4 }}>
-                {r.replyAttachments.map((f,fi) => (
-                  <a key={fi} href={f.url} target="_blank" rel="noopener noreferrer"
-                    style={{ display:"flex",alignItems:"center",gap:6,padding:"5px 9px",background:"#e8f4ee",borderRadius:7,border:"1px solid #b0d8b8",textDecoration:"none",marginBottom:3 }}>
-                    <span style={{ fontSize:13 }}>📄</span>
-                    <span style={{ fontSize:12,color:"#1a6abf",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{f.name}</span>
-                    <span style={{ fontSize:10,color:"#8a95a5" }}>↓ DL</span>
-                  </a>
-                ))}
-              </div>
-            )}
-            {r.repliedAt && <div style={{ fontSize:11,color:"#a0aab8",marginBottom:8,textAlign:"right" }}>返信日時：{r.repliedAt}</div>}
-            {r.status !== "replied" && !replyDone[r.id] && (
-              <div style={{ marginTop:8 }}>
-                <div style={{ fontSize:11.5,color:"#8a95a5",marginBottom:6 }}>返信メッセージを入力</div>
-                <textarea value={replyText[r.id]||""} onChange={e=>setReplyText(p=>({...p,[r.id]:e.target.value}))} placeholder="例：〇〇の商品は現在通関中で、約3〜5日でお届け予定です。" rows={3} style={{ width:"100%",padding:"10px 12px",borderRadius:9,border:"1.5px solid #dde4ef",fontSize:13,outline:"none",resize:"vertical",boxSizing:"border-box",marginBottom:8 }}/>
-                {/* 添付ファイル */}
-                <div style={{ marginBottom:8 }}>
-                  <input type="file" multiple id={`replyFile_${r.id}`}
-                    accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.png,.jpg,.jpeg,.gif,.zip,.csv"
-                    onChange={e=>{
-                      const files=Array.from(e.target.files).filter(f=>f.size<=10*1024*1024);
-                      setReplyFiles(p=>({...p,[r.id]:[...(p[r.id]||[]),...files]}));
-                      e.target.value="";
-                    }} style={{ display:"none" }}/>
-                  <label htmlFor={`replyFile_${r.id}`}
-                    style={{ display:"inline-flex",alignItems:"center",gap:6,padding:"6px 12px",borderRadius:8,border:"1.5px dashed #b0c4de",background:"#f8fafd",fontSize:12,cursor:"pointer",color:"#4a7cc7",fontWeight:700 }}>
-                    📎 ファイルを添付
-                  </label>
-                  {(replyFiles[r.id]||[]).length > 0 && (
-                    <div style={{ marginTop:6,display:"flex",flexDirection:"column",gap:4 }}>
-                      {(replyFiles[r.id]||[]).map((f,fi) => (
-                        <div key={fi} style={{ display:"flex",alignItems:"center",gap:6,padding:"5px 9px",background:"#f0f6ff",borderRadius:7,border:"1px solid #d0ddf0" }}>
-                          <span style={{ fontSize:12 }}>📄</span>
-                          <span style={{ flex:1,fontSize:11.5,color:"#1a2a3a",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{f.name}</span>
-                          <span style={{ fontSize:10.5,color:"#8a95a5" }}>{fmtSize(f.size)}</span>
-                          <button onClick={()=>setReplyFiles(p=>({...p,[r.id]:(p[r.id]||[]).filter((_,i)=>i!==fi)}))}
-                            style={{ border:"none",background:"none",color:"#e05050",fontSize:13,cursor:"pointer",padding:0 }}>✕</button>
+                <div style={{ display:"flex",gap:5,marginBottom:10,flexWrap:"wrap" }}>
+                  <span style={{ fontSize:11,color:"#8a95a5",alignSelf:"center" }}>進捗：</span>
+                  {["受付待ち","確認中","対応中","完了"].map(p => (
+                    <button key={p} onClick={async()=>{ await window._firebase.updateRequestProgress(r.id, p); setRequests(prev=>prev.map(req=>req.id===r.id?{...req,progress:p}:req)); }}
+                      style={{ padding:"3px 10px",borderRadius:20,border:"1.5px solid",cursor:"pointer",fontSize:11,fontWeight:700,
+                        borderColor:(r.progress||"受付待ち")===p?"#4a7cc7":"#dde4ef",
+                        background:(r.progress||"受付待ち")===p?"#4a7cc7":"#fff",
+                        color:(r.progress||"受付待ち")===p?"#fff":"#6a7a8a" }}>
+                      {p}
+                    </button>
+                  ))}
+                </div>
+                <div style={{ padding:"10px 14px",background:"#f8fafd",borderRadius:9,border:"1px solid #e4eaf3",fontSize:13,color:"#4a5568",marginBottom:6 }}>📬 {r.message}</div>
+                {r.attachments && r.attachments.length > 0 && (
+                  <div style={{ marginBottom:10 }}>
+                    <div style={{ fontSize:11,color:"#8a95a5",marginBottom:4,fontWeight:600 }}>📎 お客様の添付ファイル</div>
+                    {r.attachments.map((f,fi) => (
+                      <a key={fi} href={f.url} target="_blank" rel="noopener noreferrer"
+                        style={{ display:"flex",alignItems:"center",gap:6,padding:"5px 9px",background:"#f0f6ff",borderRadius:7,border:"1px solid #d0ddf0",textDecoration:"none",marginBottom:3 }}>
+                        <span style={{ fontSize:13 }}>📄</span>
+                        <span style={{ fontSize:12,color:"#1a6abf",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{f.name}</span>
+                        <span style={{ fontSize:10,color:"#8a95a5" }}>↓ DL</span>
+                      </a>
+                    ))}
+                  </div>
+                )}
+                {r.reply && (<div style={{ padding:"10px 14px",background:"#f0f6ff",borderRadius:9,border:"1px solid #d0e0f4",fontSize:13,color:"#1a3a5c",marginBottom:4 }}>💬 {r.reply}</div>)}
+                {r.replyAttachments && r.replyAttachments.length > 0 && (
+                  <div style={{ marginBottom:4 }}>
+                    {r.replyAttachments.map((f,fi) => (
+                      <a key={fi} href={f.url} target="_blank" rel="noopener noreferrer"
+                        style={{ display:"flex",alignItems:"center",gap:6,padding:"5px 9px",background:"#e8f4ee",borderRadius:7,border:"1px solid #b0d8b8",textDecoration:"none",marginBottom:3 }}>
+                        <span style={{ fontSize:13 }}>📄</span>
+                        <span style={{ fontSize:12,color:"#1a6abf",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{f.name}</span>
+                        <span style={{ fontSize:10,color:"#8a95a5" }}>↓ DL</span>
+                      </a>
+                    ))}
+                  </div>
+                )}
+                {r.repliedAt && <div style={{ fontSize:11,color:"#a0aab8",marginBottom:8,textAlign:"right" }}>返信日時：{r.repliedAt}</div>}
+                {r.status !== "replied" && !replyDone[r.id] && (
+                  <div style={{ marginTop:8 }}>
+                    <div style={{ fontSize:11.5,color:"#8a95a5",marginBottom:6 }}>返信メッセージを入力</div>
+                    <textarea value={replyText[r.id]||""} onChange={e=>setReplyText(p=>({...p,[r.id]:e.target.value}))} placeholder="例：〇〇の商品は現在通関中で、約3〜5日でお届け予定です。" rows={3} style={{ width:"100%",padding:"10px 12px",borderRadius:9,border:"1.5px solid #dde4ef",fontSize:13,outline:"none",resize:"vertical",boxSizing:"border-box",marginBottom:8 }}/>
+                    <div style={{ marginBottom:8 }}>
+                      <input type="file" multiple id={`replyFile_${r.id}`}
+                        accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.png,.jpg,.jpeg,.gif,.zip,.csv"
+                        onChange={e=>{
+                          const files=Array.from(e.target.files).filter(f=>f.size<=10*1024*1024);
+                          setReplyFiles(p=>({...p,[r.id]:[...(p[r.id]||[]),...files]}));
+                          e.target.value="";
+                        }} style={{ display:"none" }}/>
+                      <label htmlFor={`replyFile_${r.id}`}
+                        style={{ display:"inline-flex",alignItems:"center",gap:6,padding:"6px 12px",borderRadius:8,border:"1.5px dashed #b0c4de",background:"#f8fafd",fontSize:12,cursor:"pointer",color:"#4a7cc7",fontWeight:700 }}>
+                        📎 ファイルを添付
+                      </label>
+                      {(replyFiles[r.id]||[]).length > 0 && (
+                        <div style={{ marginTop:6,display:"flex",flexDirection:"column",gap:4 }}>
+                          {(replyFiles[r.id]||[]).map((f,fi) => (
+                            <div key={fi} style={{ display:"flex",alignItems:"center",gap:6,padding:"5px 9px",background:"#f0f6ff",borderRadius:7,border:"1px solid #d0ddf0" }}>
+                              <span style={{ fontSize:12 }}>📄</span>
+                              <span style={{ flex:1,fontSize:11.5,color:"#1a2a3a",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{f.name}</span>
+                              <span style={{ fontSize:10.5,color:"#8a95a5" }}>{fmtSize(f.size)}</span>
+                              <button onClick={()=>setReplyFiles(p=>({...p,[r.id]:(p[r.id]||[]).filter((_,i)=>i!==fi)}))}
+                                style={{ border:"none",background:"none",color:"#e05050",fontSize:13,cursor:"pointer",padding:0 }}>✕</button>
+                            </div>
+                          ))}
                         </div>
+                      )}
+                    </div>
+                    <button onClick={()=>handleReply(r.id)} disabled={replying[r.id]} style={{ width:"100%",padding:"11px",borderRadius:9,border:"none",background:"#0f2744",color:"#fff",fontWeight:800,fontSize:13,cursor:"pointer",opacity:replying[r.id]?0.7:1 }}>{replying[r.id]?"送信中...":"返信を送る"}</button>
+                  </div>
+                )}
+                {replyDone[r.id] && (<div style={{ padding:"10px",background:"#f0fdf6",borderRadius:9,border:"1px solid #a0d8b8",fontSize:13,color:"#1a7a50",fontWeight:600,textAlign:"center" }}>✅ 返信を送信しました</div>)}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ─────── 管理者発 ─────── */}
+      {subTab === "from_admin" && (
+        <div>
+          {!showCompose ? (
+            <button onClick={()=>{ setShowCompose(true); setSendDone(false); }}
+              style={{ width:"100%",padding:"15px",borderRadius:11,border:"none",background:"linear-gradient(135deg,#0f2744,#1a3a5c)",color:"#fff",fontSize:14,fontWeight:800,cursor:"pointer",marginBottom:16,boxShadow:"0 3px 10px rgba(15,39,68,0.25)" }}>
+              ＋ 新規作成（クリニックへ資料・請求書を送る）
+            </button>
+          ) : (
+            <div style={{ background:"#fff",borderRadius:12,border:"2px solid #4a7cc7",padding:"18px",marginBottom:16,boxShadow:"0 4px 16px rgba(74,124,199,0.18)" }}>
+              <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14 }}>
+                <div style={{ fontSize:14,fontWeight:800,color:"#0f2744" }}>📤 クリニックへ送信</div>
+                <button onClick={()=>{ setShowCompose(false); setSendDone(false); }}
+                  style={{ border:"none",background:"transparent",color:"#8a95a5",fontSize:13,cursor:"pointer" }}>✕ キャンセル</button>
+              </div>
+
+              {/* 送信先 */}
+              <div style={{ marginBottom:12 }}>
+                <div style={{ fontSize:11.5,color:"#4a5568",marginBottom:6,fontWeight:600 }}>送信先 <span style={{ color:"#e05050" }}>*</span></div>
+                <select value={composeTarget} onChange={e=>setComposeTarget(e.target.value)}
+                  style={{ width:"100%",padding:"10px 12px",borderRadius:9,border:"1.5px solid #dde4ef",fontSize:13,outline:"none",background:"#fff",color:"#1a2a3a" }}>
+                  <option value="">クリニックを選択してください</option>
+                  {bindings.filter(b => b.email).map(b => {
+                    const clinicLabel = (b.clinics && b.clinics[0]) || b.clinicName || b.name || "";
+                    return <option key={b.email} value={b.email}>{clinicLabel ? `${clinicLabel}　（${b.email}）` : b.email}</option>;
+                  })}
+                </select>
+              </div>
+
+              {/* カテゴリ */}
+              <div style={{ marginBottom:12 }}>
+                <div style={{ fontSize:11.5,color:"#4a5568",marginBottom:6,fontWeight:600 }}>カテゴリ</div>
+                <div style={{ display:"flex",gap:5,flexWrap:"wrap" }}>
+                  {ADMIN_CATEGORIES.map(c => (
+                    <button key={c} onClick={()=>setComposeCategory(c)}
+                      style={{ padding:"5px 12px",borderRadius:20,border:"1.5px solid",cursor:"pointer",fontSize:12,fontWeight:700,
+                        borderColor:composeCategory===c?"#4a7cc7":"#dde4ef",
+                        background:composeCategory===c?"#4a7cc7":"#fff",
+                        color:composeCategory===c?"#fff":"#6a7a8a" }}>
+                      {c}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* 件名 */}
+              <div style={{ marginBottom:12 }}>
+                <div style={{ fontSize:11.5,color:"#4a5568",marginBottom:6,fontWeight:600 }}>件名</div>
+                <input type="text" value={composeSubject} onChange={e=>setComposeSubject(e.target.value)}
+                  placeholder="例：4月分 修正請求書のご送付"
+                  style={{ width:"100%",padding:"10px 12px",borderRadius:9,border:"1.5px solid #dde4ef",fontSize:13,outline:"none",boxSizing:"border-box" }}/>
+              </div>
+
+              {/* 本文 */}
+              <div style={{ marginBottom:12 }}>
+                <div style={{ fontSize:11.5,color:"#4a5568",marginBottom:6,fontWeight:600 }}>本文</div>
+                <textarea value={composeMessage} onChange={e=>setComposeMessage(e.target.value)} rows={4}
+                  placeholder="お電話いただいた件、修正版を添付しました。ご確認のほどよろしくお願いいたします。"
+                  style={{ width:"100%",padding:"10px 12px",borderRadius:9,border:"1.5px solid #dde4ef",fontSize:13,outline:"none",resize:"vertical",lineHeight:1.7,boxSizing:"border-box" }}/>
+              </div>
+
+              {/* 添付ファイル */}
+              <div style={{ marginBottom:14 }}>
+                <div style={{ fontSize:11.5,color:"#4a5568",marginBottom:6,fontWeight:600 }}>添付ファイル（10MBまで）</div>
+                <input ref={composeFileRef} type="file" multiple onChange={e=>{
+                  const selected = Array.from(e.target.files);
+                  const valid = selected.filter(f => f.size <= 10*1024*1024);
+                  if (valid.length < selected.length) alert("10MB以上のファイルは添付できません");
+                  setComposeFiles(prev => [...prev, ...valid]);
+                  e.target.value = "";
+                }} style={{ display:"none" }}
+                  accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.png,.jpg,.jpeg,.gif,.zip,.csv"/>
+                <button onClick={()=>composeFileRef.current.click()}
+                  style={{ padding:"8px 14px",borderRadius:8,border:"1.5px dashed #b0c4de",background:"#f8fafd",fontSize:12.5,cursor:"pointer",color:"#4a7cc7",fontWeight:700,width:"100%" }}>
+                  📎 ファイルを選択
+                </button>
+                {composeFiles.length > 0 && (
+                  <div style={{ marginTop:8,display:"flex",flexDirection:"column",gap:5 }}>
+                    {composeFiles.map((f,i) => (
+                      <div key={i} style={{ display:"flex",alignItems:"center",gap:8,padding:"6px 10px",background:"#f0f6ff",borderRadius:8,border:"1px solid #d0ddf0" }}>
+                        <span style={{ fontSize:14 }}>📄</span>
+                        <span style={{ flex:1,fontSize:12,color:"#1a2a3a",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{f.name}</span>
+                        <span style={{ fontSize:11,color:"#8a95a5",flexShrink:0 }}>{fmtSize(f.size)}</span>
+                        <button onClick={()=>setComposeFiles(prev => prev.filter((_,idx)=>idx!==i))}
+                          style={{ border:"none",background:"none",color:"#e05050",fontSize:14,cursor:"pointer",padding:0,flexShrink:0 }}>✕</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {sendDone && (
+                <div style={{ padding:"12px 14px",background:"#f0fdf6",border:"1.5px solid #3aa876",borderRadius:10,fontSize:13,fontWeight:700,color:"#1a7a50",textAlign:"center",marginBottom:10 }}>
+                  ✅ 送信しました
+                </div>
+              )}
+              <button onClick={handleSendAdmin} disabled={sending || !composeTarget}
+                style={{ width:"100%",padding:"13px",borderRadius:10,border:"none",background:"#0f2744",color:"#fff",fontWeight:800,fontSize:14,cursor:"pointer",opacity:(sending||!composeTarget)?0.5:1 }}>
+                {sending ? (uploadingMsg || "送信中...") : "📤 送信する"}
+              </button>
+            </div>
+          )}
+
+          {/* 統計 */}
+          <div style={{ display:"flex",gap:8,marginBottom:16,flexWrap:"wrap" }}>
+            {[
+              {l:"お客様未読",v:faUnread,c:"#e07d20"},
+              {l:"閲覧済み",v:fromAdmin.filter(r=>r.status!=="unread"&&!r.customerReply).length,c:"#6b8cba"},
+              {l:"お客様返信あり",v:faCustomerReplied,c:"#3aa876"},
+              {l:"合計",v:fromAdmin.length,c:"#8a9ab5"}
+            ].map(s=>(
+              <div key={s.l} style={{ background:"#fff",borderRadius:12,border:"1.5px solid #e4eaf3",padding:"10px 14px",flex:1,minWidth:100 }}>
+                <div style={{ fontSize:20,fontWeight:900,color:s.c }}>{s.v}</div>
+                <div style={{ fontSize:10.5,color:"#8a95a5",marginTop:2 }}>{s.l}</div>
+              </div>
+            ))}
+          </div>
+
+          {fromAdmin.length === 0 && (
+            <div style={{ textAlign:"center",padding:"48px 0",color:"#8a95a5" }}>
+              <div style={{ fontSize:32,marginBottom:12 }}>📤</div>
+              <div style={{ fontSize:14 }}>送信した資料はまだありません</div>
+              <div style={{ fontSize:11.5,marginTop:6,color:"#a0aab8" }}>「＋ 新規作成」からクリニックへ資料・請求書などを送れます</div>
+            </div>
+          )}
+
+          {fromAdmin.map(r => {
+            const cusBadge = r.status === "unread"
+              ? { l:"お客様未読", bg:"#fff8e8", color:"#b87f0a", border:"#e8c95a" }
+              : r.customerReply
+                ? { l:"お客様返信あり", bg:"#e8f4ee", color:"#1a7a50", border:"#a0d8b8" }
+                : { l:"閲覧済み", bg:"#e8f0fa", color:"#1a3a5c", border:"#c0d0e8" };
+            return (
+              <div key={r.id} style={{ background:"#fff",borderRadius:14,border:`1.5px solid ${cusBadge.border}`,marginBottom:12,overflow:"hidden",boxShadow:"0 1px 8px rgba(10,30,53,0.05)",borderLeft:`4px solid ${cusBadge.color}` }}>
+                <div style={{ padding:"14px 16px" }}>
+                  <div style={{ display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10 }}>
+                    <div>
+                      <div style={{ display:"flex",alignItems:"center",gap:6,marginBottom:4,flexWrap:"wrap" }}>
+                        <span style={{ fontSize:13,fontWeight:900,color:"#0f2744" }}>📤 {r.subject || "（件名なし）"}</span>
+                        {r.category && <span style={{ padding:"2px 8px",borderRadius:20,fontSize:11,fontWeight:700,background:"#f0f4ff",color:"#4a5568",border:"1px solid #dde4ef" }}>{r.category}</span>}
+                        <span style={{ padding:"3px 9px",borderRadius:20,fontSize:11,fontWeight:700,background:cusBadge.bg,color:cusBadge.color,border:`1px solid ${cusBadge.border}` }}>{cusBadge.l}</span>
+                      </div>
+                      <div style={{ fontSize:11.5,color:"#8a95a5" }}>送信先：{r.clinic || "—"}　{r.email}</div>
+                    </div>
+                    <div style={{ display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4 }}>
+                      <div style={{ fontSize:11,color:"#a0aab8",textAlign:"right" }}>{r.createdAt}</div>
+                      <button onClick={()=>handleDelete(r.id)}
+                        style={{ border:"1px solid #e8c0c0",background:"#fff5f5",color:"#c04040",fontSize:10.5,fontWeight:700,padding:"3px 8px",borderRadius:6,cursor:"pointer" }}>削除</button>
+                    </div>
+                  </div>
+
+                  {r.message && (
+                    <div style={{ padding:"10px 14px",background:"#f8fafd",borderRadius:9,border:"1px solid #e4eaf3",fontSize:13,color:"#4a5568",marginBottom:8,whiteSpace:"pre-wrap" }}>{r.message}</div>
+                  )}
+
+                  {r.attachments && r.attachments.length > 0 && (
+                    <div style={{ marginBottom:8 }}>
+                      <div style={{ fontSize:11,color:"#8a95a5",marginBottom:4,fontWeight:600 }}>📎 添付ファイル</div>
+                      {r.attachments.map((f,fi) => (
+                        <a key={fi} href={f.url} target="_blank" rel="noopener noreferrer"
+                          style={{ display:"flex",alignItems:"center",gap:6,padding:"6px 10px",background:"#e8f4ee",borderRadius:7,border:"1px solid #b0d8b8",textDecoration:"none",marginBottom:3 }}>
+                          <span style={{ fontSize:13 }}>📄</span>
+                          <span style={{ fontSize:12,color:"#1a6abf",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{f.name}</span>
+                          <span style={{ fontSize:10,color:"#8a95a5" }}>↓ DL</span>
+                        </a>
                       ))}
                     </div>
                   )}
+
+                  {/* お客様返信があれば表示 */}
+                  {r.customerReply && (
+                    <div style={{ marginTop:8,padding:"10px 14px",background:"#f0f6ff",borderRadius:9,border:"1px solid #d0e0f4" }}>
+                      <div style={{ fontSize:11,color:"#8a95a5",marginBottom:4,fontWeight:600 }}>💬 お客様からの返信</div>
+                      <div style={{ fontSize:13,color:"#1a3a5c",whiteSpace:"pre-wrap" }}>{r.customerReply}</div>
+                      {r.customerReplyAt && <div style={{ fontSize:10.5,color:"#a0aab8",marginTop:4,textAlign:"right" }}>{r.customerReplyAt}</div>}
+                    </div>
+                  )}
                 </div>
-                <button onClick={()=>handleReply(r.id)} disabled={replying[r.id]} style={{ width:"100%",padding:"11px",borderRadius:9,border:"none",background:"#0f2744",color:"#fff",fontWeight:800,fontSize:13,cursor:"pointer",opacity:replying[r.id]?0.7:1 }}>{replying[r.id]?"送信中...":"返信を送る"}</button>
               </div>
-            )}
-            {replyDone[r.id] && (<div style={{ padding:"10px",background:"#f0fdf6",borderRadius:9,border:"1px solid #a0d8b8",fontSize:13,color:"#1a7a50",fontWeight:600,textAlign:"center" }}>✅ 返信を送信しました</div>)}
-          </div>
+            );
+          })}
         </div>
-      ))}
+      )}
     </div>
   );
 }
