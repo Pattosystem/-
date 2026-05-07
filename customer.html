@@ -9,7 +9,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-  import { getFirestore, collection, getDocs, getDocsFromServer, onSnapshot, doc, getDoc, setDoc, query, where } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+  import { getFirestore, collection, getDocs, getDocsFromServer, onSnapshot, doc, getDoc, setDoc, updateDoc, query, where } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
   import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
   import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged, sendPasswordResetEmail, reauthenticateWithCredential, EmailAuthProvider, updatePassword, verifyBeforeUpdateEmail } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
@@ -121,6 +121,20 @@
       const list = [];
       snap.forEach(d => { const r = d.data(); if (r.email === email) list.push(r); });
       return list.sort((a,b) => b.createdAt.localeCompare(a.createdAt));
+    },
+    // 管理者発リクエストを既読にする
+    markAdminRequestReadByCustomer: async (id) => {
+      const now = new Date().toLocaleString("ja-JP", {year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"});
+      await updateDoc(doc(db, "requests", id), { status: "read", customerReadAt: now });
+    },
+    // 管理者発リクエストへのお客様返信
+    replyAdminRequestByCustomer: async (id, text) => {
+      const now = new Date().toLocaleString("ja-JP", {year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"});
+      await updateDoc(doc(db, "requests", id), {
+        customerReply: text || "",
+        customerReplyAt: now,
+        status: "read"
+      });
     },
     reauth: async (email, password) => {
       const credential = EmailAuthProvider.credential(email, password);
@@ -328,19 +342,27 @@ function GlobalRequestModal({ user, myOrders, myRequests, onSent, onClose }) {
         {/* ヘッダー */}
         <div style={{ background:"linear-gradient(160deg,#0a1e35,#0f2744)",padding:"18px 20px",flexShrink:0 }}>
           <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center" }}>
-            <div style={{ fontSize:15,fontWeight:800,color:"#fff" }}>📩 担当者へリクエスト</div>
+            <div style={{ fontSize:15,fontWeight:800,color:"#fff" }}>📩 担当者とのやりとり</div>
             <button onClick={onClose} style={{ border:"none",background:"rgba(255,255,255,0.15)",color:"#fff",borderRadius:20,padding:"5px 12px",fontSize:12,cursor:"pointer",fontWeight:700 }}>✕ 閉じる</button>
           </div>
           <div style={{ fontSize:11,color:"rgba(255,255,255,0.45)",marginTop:4 }}>{user.email}</div>
         </div>
         {/* タブ */}
         <div style={{ display:"flex",background:"#f8fafd",borderBottom:"1px solid #edf0f6",flexShrink:0 }}>
-          <button style={tabStyle(tab==="new")} onClick={()=>setTab("new")}>新規リクエスト</button>
+          <button style={tabStyle(tab==="new")} onClick={()=>setTab("new")}>📤 新規リクエスト</button>
           <button style={tabStyle(tab==="history")} onClick={()=>setTab("history")}>
-            履歴
-            {allRequests.filter(r=>r.status!=="replied").length > 0 &&
+            📬 履歴
+            {allRequests.filter(r => (r.direction||"from_customer")==="from_customer" && r.status!=="replied").length > 0 &&
               <span style={{ marginLeft:5,padding:"1px 6px",borderRadius:20,fontSize:10.5,background:"#e07d20",color:"#fff" }}>
-                {allRequests.filter(r=>r.status!=="replied").length}
+                {allRequests.filter(r => (r.direction||"from_customer")==="from_customer" && r.status!=="replied").length}
+              </span>
+            }
+          </button>
+          <button style={tabStyle(tab==="received")} onClick={()=>setTab("received")}>
+            📎 届いた資料
+            {allRequests.filter(r => r.direction==="from_admin" && r.status==="unread").length > 0 &&
+              <span style={{ marginLeft:5,padding:"1px 6px",borderRadius:20,fontSize:10.5,background:"#4a7cc7",color:"#fff" }}>
+                {allRequests.filter(r => r.direction==="from_admin" && r.status==="unread").length}
               </span>
             }
           </button>
@@ -416,15 +438,15 @@ function GlobalRequestModal({ user, myOrders, myRequests, onSent, onClose }) {
                 {sending ? (uploadProgress||"送信中...") : "送信する"}
               </button>
             </div>
-          ) : (
+          ) : tab === "history" ? (
             <div style={{ display:"flex",flexDirection:"column",gap:10 }}>
-              {allRequests.length === 0 && (
+              {allRequests.filter(r => (r.direction||"from_customer")==="from_customer").length === 0 && (
                 <div style={{ textAlign:"center",padding:"40px 0",color:"#a0aab8" }}>
                   <div style={{ fontSize:32,marginBottom:8 }}>📭</div>
-                  <div style={{ fontSize:13 }}>リクエストはまだありません</div>
+                  <div style={{ fontSize:13 }}>送信したリクエストはまだありません</div>
                 </div>
               )}
-              {allRequests.map((r,i) => {
+              {allRequests.filter(r => (r.direction||"from_customer")==="from_customer").map((r,i) => {
                 const prog = PROGRESS_STAGES_DEF.find(s => s.key === (r.progress||"受付待ち")) || PROGRESS_STAGES_DEF[0];
                 const progIdx = PROGRESS_STAGES_DEF.findIndex(s => s.key === prog.key);
                 return (
@@ -492,9 +514,119 @@ function GlobalRequestModal({ user, myOrders, myRequests, onSent, onClose }) {
                 );
               })}
             </div>
+          ) : (
+            <ReceivedFromAdminList user={user} requests={allRequests.filter(r => r.direction==="from_admin")} onSent={onSent} />
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+// ── 管理者から届いた資料一覧（届いた資料タブ） ─────────────────────────────
+function ReceivedFromAdminList({ user, requests, onSent }) {
+  const [replyText, setReplyText] = useState({});
+  const [replying, setReplying] = useState({});
+  const [replyDone, setReplyDone] = useState({});
+  const markedRef = useRef(new Set());
+
+  const fmtSize = (bytes) => bytes < 1024*1024 ? Math.round(bytes/1024)+"KB" : (bytes/1024/1024).toFixed(1)+"MB";
+
+  // タブを開いたら未読を既読化
+  useEffect(() => {
+    const unread = requests.filter(r => r.status === "unread" && !markedRef.current.has(r.id));
+    if (unread.length === 0) return;
+    (async () => {
+      for (const r of unread) {
+        markedRef.current.add(r.id);
+        try { await window._firebase.markAdminRequestReadByCustomer(r.id); } catch(e) {}
+      }
+      if (onSent) onSent();
+    })();
+  }, [requests]);
+
+  const handleReply = async (id) => {
+    const text = replyText[id];
+    if (!text || !text.trim()) return;
+    setReplying(p => ({...p, [id]: true}));
+    try {
+      await window._firebase.replyAdminRequestByCustomer(id, text.trim());
+      setReplyDone(p => ({...p, [id]: true}));
+      if (onSent) onSent();
+    } catch(e) { alert("送信に失敗しました"); }
+    setReplying(p => ({...p, [id]: false}));
+  };
+
+  if (requests.length === 0) {
+    return (
+      <div style={{ textAlign:"center",padding:"40px 0",color:"#a0aab8" }}>
+        <div style={{ fontSize:32,marginBottom:8 }}>📭</div>
+        <div style={{ fontSize:13 }}>担当者から届いた資料はまだありません</div>
+        <div style={{ fontSize:11,marginTop:6,color:"#b8c0cc" }}>請求書や見積書などが届くとここに表示されます</div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display:"flex",flexDirection:"column",gap:10 }}>
+      {requests.map((r,i) => {
+        const isUnread = r.status === "unread";
+        return (
+          <div key={i} style={{ background:"#fff",borderRadius:12,border:`1.5px solid ${isUnread?"#4a7cc7":"#e4eaf3"}`,overflow:"hidden",boxShadow: isUnread ? "0 2px 10px rgba(74,124,199,0.15)" : "none" }}>
+            <div style={{ padding:"11px 14px",borderBottom:"1px solid #edf0f6",background: isUnread ? "#f0f6ff" : "#f8fafd" }}>
+              <div style={{ display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4,gap:6 }}>
+                <div style={{ display:"flex",gap:5,flexWrap:"wrap",alignItems:"center" }}>
+                  {isUnread && <span style={{ padding:"1px 7px",borderRadius:20,fontSize:10.5,fontWeight:700,background:"#4a7cc7",color:"#fff" }}>NEW</span>}
+                  <span style={{ padding:"1px 8px",borderRadius:20,fontSize:10.5,fontWeight:700,background:"#fff",color:"#4a5568",border:"1px solid #dde4ef" }}>{r.category||"資料"}</span>
+                </div>
+                <span style={{ fontSize:10,color:"#a0aab8",flexShrink:0 }}>{r.createdAt}</span>
+              </div>
+              <div style={{ fontSize:13.5,fontWeight:800,color:"#0f2744",marginTop:4 }}>📤 {r.subject || "（件名なし）"}</div>
+            </div>
+            <div style={{ padding:"11px 14px" }}>
+              {r.message && (
+                <div style={{ fontSize:12.5,color:"#4a5568",lineHeight:1.6,whiteSpace:"pre-wrap",marginBottom:10 }}>{r.message}</div>
+              )}
+              {/* 添付ファイル */}
+              {r.attachments && r.attachments.length > 0 && (
+                <div style={{ marginBottom:10 }}>
+                  <div style={{ fontSize:11,color:"#8a95a5",marginBottom:5,fontWeight:600 }}>📎 添付ファイル</div>
+                  {r.attachments.map((f,fi) => (
+                    <a key={fi} href={f.url} target="_blank" rel="noopener noreferrer"
+                      style={{ display:"flex",alignItems:"center",gap:6,padding:"7px 11px",background:"#e8f4ee",borderRadius:8,border:"1px solid #b0d8b8",textDecoration:"none",marginBottom:4 }}>
+                      <span style={{ fontSize:14 }}>📄</span>
+                      <span style={{ fontSize:12.5,color:"#1a6abf",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontWeight:600 }}>{f.name}</span>
+                      <span style={{ fontSize:10.5,color:"#3aa876",fontWeight:700 }}>↓ ダウンロード</span>
+                    </a>
+                  ))}
+                </div>
+              )}
+              {/* お客様返信 */}
+              {r.customerReply ? (
+                <div style={{ padding:"10px 12px",background:"#f0fdf6",borderRadius:9,border:"1px solid #a0d8b8",fontSize:12.5,color:"#1a3a5c",lineHeight:1.7,marginTop:8 }}>
+                  <div style={{ fontSize:10.5,color:"#3aa876",fontWeight:700,marginBottom:4 }}>✅ 返信済み（{r.customerReplyAt}）</div>
+                  <div style={{ whiteSpace:"pre-wrap" }}>{r.customerReply}</div>
+                </div>
+              ) : !replyDone[r.id] ? (
+                <div style={{ marginTop:8,paddingTop:10,borderTop:"1px dashed #e4eaf3" }}>
+                  <div style={{ fontSize:11,color:"#8a95a5",marginBottom:6,fontWeight:600 }}>担当者へ返信（任意）</div>
+                  <textarea value={replyText[r.id]||""} onChange={e=>setReplyText(p=>({...p,[r.id]:e.target.value}))} rows={2}
+                    placeholder="確認しました／追加で〇〇をお願いします など"
+                    style={{ width:"100%",padding:"8px 11px",borderRadius:8,border:"1.5px solid #dde4ef",fontSize:12.5,outline:"none",resize:"vertical",boxSizing:"border-box",lineHeight:1.6 }}/>
+                  <button onClick={()=>handleReply(r.id)} disabled={replying[r.id]||!(replyText[r.id]||"").trim()}
+                    style={{ width:"100%",padding:"9px",borderRadius:8,border:"none",background:"#4a7cc7",color:"#fff",fontWeight:700,fontSize:12.5,cursor:"pointer",marginTop:6,opacity:(replying[r.id]||!(replyText[r.id]||"").trim())?0.5:1 }}>
+                    {replying[r.id] ? "送信中..." : "返信を送る"}
+                  </button>
+                </div>
+              ) : (
+                <div style={{ padding:"9px",background:"#f0fdf6",borderRadius:8,border:"1px solid #a0d8b8",fontSize:12.5,color:"#1a7a50",fontWeight:600,textAlign:"center",marginTop:8 }}>
+                  ✅ 返信を送信しました
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -1205,8 +1337,13 @@ function MainScreen({ user }) {
               🛒 受発注サイト PITTO
             </a>
             <button onClick={()=>setShowRequestModal(true)}
-              style={{ padding:"6px 12px",borderRadius:8,border:"1px solid rgba(74,124,199,0.5)",background:"rgba(74,124,199,0.12)",color:"#90b8f8",fontSize:11.5,cursor:"pointer",fontWeight:700 }}>
+              style={{ padding:"6px 12px",borderRadius:8,border:"1px solid rgba(74,124,199,0.5)",background:"rgba(74,124,199,0.12)",color:"#90b8f8",fontSize:11.5,cursor:"pointer",fontWeight:700,position:"relative" }}>
               📩 リクエスト
+              {(() => {
+                const unreadAdmin = myRequests.filter(r => r.direction==="from_admin" && r.status==="unread").length;
+                if (unreadAdmin === 0) return null;
+                return <span style={{ marginLeft:5,padding:"1px 6px",borderRadius:20,fontSize:10,background:"#e07d20",color:"#fff",fontWeight:800 }}>{unreadAdmin}</span>;
+              })()}
             </button>
             <button onClick={()=>window._firebase.signOut()} style={{ padding:"6px 12px",borderRadius:8,border:"1px solid rgba(255,255,255,0.2)",background:"transparent",color:"rgba(255,255,255,0.6)",fontSize:11.5,cursor:"pointer" }}>ログアウト</button>
             <button onClick={()=>setShowAccount(true)} style={{ padding:"6px 12px",borderRadius:8,border:"1px solid rgba(212,168,67,0.4)",background:"rgba(212,168,67,0.12)",color:"#d4a843",fontSize:11.5,cursor:"pointer",fontWeight:700 }}>⚙️ 設定</button>
